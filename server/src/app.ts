@@ -51,7 +51,17 @@ export function createApp(appDeps: AppDeps) {
   // The web app (the morning view); the side panel is the other half.
   app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html" }));
 
-  app.get("/api/health", (_req, res) => { res.json({ ok: true, model: config.model, demo: config.demo }); });
+  // What's configured (never the values): the first thing to check on a new deploy.
+  app.get("/api/health", (_req, res) => {
+    const missing = [
+      !process.env.ANTHROPIC_API_KEY && !config.demo ? "ANTHROPIC_API_KEY" : null,
+      process.env.VERCEL && !config.supabaseUrl ? "SUPABASE_URL" : null,
+      process.env.VERCEL && !config.supabaseKey ? "SUPABASE_SERVICE_ROLE_KEY" : null,
+      process.env.VERCEL && !config.sessionSecret ? "SESSION_SECRET" : null,
+      process.env.VERCEL && !config.cronSecret ? "CRON_SECRET" : null,
+    ].filter(Boolean);
+    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", reps: appDeps.reps.size, missing });
+  });
 
   // Reps: reps.json (local) plus whoever signed up (the store: a file locally, Supabase when hosted).
   const asRep = (r: StoredRep): Rep => ({ token: `email:${r.email}`, name: r.name, email: r.email, close_api_key: r.close_api_key, timezone: r.timezone ?? "America/Los_Angeles" });

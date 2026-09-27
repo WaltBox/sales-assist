@@ -59,8 +59,12 @@ export function loadReps(): Map<string, Rep> {
       token: "demo-token-demo-token-demo-token", name: "Walt Boxwell", email: "walt@westgatesupply.com", close_api_key: "demo",
     })]]);
   }
-  // Hosted, reps come from the Supabase reps table instead; reps.json is optional.
-  if (!fs.existsSync(config.repsFile) && config.supabaseUrl) return new Map();
+  // Hosted, reps come from the Supabase reps table instead; reps.json is optional. Never crash on startup
+  // over it: /api/health says what's missing.
+  if (!fs.existsSync(config.repsFile)) {
+    if (!config.supabaseUrl) console.warn(`No ${path.basename(config.repsFile)} and no SUPABASE_URL: nobody can sign in until one is set.`);
+    return new Map();
+  }
   const reps = z.array(Rep).parse(JSON.parse(fs.readFileSync(config.repsFile, "utf8")));
   return new Map(reps.map((r) => [r.token, r]));
 }
