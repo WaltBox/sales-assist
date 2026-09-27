@@ -8,3 +8,4 @@ server/reps.json
 .cache/
 westgate/
 .swc/
+.claude/settings.local.json
