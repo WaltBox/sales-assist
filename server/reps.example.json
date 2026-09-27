@@ -1,0 +1,9 @@
+[
+  {
+    "token": "REPLACE-with-a-long-random-string-per-rep",
+    "name": "Walt Boxwell",
+    "email": "walt@westgatesupply.com",
+    "close_api_key": "api_REPLACE_with_this_rep's_own_Close_API_key",
+    "timezone": "America/Los_Angeles"
+  }
+]

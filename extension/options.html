@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Westgate Sales Assistant – Settings</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <style>
+    body { max-width: 460px; margin: 48px auto; padding: 0 16px; }
+    h1 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 28px; margin: 14px 0 6px; }
+    label { display: block; margin: 16px 0 6px; }
+    input, select { width: 100%; font: inherit; padding: 10px 12px; border-radius: 0; border: 1px solid var(--ink); background: var(--white); color: var(--ink); }
+    .row { margin-top: 22px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    #signed-in { margin-top: 18px; }
+    .linkbtn { background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: var(--ink); }
+  </style>
+</head>
+<body>
+  <img src="brand/world-mark-filled.svg" alt="" style="height:26px;width:auto">
+  <h1>Westgate Assistant</h1>
+  <p class="muted">Sign in with your Westgate email. New here? Create your account in the web app first: <a id="webapp" href="#" target="_blank" rel="noopener">open it</a>.</p>
+
+  <label class="label" for="server">Server address</label>
+  <input id="server" type="url" placeholder="http://localhost:3001">
+
+  <div id="signed-in" hidden>
+    <p>Signed in as <strong id="who"></strong>. <button id="signout" class="linkbtn">Sign out</button></p>
+  </div>
+  <div id="signin">
+    <label class="label" for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@westgatesupply.com">
+    <label class="label" for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+  </div>
+
+  <label class="label" for="theme-select">Theme</label>
+  <select id="theme-select">
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+    <option value="system">Match my computer</option>
+  </select>
+
+  <div class="row">
+    <button id="save" class="btn primary">Sign in</button>
+    <span id="status" class="muted" role="status"></span>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

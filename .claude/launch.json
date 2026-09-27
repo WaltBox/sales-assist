@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "demo",
+      "runtimeExecutable": "/Users/westgate/Desktop/westgate-sales-assistant/.node/bin/node",
+      "runtimeArgs": [
+        "/Users/westgate/Desktop/westgate-sales-assistant/server/node_modules/tsx/dist/cli.mjs",
+        "/Users/westgate/Desktop/westgate-sales-assistant/server/src/index.ts"
+      ],
+      "env": {
+        "DEMO": "1",
+        "PORT": "8787"
+      },
+      "port": 8787
+    },
+    {
+      "name": "demo-8788",
+      "runtimeExecutable": "/Users/westgate/Desktop/westgate-sales-assistant/.node/bin/node",
+      "runtimeArgs": [
+        "/Users/westgate/Desktop/westgate-sales-assistant/server/node_modules/tsx/dist/cli.mjs",
+        "/Users/westgate/Desktop/westgate-sales-assistant/server/src/index.ts"
+      ],
+      "env": {
+        "DEMO": "1",
+        "PORT": "8788",
+        "BRIEF_CACHE_FILE": "off"
+      },
+      "port": 8788
+    }
+  ]
+}
