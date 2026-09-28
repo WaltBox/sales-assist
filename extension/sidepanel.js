@@ -1048,7 +1048,7 @@ function renderPre() {
   page.append(el("section", { class: "chips" }, [
     el("span", { class: `tile grade ${b.rating}`, title: "Lead rating", text: b.rating }),
     el("span", { class: "chip3", text: `${FIT[b.rating] || "Fit"} · ${when}` }),
-    clock ? el("span", { id: "their-time", class: `chip3 ${clock.open ? "good" : "bad"}`, text: `${clock.time} there` }) : null,
+    clock ? el("span", { id: "their-time", class: `chip3 ${clock.open ? "good" : "bad"}`, text: `Their time ${clock.time}` }) : null,
     plan && plan.action === "call" && plan.due ? el("span", { class: "chip3 good", title: plan.reason, text: "Callback due" }) : null,
     plan && plan.action === "call" && !plan.due && plan.reason ? el("span", { class: "chip3 good", text: "They replied" }) : null,
     callsChip(h),
@@ -1557,7 +1557,7 @@ setInterval(() => {
 setInterval(() => {
   const c = document.getElementById("their-time");
   const clock = S && theirClock(S.header);
-  if (c && clock) { c.textContent = `${clock.time} there`; c.className = `chip ${clock.open ? "good" : "bad"}`; }
+  if (c && clock) { c.textContent = `Their time ${clock.time}`; c.className = `chip3 ${clock.open ? "good" : "bad"}`; }
 }, 30_000);
 
 // ---------- start ----------

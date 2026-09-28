@@ -114,9 +114,8 @@ test("send line card now: ready on the call screen, sent once to the address you
   const d: Deps = { close, llm: demoLlm, rep: { ...rep, closeUserId: "user_lcNow" } };
   const pre = await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod", "Anchors", "Beam clamps"] });
   assert.equal(pre.to, "", "no email on file for Rob yet: you type the one they give you");
-  assert.match(pre.body, /^Hi Rob,\n\nGreat talking just now\. Here's our line card \(attached\), as promised\./);
-  assert.match(pre.body, /threaded rod, anchors and beam clamps/);
-  assert.match(pre.body, /Mind replying "got it"/);
+  // Sent while they're on the phone: short and casual, like it was typed on the call (9/28).
+  assert.equal(pre.body, "Hi Rob,\n\nHere's our line card. We do threaded rod, anchors, beam clamps, plus a lot more.\n\nShoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.\n\nWalt Boxwell");
   assert.doesNotMatch(pre.body, /[—–]/);
   assert.equal(pre.subject, "Westgate Supply – line card");
 

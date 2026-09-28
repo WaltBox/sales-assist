@@ -22,10 +22,6 @@ export function nameFromEmail(addr: string): string | null {
   return w.length >= 3 && w.length <= 7 && !/^[^aeiouy]{2}/i.test(w) ? cap(w) : null;
 }
 
-function joinList(xs: string[]) {
-  return xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
-}
-
 /** The bump: they already have the line card, this just puts the thread back on top. */
 export function bumpBody(first: string | null, rep: string) {
   return stripDashes([
@@ -73,14 +69,14 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
       alreadySent: { at: when(lastCard), opened: cardOpened },
     };
   }
+  // Sent while they're on the phone, so it reads like it was typed on the call (Walt 9/28): short, casual.
+  const items = buys.map((b) => (/^[A-Z][a-z]/.test(b) ? b.charAt(0).toLowerCase() + b.slice(1) : b));
   const body = stripDashes([
     `Hi ${first ?? "there"},`,
-    "Great talking just now. Here's our line card (attached), as promised.",
-    buys.length ? `For a shop like yours we can cover ${joinList(buys.map((b) => (/^[A-Z][a-z]/.test(b) ? b.charAt(0).toLowerCase() + b.slice(1) : b)))}, and a lot more on the card.` : "",
-    "Mind replying \"got it\" when this comes through? Just want to make sure it didn't land in junk.",
-    "Whenever you've got an RFQ or a materials list, just reply here with it and I'll get pricing back to you fast.",
+    items.length ? `Here's our line card. We do ${items.join(", ")}, plus a lot more.` : "Here's our line card.",
+    "Shoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.",
     d.rep.name,
-  ].filter(Boolean).join("\n\n"));
+  ].join("\n\n"));
   return {
     to, name: contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, body, attach: true,
     reply: prior ? { id: prior.id, threadId: prior.thread_id ?? null, subject: prior.subject ?? "" } : null,

@@ -126,9 +126,9 @@ Call facts: Damon, purchasing manager; asked for line card at damon@hefco.com; t
 >
 > For a structural shop like yours we can cover the whole scope, not just the hardware. We stock and source beam, channel, angle, HSS, plate and bar with mill certs, plus all the bolting that goes on it: A325/A490 structural bolts, heavy hex nuts and F436 washers, anchor bolts, threaded rod, and hot-dip galvanized hardware. We're a national supplier, and one of our warehouses is right in Houston, so for you that means stock down the road instead of freight from across the country.
 >
-> Whenever the next job goes out for pricing, send the full list over in whatever format is easiest, steel and hardware together, and I'll get numbers back to you fast.
+> Send the full list for your next job over in whatever format is easiest, steel and hardware together, and I'll price it.
 >
-> Sounds like you've got RFQs coming up every couple of months, so I'll check back in around then. In the meantime, if anything comes up sooner, just shoot it my way.
+> If you have a list on your desk right now, send it over and I'll quote it.
 >
 > Have a great rest of your day!
 >

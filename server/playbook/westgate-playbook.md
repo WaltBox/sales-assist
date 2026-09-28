@@ -8,7 +8,7 @@ Westgate Supply is a **national** industrial supplier with warehouses in Oakland
 
 Location (update from Walt, 9/24 — this overrides the phrasing in §1 of the Email & Product Knowledge Playbook): never name a warehouse city (no "right in Houston", "outside Chicago", "in Oakland"). Say we're a national supplier that's **opening a local warehouse** in their area, e.g. "We're a national supplier, and we're opening a local warehouse in your area, so you'll get fast quotes and quick turnaround." "Opening" and "local warehouse" are the key words. The line is still optional: use it only when it earns its place (§1: they asked where we are, or mentioned lead times, freight, shipping, or a local supplier). Never say "Bay Area supplier" or claim to already be local to their city.
 
-The ask on every call is simple: send us a list or an open RFQ, in any format, and we'll get pricing back quickly.
+The ask on every call is simple: send us a list or an open RFQ, in any format, and we'll price it.
 
 ## Rating rubric
 
@@ -86,7 +86,7 @@ Trigger: Walt did not speak to the recipient. A receptionist or colleague gave t
 
 1. Who Walt spoke to + the one useful thing they said about the recipient, verbatim-ish from the transcript. No embellishing.
 2. One-sentence intro of Walt and Westgate, tuned to the company's industry (treatment plants, structural steel, machine shop, etc.), then "I've attached our line card so you can see the full range."
-3. Soft offer, no assumed relationship: "If any of your projects have an open RFQ or a materials list out for pricing, I'd be glad to put a quick quote together so you can see how we compare. Otherwise no rush at all."
+3. The offer, no assumed relationship: "If any of your projects have an open RFQ or a materials list out for pricing, send it over and I'll quote it."
 4. Next touch: if the gatekeeper said when the recipient is back, name it and say Walt will call then. Otherwise "I'll give you a call in the next few days to introduce myself."
 5. Friendly closer, "Walt Boxwell" on its own line.
 
@@ -98,16 +98,19 @@ Walt works for Westgate Supply: never write that he called, contacted, reached, 
 
 ## Emails push for the RFQ now — no follow-up dates (Walt, 9/24 — overrides §4 step 5)
 
-The goal of every email is to get an RFQ or list back now. Never tell the prospect when you'll follow up or check back ("I'll check back around Oct 15", "if I don't see it by Monday I'll call", "I'll reach out in a few weeks"): a date gives them a reason to hold the list until then. The follow-up task in Close still gets its date; the email just doesn't mention it. Instead, close with a reason to send something today, using what they said ("You mentioned you've always got open projects, so send over whatever's on your desk now and I'll get numbers back fast"). If you have to say you'll call, keep it untimed ("I'll give you a call") and only when the buyer wasn't reached.
+The goal of every email is to get an RFQ or list back now. Never tell the prospect when you'll follow up or check back ("I'll check back around Oct 15", "if I don't see it by Monday I'll call", "I'll reach out in a few weeks"): a date gives them a reason to hold the list until then. The follow-up task in Close still gets its date; the email just doesn't mention it. Instead, close with a reason to send something today, using what they said ("You mentioned you've always got open projects, so send over whatever's on your desk now and I'll price it"). If you have to say you'll call, keep it untimed ("I'll give you a call") and only when the buyer wasn't reached.
 
-## Past RFQ: offer, don't ask (Walt, 9/24)
-If they said "no RFQs right now": offer, don't ask. One chill sentence, e.g. "If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings." Skip it if they already said they'd send something (except "I'll send the next one," below: acknowledge it, then offer).
+## Ask for the RFQ plainly, no hedging (Walt, 9/28)
+All we want is their RFQ, so ask for it plainly. Never hedge or sweeten the ask: no "no strings," "no pressure," "no obligation," "no rush," "totally optional," "see how we stack up" or "how our numbers compare," no promises like "I'll get quotes back to you fast," and no "if something comes up." It sounds sketchy, like a pitch. Every email is checked for these; a draft with any of them is rewritten.
 
-- Other wordings to pick from (adapt names): "Totally optional, but if there's an old RFQ lying around, send it my way and I'll quote it so you have a comparison on hand." / "If you're curious how our numbers compare, shoot me a past PO sometime and I'll price it out. No pressure either way."
+## Past RFQ: ask plainly (Walt, 9/24; reworded 9/28)
+If they said "no RFQs right now": ask for a recent one to price, in one plain sentence, e.g. "Send over a recent RFQ or PO and I'll price it." Skip it if they already said they'd send something (except "I'll send the next one," below: acknowledge it, then ask).
+
+- Other wordings to pick from (adapt names): "If you have a recent RFQ or PO handy, send it my way and I'll quote it." / "Reply with a recent RFQ or PO and I'll price it for you."
 - Put it on its own line after the "what we'd supply for you" paragraph, before the closer.
 - Also skip it after a soft yes ("send your info and we'll consider you"), when they asked for a callback at a specific time, and for vendors and competitors.
 - Never: "shoot it over," "no obligation," anything that explains the strategy (side-by-side, what you paid versus us), more than one sentence, or an approval process or supplier list they didn't mention.
-- When they say "I'll send the next one," never ask for "something small" or "anything at all." Acknowledge the next one, then casually offer to price a past one. Optional, one sentence, no explaining why.
+- When they say "I'll send the next one," never ask for "something small" or "anything at all." Acknowledge the next one ("Send the next one over as soon as you have it"), then ask for a recent one to price. One plain sentence, no explaining why.
 - If they agree on the call to send a past RFQ, the task is "Confirm benchmark RFQ from {name} received; nudge if not", due in 2 business days, instead of the 3-week check-in.
 
 ## Line card emails ask for a "got it" (Walt, 9/26)

@@ -182,7 +182,7 @@ export function demoProposals(): Proposals {
     email: {
       to: [{ name: "Rob Roy", email: "rob@roddaelectric.com" }],
       subject: "Great talking with you – Westgate Supply line card",
-      body: "Hi Rob,\n\nI spoke with Renee this afternoon while you're out, and she suggested I send this your way. I've attached our line card so you and Renee both have it handy.\n\nFor an electrical contractor like Rodda we cover the hardware your crews go through every day: threaded rod, anchors, beam clamps, U-bolts and pipe supports, and hot-dip galvanized bolting, plus plate and angle for supports. We're a national supplier, and we're opening a local warehouse in your area, so you'll get fast quotes and quick turnaround.\n\nSend over any list in whatever format is easiest and I'll get pricing back to you fast.\n\nRenee mentioned she gets orders in daily, so send over any list whenever it's easiest.\n\nHave a great rest of your day!\n\nWalt Boxwell",
+      body: "Hi Rob,\n\nI spoke with Renee this afternoon while you're out, and she suggested I send this your way. I've attached our line card so you and Renee both have it handy.\n\nFor an electrical contractor like Rodda we cover the hardware your crews go through every day: threaded rod, anchors, beam clamps, U-bolts and pipe supports, and hot-dip galvanized bolting, plus plate and angle for supports. We're a national supplier, and we're opening a local warehouse in your area, so you'll get fast quotes and quick turnaround.\n\nSend over any list in whatever format is easiest and I'll price it.\n\nRenee mentioned she gets orders in daily, so send over any list whenever it's easiest.\n\nHave a great rest of your day!\n\nWalt Boxwell",
       attach_line_card: true,
       address_as_heard: "Rob. Rob. At Roda R O D Dalectric",
     },
@@ -205,7 +205,7 @@ function canned(schema: unknown, task: string): unknown {
     return {
       situation: "line_card_no_reply",
       last_touch: "tried you by phone this morning",
-      body: `Hi ${name}!\n\nJust bumping this back to the top of your inbox. Tried you by phone this morning too. Whenever you've got an RFQ or a list, just reply here and I'll get pricing back fast.\n\nWalt Boxwell`,
+      body: `Hi ${name}!\n\nJust bumping this back to the top of your inbox. Tried you by phone this morning too. Reply here with your RFQ or list and I'll price it.\n\nWalt Boxwell`,
     };
   }
   if (schema === BriefSchema) {

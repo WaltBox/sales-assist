@@ -26,6 +26,18 @@ test("accounts: the next step reads the calls and tasks, not just the emails", (
   assert.match(tammy.detail, /also a task open for Sep 28/);
   // Sent again on a call yesterday, not marked either way: give them a moment.
   assert.equal(nextStep({ ...base, seen: "not_opened", who: "Tammy", lastOut: "2026-09-25T18:00:00Z" }).kind, "waiting");
+  // Walt 9/28: talked to them or emailed them since the line card: off the list for a week, then back if still unseen.
+  const talked = nextStep({ ...base, seen: "not_opened", who: "Bud", lastTalk: "2026-09-25T17:00:00Z" });
+  assert.equal(talked.kind, "waiting");
+  assert.equal(talked.label, "Bud finding it · talked Sep 25");
+  assert.equal(talked.due, "2026-10-02T17:00:00.000Z");
+  assert.equal(nextStep({ ...base, seen: "not_opened", who: "Carlos", lastOut: "2026-09-24T16:00:00Z" }).label, "Carlos finding it · emailed Sep 24");
+  // A week on, still not opened and no RFQ: it's a rescue call again.
+  const later = { ...base, now: new Date("2026-10-03T18:00:00Z") };
+  assert.equal(nextStep({ ...later, seen: "not_opened", who: "Bud", lastTalk: "2026-09-25T17:00:00Z" }).kind, "rescue");
+  // A voicemail or a call before the line card went out doesn't count.
+  assert.equal(nextStep({ ...base, seen: "not_opened", lastTalk: null }).kind, "rescue");
+  assert.equal(nextStep({ ...base, seen: "not_opened", lastTalk: "2026-09-22T17:00:00Z" }).kind, "rescue");
   // They couldn't find it: back to a call, and check the address.
   assert.match(nextStep({ ...base, seen: "not_opened", who: "Tammy", lastOut: "2026-09-25T18:00:00Z", notFound: true, markedAt: "2026-09-25T18:05:00Z" }).label, /^Get a working email for Tammy$/);
   // A callback due today on an account that has seen it: just the callback.

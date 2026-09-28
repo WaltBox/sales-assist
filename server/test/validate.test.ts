@@ -121,7 +121,7 @@ test("chat: a failing rewrite is retried once, then the previous draft is kept",
 
 // ---------- cold intro via gatekeeper ----------
 
-const PROBST = "Hi Tracy,\n\nI called in this afternoon and spoke with Hannah. She mentioned you're helping the project teams with vendors and pricing right now, so she pointed me your way.\n\nI'm Walt with Westgate Supply. We're a national industrial supplier of pipe, fittings, flanges, gaskets and bolting, and we do a lot of work with teams building and operating treatment plants. I've attached our line card so you can see the full range.\n\nIf any of your projects have an open RFQ or a materials list out for pricing, I'd be glad to put a quick quote together so you can see how we compare. Otherwise no rush at all.\n\nHannah said you're back next week, so I'll give you a call then to introduce myself.\n\nHave a great rest of your day!\n\nWalt Boxwell";
+const PROBST = "Hi Tracy,\n\nI called in this afternoon and spoke with Hannah. She mentioned you're helping the project teams with vendors and pricing right now, so she pointed me your way.\n\nI'm Walt with Westgate Supply. We're a national industrial supplier of pipe, fittings, flanges, gaskets and bolting, and we do a lot of work with teams building and operating treatment plants. I've attached our line card so you can see the full range.\n\nIf any of your projects have an open RFQ or a materials list out for pricing, send it over and I'll quote it.\n\nHannah said you're back next week, so I'll give you a call then to introduce myself.\n\nHave a great rest of your day!\n\nWalt Boxwell";
 const referral: Referral = { gatekeeper: "Hannah", recipient: "Tracy Reading", said_about_recipient: "helping the project teams with vendors and pricing", back_when: "next week" };
 const HANNAH = "Hannah: Tracy Reading handles vendors, she's out until next week. tracy.reading@probstgroup.com";
 const tracy = (body: string): Email => ({ to: [{ name: "Tracy Reading", email: "tracy.reading@probstgroup.com" }], subject: "Westgate Supply – line card", body, attach_line_card: true, address_as_heard: null });
@@ -135,15 +135,15 @@ test("cold intro: Walt's Probst example passes every check", async () => {
 test("cold intro: implied history, RFQ pushes, the benchmark ask, missing parts, and length all fail", async () => {
   for (const [bad, why] of [
     [PROBST.replace("I called in this afternoon", "As we discussed, I called in this afternoon"), /already spoke with Walt/],
-    [PROBST.replace("Otherwise no rush at all.", "Otherwise no rush at all. Whenever you've got an RFQ, reply here."), /already spoke with Walt/],
-    [PROBST.replace("Otherwise no rush at all.", "Otherwise no rush at all. If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings."), /past RFQ/],
+    [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. Whenever you've got an RFQ, reply here."), /already spoke with Walt/],
+    [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings."), /past RFQ/],
     [PROBST.replace("You mentioned", "x").replace("She mentioned you're", "You mentioned you're"), /already spoke with Walt/],
     [PROBST.replace(" I've attached our line card so you can see the full range.", ""), /line card so you can see the full range/],
-    [PROBST.replace("Otherwise no rush at all.", ""), /soft offer/],
+    [PROBST.replace(" send it over and I'll quote it.", ""), /Missing the offer/],
     [PROBST.replace("Hannah said you're back next week, so I'll give you a call then to introduce myself.", "Talk soon."), /next touch/],
     [PROBST.replace("Hannah said you're back next week, so I'll give you a call then", "I'll give you a call in the next few days"), /back next week/],
     [PROBST.replace("I called in this afternoon and spoke with Hannah. She mentioned", "I heard"), /Doesn't open with who Walt spoke to/],
-    [PROBST.replace("Otherwise no rush at all.", "Otherwise no rush at all. We stock a deep range of grades and finishes and ship fast from several locations nationwide.".repeat(2)), /under 130/],
+    [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. We stock a deep range of grades and finishes and ship fast from several locations nationwide.".repeat(2)), /under 130/],
   ] as Array<[string, RegExp]>) {
     assert.ok((await introRules(bad)).some((p) => why.test(p)), `${why}: ${await introRules(bad)}`);
   }
@@ -163,4 +163,21 @@ test("cold intro: the email step gets the standard, and the subject and line car
   assert.equal(x.email!.body, PROBST);
   assert.match(tasks[0], /COLD INTRO VIA GATEKEEPER: Walt did not speak to Tracy Reading; Hannah gave/);
   assert.match(tasks[0], /Hannah said they're back next week/);
+});
+
+test("every email: hedging the ask fails and gets rewritten (Walt 9/28)", async () => {
+  const c = await ctx();
+  const hedging = async (line: string) =>
+    ruleChecks(tracy(`Hi Tracy,\n\nI've attached our line card.\n\n${line}\n\nWalt Boxwell`), c, HANNAH, "Walt Boxwell").filter((f) => f.rule === "hedging");
+  for (const line of [
+    "If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings.",
+    "No strings. When something comes up, send it over and I'll get quotes back to you fast.",
+    "Totally optional, but send an old RFQ so you have a comparison on hand.",
+    "If you're curious how our numbers compare, send a past PO. No pressure either way.",
+    "Whenever anything comes up, just reply here.",
+  ]) assert.equal((await hedging(line)).length > 0, true, line);
+  // A plain ask is fine.
+  for (const line of ["Send over a recent RFQ or PO and I'll price it.", "Reply here with your RFQ or list and I'll price it."]) {
+    assert.deepEqual(await hedging(line), [], line);
+  }
 });

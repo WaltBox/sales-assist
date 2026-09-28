@@ -9,7 +9,7 @@ import type { Proposals } from "./schemas.js";
 // fails any check is regenerated; a failing draft is never saved to Close.
 // Every rejection is logged with the rule it broke.
 
-export const RULES = ["identity", "who_said_what", "recipient_readback", "names", "dashes", "intro_format"] as const;
+export const RULES = ["identity", "who_said_what", "recipient_readback", "names", "dashes", "intro_format", "hedging"] as const;
 export type Rule = (typeof RULES)[number];
 export type Failure = { rule: Rule; sentence: string | null; problem: string };
 
@@ -25,6 +25,12 @@ const IDENTITY = [
   /\bWestgate (told|let) me\b/i,
 ];
 
+/**
+ * Hedging that makes the ask sound like a pitch (Walt 9/28: "sounds sketch; all we want is their RFQ").
+ * No sweeteners, no "see how we compare", no speed promises, no "whenever something comes up".
+ */
+export const HEDGE = /\bno strings\b|\bno pressure\b|\bno obligation\b|\bno rush\b|\btotally optional\b|\bstack up\b|\bhow (we|our (numbers|prices|pricing)) compare\b|\bsee how we compare\b|\bcomparison on hand\b|\b(get|have|turn) (the )?(quotes?|pricing|numbers|prices) (back )?(to you )?(fast|quick(ly)?|in no time)\b|\b(if|when|whenever) (something|anything) comes up\b/i;
+
 const sentences = (body: string) => body.split(/\n\s*\n|(?<=[.!?])\s+(?=[A-Z"'])/).map((s) => s.trim()).filter(Boolean);
 const first = (name: string) => name.trim().split(/\s+/)[0].replace(/[^A-Za-z'-]/g, "").toLowerCase();
 const GREETING = /^(?:hi|hello|hey|good (?:morning|afternoon|evening)|dear)\s+([A-Z][A-Za-z'-]+)/i;
@@ -38,6 +44,9 @@ export function ruleChecks(email: Email, ctx: LeadContext, transcript: string | 
   if (opts.intro) out.push(...introChecks(email, opts.intro));
   for (const s of sentences(body)) {
     if (IDENTITY.some((r) => r.test(s))) out.push({ rule: "identity", sentence: s, problem: `Phrases Westgate as someone ${repName.split(" ")[0]} contacted; he works for Westgate ("I'm ${repName.split(" ")[0]} with Westgate Supply").` });
+  }
+  for (const s of sentences(body)) {
+    if (HEDGE.test(s)) out.push({ rule: "hedging", sentence: s, problem: "Hedges the ask (no strings, no pressure, see how we compare, quotes back fast, if something comes up). Just ask for their RFQ." });
   }
   if (/[—–]/.test(body)) out.push({ rule: "dashes", sentence: sentences(body).find((s) => /[—–]/.test(s)) ?? null, problem: "Em or en dash in the body." });
 
@@ -84,7 +93,7 @@ export function ruleChecks(email: Email, ctx: LeadContext, transcript: string | 
 export type Referral = { gatekeeper: string; recipient: string; said_about_recipient: string | null; back_when: string | null };
 
 export const INTRO_SUBJECT = "Westgate Supply – line card";
-export const INTRO_OFFER = "If any of your projects have an open RFQ or a materials list out for pricing, I'd be glad to put a quick quote together so you can see how we compare. Otherwise no rush at all.";
+export const INTRO_OFFER = "If any of your projects have an open RFQ or a materials list out for pricing, send it over and I'll quote it.";
 /** Nothing that implies the recipient already spoke with Walt, and no RFQ push or past-RFQ ask. */
 const INTRO_NEVER = /\byou mentioned\b|\bas we discussed\b|\bas discussed\b|\bour (call|conversation|chat)\b|\bgreat (talking|speaking|chatting) with you\b|\bthanks for (taking )?(my|the) call\b|\breply here\b|\bjust reply (to this email )?with\b|\bwhenever you('ve| have) got an rfq\b|\bstack up\b|\bno strings\b|\b(recent|past|old) (rfq|po)\b|\bprice it\b/i;
 
@@ -102,7 +111,7 @@ function introChecks(email: Email, r: Referral): Failure[] {
   const opening = sentences(body).slice(0, 3).join(" ").toLowerCase();
   if (gk && !opening.includes(gk)) fail(`Doesn't open with who Walt spoke to (${r.gatekeeper}).`);
   if (!/attached our line card so you can see the full range/i.test(body)) fail(`Missing "I've attached our line card so you can see the full range."`);
-  if (!/open RFQ or a materials list out for pricing/i.test(body) || !/no rush at all/i.test(body)) fail(`Missing the soft offer: "${INTRO_OFFER}"`);
+  if (!/open RFQ or a materials list out for pricing/i.test(body) || !/send it over and I(?:'|’)ll quote it/i.test(body)) fail(`Missing the offer: "${INTRO_OFFER}"`);
   if (!/\b(give you a call|call you)\b/i.test(body)) fail("Missing the next touch (when Walt will call to introduce himself).");
   if (r.back_when && !body.toLowerCase().includes(r.back_when.toLowerCase().replace(/^(on|until) /, ""))) fail(`${r.gatekeeper} said ${first(r.recipient)} is back ${r.back_when}; the next-touch line should name it.`);
   return out;

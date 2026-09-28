@@ -36,16 +36,21 @@ test("past-RFQ offer: when there's nothing open, and when it stays out", async (
 
 const paras = (e: Proposals["email"]) => e!.body.split("\n\n");
 
-test("the offer is one casual line after what we'd supply, before the closer", () => {
+test("the ask is one plain line after what we'd supply, before the closer", () => {
   const w: string[] = [];
   const out = paras(enforceBenchmark(email(BODY), true, w));
   assert.ok(OFFERS.includes(out[3]));
   assert.equal(out[4], "Have a great rest of your day.");
   assert.equal(out.length, 6);
   assert.match(w[0], /Added the one-line past-RFQ offer/);
-  // The model's own clean line (with a short sign-off) stays as written.
-  const own = BODY.replace("Have a great", "If you're curious how our numbers compare, send me an old PO and I'll price it. No pressure either way.\n\nHave a great");
+  // The model's own plain line stays as written.
+  const own = BODY.replace("Have a great", "If you've got an old PO handy, send it over and I'll price it.\n\nHave a great");
   assert.equal(enforceBenchmark(email(own), true, [])!.body, own);
+  // Walt 9/28: a hedged one ("no pressure", "see how our numbers compare") is swapped for a plain ask.
+  const hedged = BODY.replace("Have a great", "If you're curious how our numbers compare, send me an old PO and I'll price it. No pressure either way.\n\nHave a great");
+  const h = paras(enforceBenchmark(email(hedged), true, []));
+  assert.ok(OFFERS.includes(h[3]), h[3]);
+  assert.doesNotMatch(h.join(" "), /no pressure|numbers compare/i);
 });
 
 test("an offer that explains the strategy or pushes is replaced with Walt's wording", () => {
@@ -56,10 +61,14 @@ test("an offer that explains the strategy or pushes is replaced with Walt's word
   assert.doesNotMatch(out.join(" "), /shoot it over|no obligation|side-by-side|what you paid/i);
   assert.match(w[0], /Rewrote/);
   // Tucked into the supply paragraph: pulled out onto its own line, supply paragraph intact.
-  const tucked = BODY.replace("and beam clamps.", "and beam clamps. If you ever want to see how we stack up, send over a recent RFQ and I'll price it, no strings.");
+  const tucked = BODY.replace("and beam clamps.", "and beam clamps. Send over a recent RFQ and I'll price it.");
   const t = paras(enforceBenchmark(email(tucked), true, []));
   assert.equal(t[2], "For Rodda we cover threaded rod, anchors, and beam clamps.");
-  assert.equal(t[3], "If you ever want to see how we stack up, send over a recent RFQ and I'll price it, no strings.");
+  assert.equal(t[3], "Send over a recent RFQ and I'll price it.");
+  // The same, hedged ("see how we stack up", "no strings"): pulled out and replaced with a plain ask.
+  const tuckedHedge = paras(enforceBenchmark(email(BODY.replace("and beam clamps.", "and beam clamps. If you ever want to see how we stack up, send over a recent RFQ and I'll price it, no strings.")), true, []));
+  assert.equal(tuckedHedge[2], "For Rodda we cover threaded rod, anchors, and beam clamps.");
+  assert.ok(OFFERS.includes(tuckedHedge[3]), tuckedHedge[3]);
   // An approval process or supplier list the buyer never mentioned.
   const approval = BODY.replace("Have a great", "Send me an old PO and I'll quote it, so you have something to run through your approval process.\n\nHave a great");
   assert.ok(OFFERS.includes(paras(enforceBenchmark(email(approval), true, [], { transcript: "Nothing right now." }))[3]));
@@ -87,8 +96,8 @@ test("'I'll send the next one': offer to price a past one, never ask for somethi
   assert.equal(out[3], `Sounds good, send the next one my way whenever it comes up. ${OFFERS[0]}`);
   assert.doesNotMatch(out.join(" "), /something small|anything at all/);
   assert.match(w.join(" "), /Took out asking for something now/);
-  // The model's own offer right after the acknowledgment stays put.
-  const good = BODY.replace("Have a great", "Sounds good, I'll watch for the next one. If you're curious how our numbers compare, shoot me a past PO sometime and I'll price it out.\n\nHave a great");
+  // The model's own plain ask right after the acknowledgment stays put.
+  const good = BODY.replace("Have a great", "Sounds good, send the next one over as soon as you have it. If you have a past PO handy, send it my way and I'll price it.\n\nHave a great");
   assert.equal(enforceBenchmark(email(good), true, [], { nextOne: true })!.body, good);
 });
 

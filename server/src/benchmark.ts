@@ -1,19 +1,21 @@
 import type { LeadContext } from "./context.js";
 import { businessDaysAt, isoWithOffset } from "./rules.js";
 import type { Proposals } from "./schemas.js";
+import { HEDGE } from "./validate.js";
 
-// The past-RFQ offer (Walt 9/24): when a buyer has nothing open, the follow-up
-// email offers, in one casual sentence, to price a past RFQ or PO. It's an
-// offer, not a request, and the buyer should feel zero obligation.
+// The past-RFQ ask (Walt 9/24, reworded 9/28): when a buyer has nothing open, the
+// follow-up email asks, in one plain sentence, for a recent RFQ or PO to price.
+// No hedging ("no strings", "no pressure", "see how we stack up"): it sounds like a
+// pitch. All we want is their RFQ.
 
 // Phrases that mean "no current RFQ". The model flags paraphrases too.
 export const NO_RFQ = /nothing (right )?now|no open rfqs?|no rfqs right now|bought for the year|nothing going on|not at the moment|maybe in a couple (of )?months|here and there/i;
 
-/** Walt's wording. The model picks one and adapts it; the server falls back to these. */
+/** Plain asks. The model picks one and adapts it; the server falls back to these. */
 export const OFFERS = [
-  "If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings.",
-  "Totally optional, but if there's an old RFQ lying around, send it my way and I'll quote it so you have a comparison on hand.",
-  "If you're curious how our numbers compare, shoot me a past PO sometime and I'll price it out. No pressure either way.",
+  "Send over a recent RFQ or PO and I'll price it.",
+  "If you have a recent RFQ or PO handy, send it my way and I'll quote it.",
+  "Reply with a recent RFQ or PO and I'll price it for you.",
 ];
 
 /** A sentence that's making the past-RFQ offer, however it was worded. */
@@ -60,7 +62,7 @@ export function hasBenchmark(body: string) {
 }
 
 function acceptable(sentence: string, transcript: string) {
-  if (NEVER.test(sentence) || sentence.split(/\s+/).length > 32) return false;
+  if (NEVER.test(sentence) || HEDGE.test(sentence) || sentence.split(/\s+/).length > 32) return false;
   return UNMENTIONED.every((u) => !u.bad.test(sentence) || u.said.test(transcript));
 }
 

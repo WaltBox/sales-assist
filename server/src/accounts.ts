@@ -18,6 +18,11 @@ const DAY = 24 * 3600 * 1000;
 export const BUMP_AFTER_DAYS = 7;
 /** Not opened by a person after this long: rescue it (call, send it again while they're on the phone). */
 export const RESCUE_AFTER_DAYS = 2;
+/**
+ * Walt 9/28: once you've talked to them or emailed them, a rescue account drops off the list for this long,
+ * then comes back if they still haven't opened the line card or sent an RFQ.
+ */
+export const HOLD_AFTER_TOUCH_DAYS = 7;
 
 export type Seen = "bounced" | "replied" | "confirmed" | "opened" | "maybe" | "not_opened";
 export type NextKind = "reply" | "quote" | "call_due" | "rescue" | "bump" | "scheduled" | "waiting";
@@ -214,6 +219,11 @@ export function buildAccount(x: {
   if (bounce) events.push({ at: at(bounce), kind: "filter", text: blocked ? `Their mail server blocked it: ${toAddr} never got it` : `Bounced: ${toAddr} didn't take it` });
   if (quoteMail) events.push({ at: at(quoteMail), kind: "quote", text: `Quote sent: ${quoteMail.subject ?? ""}` });
   const since = new Date(new Date(t0).getTime() - 3 * DAY).toISOString(); // the call that led to the line card, too
+  // A real conversation since the line card went out (not a voicemail, not a pickup that hung up).
+  const lastTalk = x.calls
+    .filter((c) => c.direction === "outbound" && c.date_created > t0 && c.disposition === "answered" && c.duration >= 20
+      && !/voicemail/i.test(c.note ?? ""))
+    .map((c) => c.date_created).sort().pop() ?? null;
   for (const c of x.calls.filter((c) => c.date_created >= since && c.direction === "outbound")) {
     // Close marks a voicemail pickup "answered" too, so this says connected, not talked; the note says what happened.
     const connected = c.disposition === "answered" && c.duration >= 20;
@@ -234,7 +244,7 @@ export function buildAccount(x: {
     rescueDraft: x.rescueDraft && !outgoing.some((e) => e.id === x.rescueDraft) ? { id: x.rescueDraft } : null,
     opens: { person: person.length, maybe: maybe.length, filter: filter.length, last: person.map((o) => o.opened_at).pop() ?? null, app: appOf(person[0]?.user_agent) },
     next: scheduledBump(x.autos, d.rep.timeZone, (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null) ?? nextStep({
-      seen, cardSentAt: t0, lastOut, lastIn, rfqPromised, tasks: x.tasks, now, tz, company: lead?.display_name ?? "",
+      seen, cardSentAt: t0, lastOut, lastIn, lastTalk, rfqPromised, tasks: x.tasks, now, tz, company: lead?.display_name ?? "",
       who: (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null, notFound, markedAt: lastMark?.date_created ?? null, rfq, bounced: bounce ? (blocked ? "blocked" : "bounced") : null, toAddr, autoOn: x.autoOn,
     }),
     events,
@@ -249,6 +259,8 @@ export function buildAccount(x: {
  */
 export function nextStep(a: {
   seen: Seen; cardSentAt: string; lastOut: string; lastIn: string | null; rfqPromised: boolean;
+  /** The last real conversation since the line card went out (connected, not a voicemail). */
+  lastTalk?: string | null;
   tasks: Array<{ text: string; date: string }>; now: Date; tz: string; company?: string;
   who?: string | null; notFound?: boolean; markedAt?: string | null;
   rfq?: Account["rfq"]; bounced?: "blocked" | "bounced" | null; toAddr?: string;
@@ -289,9 +301,19 @@ export function nextStep(a: {
   }
 
   if (unseen && days(a.cardSentAt) >= RESCUE_AFTER_DAYS) {
-    // Resent on a call in the last two days and not marked either way: give them a moment to find it.
-    const resent = a.lastOut > a.cardSentAt && days(a.lastOut) < RESCUE_AFTER_DAYS && !(a.markedAt && a.markedAt >= a.lastOut);
-    if (resent && !a.notFound) return n("waiting", "Wait", `${who ?? "They"} finding it · resent ${short(a.lastOut)}`, `Sent again on ${short(a.lastOut)}. Waiting for ${who ?? "them"} to find it; if nothing by ${short(plus(a.lastOut, RESCUE_AFTER_DAYS))}, call again.`, plus(a.lastOut, RESCUE_AFTER_DAYS));
+    // Walt 9/28: you talked to them or emailed them since the line card: off the list for a few days, then back
+    // if they still haven't opened it or sent an RFQ. (A "couldn't find it" mark from that call still shows now.)
+    const emailed = a.lastOut > a.cardSentAt ? a.lastOut : null;
+    const talked = a.lastTalk && a.lastTalk > a.cardSentAt ? a.lastTalk : null;
+    const touch = [emailed, talked].filter((t): t is string => !!t).sort().pop() ?? null;
+    const marked = !!(touch && a.markedAt && a.markedAt >= touch);
+    if (touch && days(touch) < HOLD_AFTER_TOUCH_DAYS && !a.notFound && !marked) {
+      const back = plus(touch, HOLD_AFTER_TOUCH_DAYS);
+      const how = touch === talked ? `talked ${short(touch)}` : `emailed ${short(touch)}`;
+      return n("waiting", "Wait", `${who ?? "They"} finding it · ${how}`,
+        `You ${touch === talked ? "talked to" : "emailed"} ${who ?? "them"} on ${short(touch)}. It's off the list until ${short(back)}; if the line card still isn't opened and no RFQ has come by then, it's back as a call.`,
+        back);
+    }
     const task = due ? " There's also a callback due today." : later ? ` There's also a task open for ${short(later.date)}.` : "";
     if (a.notFound) return n("rescue", "Call", `Get a working email for ${who ?? co}`, `${who ?? "They"} couldn't find the line card last time. Confirm the email address, then send it again while you have them.${task}`, plus(a.cardSentAt, RESCUE_AFTER_DAYS), true);
     return n("rescue", "Call", who ? `Get the line card in front of ${who}` : "Get the line card seen",
