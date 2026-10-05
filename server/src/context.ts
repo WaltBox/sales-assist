@@ -39,6 +39,8 @@ export type LeadContext = {
   statuses: CloseStatus[];
   customFieldNames: Record<string, string>;
   facts: Facts;
+  /** The opener the rep already used on this lead (newest), from a "[Said on the call]" note. */
+  saidOpener?: string | null;
 };
 
 export async function loadLeadContext(close: CloseClient, leadId: string, now = new Date()): Promise<LeadContext> {
@@ -46,13 +48,16 @@ export async function loadLeadContext(close: CloseClient, leadId: string, now = 
   const [lead, calls, notes, tasks, statuses, fields] = await Promise.all([
     close.lead(leadId),
     close.calls({ leadId, since, max: 200 }),
-    close.notes(leadId),
+    close.notes(leadId, 30),
     close.openTasks(leadId),
     close.leadStatuses(),
     close.leadCustomFields(),
   ]);
   const customFieldNames = Object.fromEntries(fields.map((f) => [f.id, f.name]));
-  return { lead, contacts: lead.contacts ?? [], calls, notes, tasks, statuses, customFieldNames, facts: computeFacts(lead, customFieldNames, now) };
+  // The call screen's saved "Say" lines are kept apart: not call notes, but the opener already used (Walt 10/1).
+  const isSaid = (n: CloseNote) => n.note.startsWith("Opener:") || n.note.startsWith("[Said on the call]");
+  const saidOpener = notes.filter(isSaid).map((n) => n.note.replace(/^(Opener:|\[Said on the call\])\s*/, "").trim()).find((t) => /^Hi\b[^.]*this is/i.test(t)) ?? null;
+  return { lead, contacts: lead.contacts ?? [], calls, notes: notes.filter((n) => !isSaid(n)).slice(0, 10), tasks, statuses, customFieldNames, facts: computeFacts(lead, customFieldNames, now), saidOpener };
 }
 
 function customByName(lead: CloseLead, names: Record<string, string>): Record<string, unknown> {
@@ -143,7 +148,11 @@ export function renderContext(ctx: LeadContext, rep: RepInfo, opts: { now?: Date
     const inMinutes = (m: number) => { const t = new Date(now.getTime() + m * 60000); const p = localParts(t, tz); return zonedTime(p.year, p.month, p.day, p.hour, p.minute, tz); };
     lines.push(`- Right now it is ${at(inMinutes(0))} their time (the call just ended). Short-notice callbacks: in 15 min = ${at(inMinutes(15))}; in 20 min = ${at(inMinutes(20))}; in 30 min = ${at(inMinutes(30))}; in 45 min = ${at(inMinutes(45))}.`);
     lines.push(`- Same-day callbacks, their time: in 1 hour = ${at(inHours(1))}; in 2 hours = ${at(inHours(2))}; in 3 hours = ${at(inHours(3))}. For "an hour or two" use the earlier one; don't push a same-day callback to tomorrow. Times people say on the call ("he leaves at 2:30") are in THEIR time zone; if they gave a latest time, the callback must be before it and "deadline" must be set.`);
-    lines.push(`- Follow-up due dates, their time: next business day 10:00 AM = ${at(businessDaysAt(tz, now, 1, 10, 0))}; 2 business days 10:00 AM = ${at(businessDaysAt(tz, now, 2, 10, 0))}; 3 business days = ${at(businessDaysAt(tz, now, 3, 10, 0))}; 3 weeks = ${at(weeks(3))}; 7 weeks ("couple of months") = ${at(weeks(7))}; first week of December = ${at(firstDecWeek)}`);
+    // The other half of the day from this call (Walt 9/29): morning call → 2:00 PM, afternoon call → 9:30 AM.
+    const am = localParts(now, tz).hour < 12;
+    const flip = (n: number) => businessDaysAt(tz, now, n, am ? 14 : 9, am ? 0 : 30);
+    lines.push(`- Buyer not reached (voicemail, gatekeeper, line card emailed to someone not on the call): 2 business days, other half of the day from this call = ${at(flip(2))}. Never the next business day after someone picked up (Walt 9/30: not two days in a row). A plain no answer: next business day, other half = ${at(flip(1))}.`);
+    lines.push(`- Follow-up due dates, their time: next business day 10:00 AM = ${at(businessDaysAt(tz, now, 1, 10, 0))}; 2 business days 10:00 AM = ${at(businessDaysAt(tz, now, 2, 10, 0))}; 3 business days = ${at(businessDaysAt(tz, now, 3, 10, 0))}; 2 weeks = ${at(weeks(2))}; 3 weeks = ${at(weeks(3))}; 7 weeks ("couple of months") = ${at(weeks(7))}; first week of December = ${at(firstDecWeek)}`);
   }
   lines.push(`- Available lead statuses: ${ctx.statuses.map((s) => s.label).join(", ")}`);
   if (opts.stats) lines.push(`- Rep's calls today (since ${opts.stats.since}): ${opts.stats.dials} dials, ${opts.stats.connects} connects (answered)`);

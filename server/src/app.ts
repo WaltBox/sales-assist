@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import {
-  afterCall, afterCallExtras, applyProposals, callState, DuplicateApplyError, leadBrief, leadChat, listStatus, repLines, repStats, warmAfterLead, warmAhead, type Close, type Deps, type Llm,
+  afterCall, afterCallExtras, applyProposals, callState, DuplicateApplyError, leadBrief, leadChat, listStatus, repLines, repStats, saveSaid, warmAfterLead, warmAhead, type Close, type Deps, type Llm,
 } from "./assistant.js";
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
@@ -12,14 +12,15 @@ import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
 import {
-  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, sweep, waitingFor,
+  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, sweep, waitingFor,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { LineCardError, lineCardFor, sendLineCard } from "./linecard.js";
-import { accountsBoard, ensureRescueDrafts, markRescue, RescueError, rescueFor, sendRescue } from "./accounts.js";
-import { automationsView, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations } from "./automations.js";
-import { dayStats, periodDetail, periodStats, weekStats } from "./stats.js";
+import { listMemes, MemeError, memesSeen, pickMeme } from "./memes.js";
+import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
+import { accountsBoard, advanceStatus, ensureRescueDrafts, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { automationsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
+import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, writeFollowUp } from "./followup.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
@@ -54,13 +55,14 @@ export function createApp(appDeps: AppDeps) {
   // What's configured (never the values): the first thing to check on a new deploy.
   app.get("/api/health", (_req, res) => {
     const missing = [
-      !process.env.ANTHROPIC_API_KEY && !config.demo ? "ANTHROPIC_API_KEY" : null,
+      config.provider === "openai" && !process.env.OPENAI_API_KEY && !config.demo ? "OPENAI_API_KEY" : null,
+      config.provider === "claude" && !process.env.ANTHROPIC_API_KEY && !config.demo ? "ANTHROPIC_API_KEY" : null,
       process.env.VERCEL && !config.supabaseUrl ? "SUPABASE_URL" : null,
       process.env.VERCEL && !config.supabaseKey ? "SUPABASE_SERVICE_ROLE_KEY" : null,
       process.env.VERCEL && !config.sessionSecret ? "SESSION_SECRET" : null,
       process.env.VERCEL && !config.cronSecret ? "CRON_SECRET" : null,
     ].filter(Boolean);
-    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", reps: appDeps.reps.size, missing });
+    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", reps: appDeps.reps.size, provider: config.provider === "openai" && process.env.OPENAI_API_KEY ? `openai (${config.openaiModel}, fast: ${config.openaiFastModel})` : `claude (${config.model})`, backup: config.provider === "openai" ? (process.env.ANTHROPIC_API_KEY ? "claude" : null) : (process.env.OPENAI_API_KEY ? config.openaiModel : null), missing });
   });
 
   // Reps: reps.json (local) plus whoever signed up (the store: a file locally, Supabase when hosted).
@@ -224,6 +226,8 @@ export function createApp(appDeps: AppDeps) {
     return stats;
   }));
   app.get("/api/stats/week", authed, route(async (_req, d) => weekStats(d)));
+  // RFQs over time, for the growth line on the RFQs page.
+  app.get("/api/stats/rfqs", authed, route(async (req, d) => rfqTimeline(d, { fresh: req.query.fresh === "1" })));
   // Today / this week / this month / all time: the same counts for any period.
   app.get("/api/stats/period/detail", authed, route(async (req, d) => periodDetail(d,
     z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "today"),
@@ -240,21 +244,72 @@ export function createApp(appDeps: AppDeps) {
   // Automatic emails: what's going out today and why, what went out, what was skipped or stopped.
   app.get("/api/automations", authed, route((_req, d) => automationsView(d)));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));
+  app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));
+  // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.
+  app.post("/api/automations/send-now", authed, route((req, d) => sendBumpsNow(d, {
+    leadIds: Array.isArray(req.body?.lead_ids) ? req.body.lead_ids.map(String) : [],
+    variant: typeof req.body?.variant === "string" ? req.body.variant : null,
+    stagger: typeof req.body?.stagger === "number" ? req.body.stagger : 2,
+    test: req.body?.test === true,
+  })));
   app.post("/api/leads/:leadId/hold", authed, route((req, d) => holdAccount(d, leadId(req), req.body?.hold !== false)));
+  // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
+  app.get("/api/memes", authed, route(async (req, d) => {
+    const memes = await listMemes();
+    const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
+    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name) })), folder: "server/memes" };
+  }));
+  app.post("/api/automations/meme", authed, route((req, d) => pickMeme(d, z.string().min(3).max(100).parse(req.body?.lead_id), req.body?.meme === null ? null : z.string().min(1).max(200).parse(req.body?.meme))));
   app.post("/api/automations/:id/skip", authed, route((req, d) => skipAutomation(d, z.string().min(3).max(100).parse(req.params.id))));
   // "Send line card now": the email is ready on the call screen; it goes out while they're on the phone.
-  const LineCardReq = z.object({ to: z.string().max(200).optional().nullable(), ask_for: z.string().max(120).optional().nullable(), buys: z.array(z.string().max(80)).max(12).optional() });
-  app.post("/api/leads/:leadId/linecard/preview", authed, route((req, d) => {
+  const LineCardReq = z.object({ to: z.string().max(200).optional().nullable(), name: z.string().max(80).optional().nullable(), referred_by: z.string().max(80).optional().nullable(), ask_for: z.string().max(120).optional().nullable(), buys: z.array(z.string().max(80)).max(12).optional(), cold: z.boolean().optional(), meme: z.string().max(200).nullable().optional() });
+  // The meme picked in the side panel (10/2): a name from the memes folder, one this company hasn't had.
+  const pickedMeme = async (d: Deps, lead: string, name: string | null | undefined) => {
+    if (name === undefined) return undefined;
+    if (name === null) return null;
+    const m = (await listMemes({ sync: false })).find((x) => x.name === name);
+    if (!m) throw new MemeError(`There's no meme called "${name}".`);
+    if ((await memesSeen(d)).get(lead)?.has(name)) throw new MemeError("They've already had that meme. Pick another.");
+    return m;
+  };
+  app.post("/api/leads/:leadId/linecard/preview", authed, route(async (req, d) => {
     const b = LineCardReq.parse(req.body ?? {});
-    return lineCardFor(d, leadId(req), { to: b.to ?? null, askFor: b.ask_for ?? null, buys: b.buys });
+    return lineCardFor(d, leadId(req), { to: b.to ?? null, name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme) });
   }));
-  app.post("/api/leads/:leadId/linecard/send", authed, route((req, d) => {
+  app.post("/api/leads/:leadId/linecard/send", authed, route(async (req, d) => {
     const b = LineCardReq.parse(req.body ?? {});
-    return sendLineCard(d, leadId(req), { to: b.to ?? "", askFor: b.ask_for ?? null, buys: b.buys });
+    return sendLineCard(d, leadId(req), { to: b.to ?? "", name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme) });
+  }));
+  // Checked a few times after a send, so a bounce shows on the call screen while they're still on the phone.
+  app.get("/api/leads/:leadId/linecard/bounce", authed, route((req, d) =>
+    lineCardBounce(d, leadId(req), z.string().email().max(200).parse(req.query.to), z.string().datetime({ offset: true }).parse(req.query.since))));
+  // "They got it" ticked on the call screen: a [Got it] note in Close, which the automations read.
+  app.post("/api/leads/:leadId/linecard/got-it", authed, route((req, d) => markRescue(d, leadId(req), true, typeof req.body?.name === "string" ? req.body.name.slice(0, 80) : null, "call")));
+  // The call screen's "Say" text, as a note in Close, once per call (Walt 10/1).
+  app.post("/api/leads/:leadId/said", authed, route((req, d) => saveSaid(d, leadId(req), z.string().min(5).max(1000).parse(req.body?.text), typeof req.body?.call_id === "string" ? req.body.call_id.slice(0, 100) : null)));
+  // "RFQ came in" (another inbox, a call, a text): an [RFQ received] note in Close (Mitchell Concrete, 9/29).
+  app.post("/api/leads/:leadId/rfq-received", authed, route((req, d) => markRfqReceived(d, leadId(req), typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null)));
+  // Where an RFQ stands, set by the rep ("With pricing · Berni has it"): a [RFQ status] note in Close.
+  // "Shot down" from the side panel (Walt 10/5): Not Interested in Close, callbacks cleared, and out of the
+  // automatic emails: a bump already scheduled is pulled back and the unsent rescue draft goes.
+  app.post("/api/leads/:leadId/not-interested", authed, route(async (req, d) => {
+    const id = leadId(req);
+    if (req.body?.undo === true) return undoNotInterested(d, id, typeof req.body?.prev_status === "string" ? req.body.prev_status.slice(0, 80) : null);
+    const r = await markNotInterested(d, id, typeof req.body?.note === "string" ? req.body.note.slice(0, 300) : null);
+    await stopScheduledFor(d, id, "you marked them not interested.").catch((e) => console.error(`[shot down ${id}] scheduled bump:`, (e as Error).message));
+    await dropRescueDraft(d, id).catch((e) => console.error(`[shot down ${id}] rescue draft:`, (e as Error).message));
+    const queued = await queueShotDown(d, id, { call_id: typeof req.body?.call_id === "string" ? req.body.call_id.slice(0, 100) : null, note: typeof req.body?.note === "string" ? req.body.note.slice(0, 300) : null })
+      .catch((e) => { console.error(`[shot down ${id}] review:`, (e as Error).message); return null; });
+    return { ...r, queued };
+  }));
+
+  app.post("/api/leads/:leadId/rfq-status", authed, route((req, d) => {
+    const b = z.object({ stage: z.enum(RFQ_STAGES), note: z.string().max(200).optional().nullable() }).parse(req.body ?? {});
+    return setRfqStatus(d, leadId(req), b.stage, b.note?.trim() || null);
   }));
   app.get("/api/leads/:leadId/rescue", authed, route((req, d) => rescueFor(d, leadId(req))));
-  app.post("/api/leads/:leadId/rescue/send", authed, route((req, d) => sendRescue(d, leadId(req), z.string().min(3).max(100).parse(req.body?.draft_id))));
+  app.post("/api/leads/:leadId/rescue/send", authed, route(async (req, d) => { const r = await sendRescue(d, leadId(req), z.string().min(3).max(100).parse(req.body?.draft_id)); await stopScheduledFor(d, leadId(req), "you sent the rescue draft yourself.").catch(() => null); return r; }));
   app.post("/api/leads/:leadId/rescue/found", authed, route((req, d) => markRescue(d, leadId(req), req.body?.found === true, typeof req.body?.name === "string" ? req.body.name.slice(0, 80) : null)));
   // Rejected email drafts and which pre-save rule they broke, newest first.
   app.get("/api/email-rejections", authed, route(async (req) => await rejections(Math.min(Number(req.query.limit) || 100, 500))));
@@ -274,6 +329,11 @@ export function createApp(appDeps: AppDeps) {
     const id = leadId(req);
     const list = warmAfterLead(d, id); // the next leads start writing while this one loads
     const brief = await leadBrief(d, id, { refresh: req.query.refresh === "1" });
+    // "Great fit" (an A) on a lead nobody's worked yet: mark it "Good lead" in Close as you browse (Walt 9/29).
+    if (brief.brief.rating === "A" && brief.header.status === "Potential") {
+      const moved = await advanceStatus(d, id, "Good lead", "Potential").catch((e) => { console.error(`[good lead ${id}]`, (e as Error).message); return null; });
+      if (moved) brief.header.status = moved;
+    }
     return { ...brief, list: await list };
   }));
 
@@ -384,8 +444,8 @@ export function createApp(appDeps: AppDeps) {
     else if (err instanceof DuplicateApplyError) res.status(409).json({ error: err.message });
     else if (err instanceof QueueError) res.status(409).json({ error: err.message });
     else if (err instanceof FollowUpError) res.status(409).json({ error: err.message });
-    else if (err instanceof RescueError) res.status(409).json({ error: err.message });
-    else if (err instanceof LineCardError) res.status(409).json({ error: err.message });
+    else if (err instanceof RescueError || err instanceof ShotDownError) res.status(409).json({ error: err.message });
+    else if (err instanceof LineCardError || err instanceof MemeError) res.status(409).json({ error: err.message });
     else if (err instanceof ClaudeError) res.status(502).json({ error: err.message });
     else if (err instanceof CloseError) res.status(err.status === 404 ? 404 : 502).json({ error: err.status === 401 ? "Close rejected this rep's API key." : err.message });
     else {

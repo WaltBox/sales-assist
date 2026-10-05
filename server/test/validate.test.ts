@@ -181,3 +181,38 @@ test("every email: hedging the ask fails and gets rewritten (Walt 9/28)", async 
     assert.deepEqual(await hedging(line), [], line);
   }
 });
+
+test("one-block emails get paragraphs: greeting, pitch, line card, got-it ask, call line, thanks, name (Anthony Labetti draft, 9/29)", async () => {
+  const { formatParagraphs } = await import("../src/benchmark.js");
+  const block = "Hi Anthony, I spoke with your office this afternoon and they suggested I reach out to you directly. I'm Walt with Westgate Supply. For facility maintenance work like yours we supply threaded rod, wedge anchors, self drilling screws, hot dip galvanized hardware, and pipe and beam clamps for your HVAC, plumbing, and structural crews. I've attached our line card so you can see the full range. If you've got a list or open RFQ for any upcoming work, just reply to this email with it and I'll get pricing turned around. Mind replying \"got it\" when this comes through? Just want to make sure it didn't land in junk. I'll give you a call soon to introduce myself. Thanks, Anthony.\n\nWalt Boxwell";
+  const out = formatParagraphs(block);
+  const paras = out.split("\n\n");
+  assert.equal(paras[0], "Hi Anthony,");
+  assert.match(paras[1], /^I spoke with your office.*structural crews\.$/);
+  assert.match(paras[2], /^I've attached our line card.*turned around\.$/);
+  assert.match(paras[3], /^Mind replying "got it".*land in junk\.$/);
+  assert.equal(paras[4], "I'll give you a call soon to introduce myself.");
+  assert.equal(paras[5], "Thanks, Anthony.");
+  assert.equal(paras[6], "Walt Boxwell");
+  assert.equal(formatParagraphs(block, "Walt Boxwell"), out);
+  // Already in paragraphs: left alone.
+  const good = "Hi Rob,\n\nHere's our line card.\n\nSend over an RFQ and I'll price it.\n\nWalt Boxwell";
+  assert.equal(formatParagraphs(good, "Walt Boxwell"), good);
+});
+
+test("names come from the call, not the email domain: jacob@mcturk.net is Jacob, not Jacob McTurk (9/29)", async () => {
+  const { unguessedName } = await import("../src/assistant.js");
+  assert.equal(unguessedName("Jacob McTurk", "jacob@mcturk.net"), "Jacob");
+  assert.equal(unguessedName("Jacob McTurk", "jacob@mcturkconstruction.com"), "Jacob");
+  assert.equal(unguessedName("Renee Smith", "renee@roddaelectric.com"), "Renee Smith", "a real last name stays");
+  assert.equal(unguessedName("Mykala", "mykala@threepeaksdrilling.com"), "Mykala");
+});
+
+test("the call screen's Say text is saved once per call, and kept out of what the AI reads (10/1)", async () => {
+  const { saveSaid } = await import("../src/assistant.js");
+  const writes: string[] = [];
+  const d = { close: { createNote: async (_l: string, note: string) => { writes.push(note); return { id: "n" }; } } } as never;
+  assert.deepEqual(await saveSaid(d, "lead_x", "Hi, this is Walt with Westgate Supply. We supply A325 bolts.", "acti_1"), { saved: true });
+  assert.deepEqual(await saveSaid(d, "lead_x", "Hi, this is Walt with Westgate Supply. We supply A325 bolts.", "acti_1"), { saved: false });
+  assert.deepEqual(writes, ["Opener: Hi, this is Walt with Westgate Supply. We supply A325 bolts."]);
+});

@@ -143,10 +143,11 @@ Never default to "call back tomorrow" after a real conversation. Read what the p
 | What the transcript says | Task | Due |
 |---|---|---|
 | No answer / rang out | Call back, different time of day | Next business day, opposite half of the day (AM ↔ PM), local time |
-| Voicemail left | Call back | 2 business days, morning local time |
-| Gatekeeper gave a name, buyer not available | Call [name] | Next business day, or the time the gatekeeper suggested |
+| Voicemail left | Call back, different time of day | 2 business days, opposite half of the day from this call (AM ↔ PM) |
+| Gatekeeper gave a name, buyer not available | Call [name], different time of day | 2 business days, opposite half of the day from this call, or the time the gatekeeper suggested |
+| Line card emailed to a buyer we didn't reach (intro email) | Call [name]: did it come through? | 2 business days, opposite half of the day. Never the next day: calling two days in a row is annoying (Walt 9/30) |
 | Buyer said "call me back [time/day]" | Call [name] | Exactly that time, local timezone |
-| Buyer said "send the line card," no RFQ now, no timing given | Check in with [name] | 3 weeks out |
+| Buyer said "send the line card," no RFQ now, no timing given | Check in with [name] | 2 weeks out (the automatic email bumps the thread at 1 week in between) |
 | Buyer gave a cadence ("RFQs every couple months," "next project in spring") | Check in with [name] | ~1 week before that cadence lands (e.g. "couple months" → 7 weeks) |
 | Buyer said "bought for the year" / contract until [date] | Check in with [name] | 4 weeks before the date they gave; if "for the year," first week of December |
 | Buyer is sending an RFQ / list | Confirm RFQ received; if not, nudge | 2 business days |
@@ -156,7 +157,7 @@ Never default to "call back tomorrow" after a real conversation. Read what the p
 **Task text format:** `[Rating] Verb + who + at + company — phone, email. One line of context from the call. What to ask.`
 Example: `[B] Check in with Damon (Purchasing) at Hefco — 281-431-9305, damon@hefco.com. On 9/24 he said no RFQs now, they come "every couple of months." Line card sent 9/24. Ask if anything's going out for pricing.`
 
-Always set a **time**, not just a date, in the prospect's timezone: 9:30 AM for "try earlier," 2:00 PM for "try afternoon," otherwise 10:00 AM.
+Always set a **time**, not just a date, in the prospect's timezone: 9:30 AM for "try earlier," 2:00 PM for "try afternoon," otherwise 10:00 AM. When the buyer wasn't reached (no answer, voicemail, gatekeeper), call back in the **other half of the day** from this call: a morning call gets a 2:00 PM callback, an afternoon call a 9:30 AM one. Early touches close together, then spaced out: persistence across 6–8 touches matters more than the exact gap.
 
 ---
 

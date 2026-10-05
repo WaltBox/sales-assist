@@ -107,7 +107,8 @@ export class CloseClient {
       const text = await res.text().catch(() => "");
       throw new CloseError(`Close ${method} ${path.split("?")[0]} failed (${res.status}): ${text.slice(0, 300)}`, res.status);
     }
-    return (await res.json()) as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   me() {
@@ -241,7 +242,7 @@ export class CloseClient {
   async openTasksFor(userId: string, max = 1000): Promise<Array<CloseTask & { lead_id: string }>> {
     const out: Array<CloseTask & { lead_id: string }> = [];
     for (let skip = 0; skip < max; skip += 100) {
-      const p = new URLSearchParams({ _type: "lead", is_complete: "false", assigned_to: userId, _limit: "100", _skip: String(skip), _fields: "id,lead_id,text,date,is_complete" });
+      const p = new URLSearchParams({ _type: "lead", is_complete: "false", assigned_to: userId, _limit: "100", _skip: String(skip), _fields: "id,lead_id,text,date,is_complete,date_created" });
       const page = await this.request<{ data: Array<CloseTask & { lead_id: string }>; has_more: boolean }>("GET", `/task/?${p}`);
       out.push(...page.data);
       if (!page.has_more) break;
@@ -266,6 +267,11 @@ export class CloseClient {
     return this.request<{ id: string; status: string }>("PUT", `/activity/email/${encodeURIComponent(id)}/`, { status: "outbox" });
   }
 
+  /** Delete a draft: a rescue draft that a scheduled bump has made redundant (Walt 10/2: never two emails). */
+  deleteEmail(id: string) {
+    return this.request<void>("DELETE", `/activity/email/${encodeURIComponent(id)}/`);
+  }
+
   /** Pull a scheduled email back to a draft (Skip, or they replied before it went out). */
   unschedule(id: string) {
     return this.request<{ id: string; status: string }>("PUT", `/activity/email/${encodeURIComponent(id)}/`, { status: "draft" });
@@ -277,6 +283,29 @@ export class CloseClient {
     return this.request<CloseTask & { lead_id: string; assigned_to: string }>("GET", `/task/${encodeURIComponent(taskId)}/?_fields=id,lead_id,assigned_to,text,date,is_complete`);
   }
 
+  /** A rep's lead status changes since a date (e.g. to "RFQ Received"), oldest first. */
+  async statusChangesSince(since: string, userId: string, max = 3000): Promise<Array<{ lead_id: string; date_created: string; old_status_label: string | null; new_status_label: string }>> {
+    const out: Array<{ lead_id: string; date_created: string; old_status_label: string | null; new_status_label: string }> = [];
+    for (let skip = 0; skip < max; skip += 100) {
+      const p = new URLSearchParams({ user_id: userId, date_created__gte: since, _limit: "100", _skip: String(skip), _fields: "lead_id,date_created,old_status_label,new_status_label" });
+      const r = await this.request<{ data: typeof out; has_more?: boolean }>("GET", `/activity/status_change/lead/?${p}`);
+      out.push(...r.data);
+      if (!r.has_more || r.data.length < 100) break;
+    }
+    return out.sort((a, b) => a.date_created.localeCompare(b.date_created));
+  }
+
+  /** Leads matching a Close search query (e.g. name:"Test Lead Fabrication"). */
+  async findLeads(query: string) {
+    const p = new URLSearchParams({ query, _fields: "id,display_name", _limit: "25" });
+    return (await this.request<{ data: Array<{ id: string; display_name: string }> }>("GET", `/lead/?${p}`)).data;
+  }
+
+  /** Mark done (it stays in Close's history; nothing is deleted). */
+  completeTask(taskId: string) {
+    return this.request<{ id: string }>("PUT", `/task/${encodeURIComponent(taskId)}/`, { is_complete: true });
+  }
+
   updateTask(taskId: string, patch: { date: string; text?: string }) {
     return this.request<{ id: string }>("PUT", `/task/${encodeURIComponent(taskId)}/`, patch);
   }
@@ -286,7 +315,7 @@ export class CloseClient {
   }
 
   // status "draft" is never sent; the rep reviews and sends it from Close.
-  createDraftEmail(leadId: string, e: { contactId: string | null; to: string[]; subject: string; body: string; attachments?: CloseAttachment[]; sender?: string | null; emailAccountId?: string | null; inReplyToId?: string | null; threadId?: string | null; scheduleAt?: string | null }) {
+  createDraftEmail(leadId: string, e: { contactId: string | null; to: string[]; subject: string; body: string; html?: string | null; attachments?: CloseAttachment[]; sender?: string | null; emailAccountId?: string | null; inReplyToId?: string | null; threadId?: string | null; scheduleAt?: string | null }) {
     return this.request<{ id: string }>("POST", "/activity/email/", {
       lead_id: leadId,
       ...(e.contactId ? { contact_id: e.contactId } : {}),
@@ -298,6 +327,8 @@ export class CloseClient {
       to: e.to,
       subject: e.subject,
       body_text: e.body,
+      // An HTML version too when there's something to show inline (a meme in a bump, 9/30).
+      ...(e.html ? { body_html: e.html } : {}),
       ...(e.attachments?.length ? { attachments: e.attachments } : {}),
       // A reply stays in the existing thread: same thread, under the email it answers.
       ...(e.inReplyToId ? { in_reply_to_id: e.inReplyToId } : {}),

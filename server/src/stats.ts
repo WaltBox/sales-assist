@@ -1,8 +1,9 @@
-import { classifyOpen, RFQ_ASKED_TAG, RFQ_TAG, type Deps } from "./assistant.js";
+import { classifyOpen, RFQ_ASKED_TAG, RFQ_IN_TAG, RFQ_TAG, type Deps } from "./assistant.js";
 import type { CloseCall } from "./close.js";
 import { transcriptText } from "./close.js";
 import { callSummaries, tappedOutcomes } from "./queue.js";
 import { store } from "./store.js";
+import { config } from "./config.js";
 import { localParts, zonedTime } from "./rules.js";
 
 // Daily stats for the panel's strip, breakdown, and week view. Everything is
@@ -28,7 +29,7 @@ export type DayStats = {
   rfqReceived: number; // leads we'd asked or that promised (last 30 days) whose RFQ came in today
   tasks: number;
   best: { leadId: string; company: string; seconds: number } | null;
-  pace: { onPaceFor: number; perHour: number } | null;
+  pace: { onPaceFor: number; perHour: number; until: string } | null;
   approximate: boolean; // reached/voicemails/RFQs may still move: a recent call has no transcript yet
   callIds: string[]; // counted calls, so the panel can dedupe its own increments
   syncedAt: string;
@@ -74,7 +75,13 @@ export function realAttachments(a: unknown): string[] {
     .filter((x) => !/^(image\/|text\/rfc822|message\/)/.test(x.content_type ?? "") && !SIGNATURE_IMAGE.test(x.filename ?? ""))
     .map((x) => x.filename ?? "a file");
 }
-const hasRealAttachment = (a: unknown) => realAttachments(a).length > 0;
+/** Their files, not ours quoted back in a reply: our line card, our quote PDFs (Air Tech Cooling 9/30: Matthew's
+ *  "copying the team" reply carried our line card, and it was counted as his RFQ). */
+export const OUR_FILE = /^Westgate_Supply_Line_Card\.pdf$|^WG-Quote-|^Westgate_Supply_Credit_Application|^w9_westgate_supply|resale-certificate/i;
+export function theirFiles(a: unknown): string[] {
+  return realAttachments(a).filter((f) => !OUR_FILE.test(f));
+}
+const hasRealAttachment = (a: unknown) => theirFiles(a).length > 0;
 
 async function myCalls(d: Deps, since: Date, until: Date) {
   return (await d.close.calls({ since: since.toISOString(), max: 2000 }))
@@ -118,6 +125,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
   const waitingOn = new Set([...tagged(RFQ_TAG, false), ...tagged(RFQ_ASKED_TAG, false)]);
   const received = new Set(emails.filter((e) => e.direction === "incoming" && waitingOn.has(e.lead_id)
     && inRange(e.date_created, since, until) && hasRealAttachment(e.attachments)).map((e) => e.lead_id));
+  for (const id of tagged(RFQ_IN_TAG, true)) received.add(id); // marked "RFQ came in" (outside Close)
 
   // Best call: the longest reached call with a positive outcome (a real conversation or a tapped Reached/Got a name).
   const top = [...reached].sort((a, b) => b.duration - a.duration)[0];
@@ -125,15 +133,17 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     ? { leadId: top.lead_id, seconds: top.duration, company: (await d.close.lead(top.lead_id).catch(() => null))?.display_name ?? "A lead" }
     : null;
 
-  // Pace: dials per hour since the first dial, carried to 5 PM local.
+  // Pace: dials per hour since the first dial, carried to the end of the calling day (3:30 PM local, Walt 9/29).
   let pace: DayStats["pace"] = null;
   if (calls.length) {
     const first = Math.min(...calls.map((c) => new Date(c.date_created).getTime()));
     const hoursIn = Math.max((now.getTime() - first) / 3600e3, 0.25);
     const p = localParts(now, tz);
-    const hoursLeft = Math.max((zonedTime(p.year, p.month, p.day, 17, 0, tz).getTime() - now.getTime()) / 3600e3, 0);
+    const [endH, endM] = config.dayEnd.split(":").map(Number);
+    const hoursLeft = Math.max((zonedTime(p.year, p.month, p.day, endH, endM, tz).getTime() - now.getTime()) / 3600e3, 0);
     const perHour = calls.length / hoursIn;
-    pace = { perHour: Math.round(perHour * 10) / 10, onPaceFor: Math.round(calls.length + perHour * hoursLeft) };
+    const until = `${endH % 12 || 12}${endM ? `:${String(endM).padStart(2, "0")}` : ""} ${endH < 12 ? "AM" : "PM"}`;
+    pace = { perHour: Math.round(perHour * 10) / 10, onPaceFor: Math.round(calls.length + perHour * hoursLeft), until };
   }
 
   // Never wait on transcripts: flag the transcript-based counts as approximate
@@ -232,7 +242,7 @@ type PeriodData = {
   value: PeriodStats;
   calls: CloseCall[]; tapped: Map<string, string>;
   lineCardMails: Array<Record<string, unknown>>; replyMails: Array<Record<string, unknown>>; rfqInMails: Array<Record<string, unknown>>;
-  rfqNotes: Array<Record<string, unknown>>;
+  rfqNotes: Array<Record<string, unknown>>; rfqInNotes: Array<Record<string, unknown>>;
   notes: Array<Record<string, unknown>>;
 };
 const periodData = new Map<string, { at: number; data: PeriodData }>();
@@ -267,6 +277,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
   // logo or a bounce notice), promised or not. Matt's pricing sheet wasn't tagged "promised" (9/26).
   const rfqInMails = emails.filter((e) => e.direction === "incoming" && inRange(e.date_created, since, until) && hasRealAttachment(e.attachments));
   const rfqNotes = notes.filter((n) => n.user_id === me && String(n.note ?? "").includes(RFQ_TAG) && inRange(n.date_created, since, until));
+  const rfqInNotes = notes.filter((n) => n.user_id === me && String(n.note ?? "").includes(RFQ_IN_TAG) && inRange(n.date_created, since, until));
   const value: PeriodStats = {
     period, since: since.toISOString(),
     dials: calls.length,
@@ -279,9 +290,9 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     replied: new Set(replyMails.map((e) => e.lead_id)).size,
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
-    rfqReceived: new Set(rfqInMails.map((e) => e.lead_id)).size,
+    rfqReceived: new Set([...rfqInMails.map((e) => e.lead_id), ...rfqInNotes.map((n) => n.lead_id)]).size,
   };
-  const data = { value, calls, tapped, lineCardMails, replyMails, rfqInMails, rfqNotes, notes };
+  const data = { value, calls, tapped, lineCardMails, replyMails, rfqInMails, rfqNotes, rfqInNotes, notes };
   periodData.set(key, { at: Date.now(), data });
   return data;
 }
@@ -384,10 +395,99 @@ export async function periodDetail(d: Deps, period: Period, metric: Metric): Pro
   }
   if (metric === "rfqReceived") {
     const mails = [...data.rfqInMails].sort((a, b) => String(b.date_created).localeCompare(String(a.date_created)));
-    const names = await leadNames(d, mails.map((e) => String(e.lead_id)));
-    return { metric, columns: ["When", "Account", "From", "Files"], rows: mails.map((e) => ({ leadId: String(e.lead_id), cells: [when(e.date_created), names.get(String(e.lead_id)) ?? "", person(e.sender), realAttachments(e.attachments).join(", ")] })) };
+    const marked = data.rfqInNotes ?? [];
+    const names = await leadNames(d, [...mails.map((e) => String(e.lead_id)), ...marked.map((n) => String(n.lead_id))]);
+    const rows = [
+      ...mails.map((e) => ({ at: String(e.date_created), leadId: String(e.lead_id), cells: [when(e.date_created), names.get(String(e.lead_id)) ?? "", person(e.sender), realAttachments(e.attachments).join(", ")] })),
+      ...marked.map((n) => ({ at: String(n.date_created), leadId: String(n.lead_id), cells: [when(n.date_created), names.get(String(n.lead_id)) ?? "", "Marked by you", one(String(n.note).replace(RFQ_IN_TAG, "").trim(), 70)] })),
+    ].sort((a, b) => b.at.localeCompare(a.at)).map(({ leadId, cells }) => ({ leadId, cells }));
+    return { metric, columns: ["When", "Account", "From", "Files"], rows };
   }
   const notes = [...data.rfqNotes].sort((a, b) => String(b.date_created).localeCompare(String(a.date_created)));
   const names = await leadNames(d, notes.map((n) => String(n.lead_id)));
   return { metric, columns: ["When", "Account", "What was said"], rows: notes.map((n) => ({ leadId: String(n.lead_id), cells: [when(n.date_created), names.get(String(n.lead_id)) ?? "", one(n.note, 140)] })) };
+}
+
+// ---------- RFQs over time (Walt 9/29: "a line graph, growth over time") ----------
+// Every RFQ from the funnel (leads that got a line card from this rep), one per account per day, from the
+// first line card on. An RFQ is an email from them with a real file (not a W-9, a tax form, a credit app or a
+// cert), an ask typed into the email ("please quote the following"), or one the rep marked "RFQ came in".
+
+const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit/i;
+const timelineCache = new Map<string, { at: number; value: RfqTimeline }>();
+export type RfqTimeline = {
+  since: string; total: number; thisWeek: number; lastWeek: number;
+  days: Array<{ day: string; count: number; total: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked" }> }>;
+};
+
+export async function rfqTimeline(d: Deps, opts: { fresh?: boolean } = {}): Promise<RfqTimeline> {
+  const tz = d.rep.timeZone;
+  const key = d.rep.closeUserId;
+  const hit = timelineCache.get(key);
+  if (hit && !opts.fresh && Date.now() - hit.at < 5 * 60_000) return hit.value;
+  const { isBounce, rfqInBody } = await import("./accounts.js");
+  const now = d.now?.() ?? new Date();
+  const window = new Date(now.getTime() - 120 * DAY_MS).toISOString();
+  const [emails, notes, changes] = await Promise.all([
+    d.close.listSince<Record<string, unknown>>("email", { since: window, fields: "id,lead_id,user_id,direction,status,sender,subject,date_created,attachments,body_text", max: 8000 }),
+    d.close.listSince<Record<string, unknown>>("note", { since: window, userId: key, fields: "id,note,user_id,lead_id,date_created", max: 3000 }),
+    d.close.statusChangesSince(window, key).catch(() => []),
+  ]);
+  const me = d.rep.email.toLowerCase();
+  const cards = emails.filter((e) => e.direction === "outgoing" && e.user_id === key && ["sent", "outbox"].includes(String(e.status))
+    && ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD));
+  // Leads you've emailed (BCS 9/29: a quote, no line card), for RFQs that come in by email.
+  const funnel = new Set(emails.filter((e) => e.direction === "outgoing" && e.user_id === key && ["sent", "outbox"].includes(String(e.status))).map((e) => String(e.lead_id)));
+  const start = cards.map((e) => String(e.date_created)).sort()[0] ?? now.toISOString();
+  const ours = (s: unknown) => /@westgatesupply\.com/i.test(String(s ?? "")) || String(s ?? "").toLowerCase().includes(me);
+  const found = new Map<string, { at: string; leadId: string; how: "file" | "email" | "marked" }>(); // lead|day → first
+  const add = (leadId: string, at: string, how: "file" | "email" | "marked") => {
+    const k = `${leadId}|${localDay(tz, new Date(at)).day}`;
+    if (!found.has(k)) found.set(k, { at, leadId, how });
+  };
+  for (const e of emails) {
+    const leadId = String(e.lead_id);
+    if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never)) continue;
+    const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f));
+    if (files.length) add(leadId, String(e.date_created), "file");
+    else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email");
+  }
+  for (const n of notes) if (String(n.note ?? "").includes(RFQ_IN_TAG) && String(n.date_created) >= start) add(String(n.lead_id), String(n.date_created), "marked");
+  // Or you set the lead to "RFQ Received" in Close yourself (BCS 9/29), or straight to Quoted. Only for leads with
+  // no other sign of an RFQ: the app's own status moves (and the 9/29 catch-up) follow RFQs already counted above.
+  const counted = new Set([...found.values()].map((f) => f.leadId));
+  for (const c of changes) {
+    if (c.date_created < start || counted.has(c.lead_id)) continue;
+    if (c.new_status_label === "RFQ Received" || (c.new_status_label === "Quoted" && c.old_status_label !== "RFQ Received")) { add(c.lead_id, c.date_created, "marked"); counted.add(c.lead_id); }
+  }
+
+  const names = await leadNames(d, [...found.values()].map((f) => f.leadId));
+  // Not the rep's own test leads ("Test Lead Fabrication"), and not suppliers quoting us (Valves & Fittings of
+  // Houston, a Vendor: their quote on NAVCO valves isn't a customer's RFQ).
+  const statusOf = new Map<string, string>();
+  await Promise.all([...new Set([...found.values()].map((f) => f.leadId))].map(async (id) => {
+    const l = await d.close.lead(id).catch(() => null);
+    if (l) statusOf.set(id, l.status_label ?? "");
+  }));
+  for (const [k, f] of found) if (/^test lead\b/i.test(names.get(f.leadId) ?? "") || /vendor/i.test(statusOf.get(f.leadId) ?? "")) found.delete(k);
+  const byDay = new Map<string, RfqTimeline["days"][number]["accounts"]>();
+  for (const f of found.values()) {
+    const day = localDay(tz, new Date(f.at)).day;
+    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how }]);
+  }
+  // Every day from the first line card to today, so the line shows the quiet days too.
+  const days: RfqTimeline["days"] = [];
+  let total = 0;
+  const today = localDay(tz, now).day;
+  for (let t = new Date(`${localDay(tz, new Date(start)).day}T12:00:00Z`); ; t = new Date(t.getTime() + DAY_MS)) {
+    const day = t.toISOString().slice(0, 10);
+    const accounts = byDay.get(day) ?? [];
+    total += accounts.length;
+    days.push({ day, count: accounts.length, total, accounts });
+    if (day >= today) break;
+  }
+  const sumLast = (from: number, to: number) => days.slice(Math.max(0, days.length - to), days.length - from).reduce((s, x) => s + x.count, 0);
+  const value: RfqTimeline = { since: start, total, thisWeek: sumLast(0, 7), lastWeek: sumLast(7, 14), days };
+  timelineCache.set(key, { at: Date.now(), value });
+  return value;
 }

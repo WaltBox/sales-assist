@@ -9,12 +9,28 @@ import {
   AfterCallExtrasSchema, AfterCallSchema, BriefSchema, ChatSchema, type AfterCall, type AfterCallExtras, type Brief, type Proposals,
 } from "./schemas.js";
 import { fetchSiteText } from "./website.js";
-import { applyBenchmarkTask, benchmarkDecision, enforceBenchmark, enforceGotIt, OFFERS, stripDashes } from "./benchmark.js";
+import { applyBenchmarkTask, benchmarkDecision, enforceBenchmark, enforceGotIt, formatParagraphs, OFFERS, stripDashes } from "./benchmark.js";
 import { transcriptText } from "./close.js";
 import { EmailReviewSchema, INTRO_OFFER, INTRO_SUBJECT, isSelfTest, logRejection, retryNote, reviewTask, ruleChecks, type Failure, type Referral } from "./validate.js";
 
 export const RFQ_TAG = "[RFQ promised]";
 export const RFQ_ASKED_TAG = "[RFQ asked]";
+/** An RFQ that came in outside Close (another inbox, a call, a text), marked by the rep (Mitchell Concrete, 9/29). */
+export const RFQ_IN_TAG = "[RFQ received]";
+/** What the call screen's "Say" box showed, saved to Close once per call (Walt 10/1). Kept out of the AI's context. */
+export const SAID_TAG = "Opener:"; // Walt 10/1: "Opener:", not "[Said on the call]"
+/** A saved opener note, new label or the old one. */
+export const isSaidNote = (note: string) => note.startsWith(SAID_TAG) || note.startsWith("[Said on the call]");
+export const saidText = (note: string) => note.replace(/^(Opener:|\[Said on the call\])\s*/, "").trim();
+
+const saidFor = new Set<string>();
+export async function saveSaid(d: Deps, leadId: string, text: string, callId: string | null) {
+  const key = `${leadId}:${callId ?? new Date().toISOString().slice(0, 13)}`;
+  if (saidFor.has(key)) return { saved: false };
+  saidFor.add(key);
+  await d.close.createNote(leadId, `${SAID_TAG} ${text.trim()}`, false).catch((e) => { saidFor.delete(key); throw e; });
+  return { saved: true };
+}
 
 /** Tags go at the end of the call note, so the daily stats can count them from Close. */
 export function tagNote(p: Pick<Proposals, "note">, tag: string, fallback: string) {
@@ -23,10 +39,10 @@ export function tagNote(p: Pick<Proposals, "note">, tag: string, fallback: strin
 }
 
 export type Close = Pick<CloseClient,
-  "smartViewLeads" | "me" | "lead" | "leadName" | "callOutcomes" | "leadStatuses" | "leadCustomFields" | "calls" | "call" | "notes" | "openTasks" | "task" | "openTasksFor" | "email" | "sendDraft" | "unschedule" |
-  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "createDraftEmail" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
+  "smartViewLeads" | "me" | "lead" | "leadName" | "callOutcomes" | "leadStatuses" | "leadCustomFields" | "calls" | "call" | "notes" | "openTasks" | "task" | "openTasksFor" | "email" | "sendDraft" | "unschedule" | "deleteEmail" |
+  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createDraftEmail" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
 export type Llm = typeof structured;
-export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText };
+export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText; siteEmails?: (url: string | null | undefined) => Promise<string[]> };
 
 const now = (d: Deps) => d.now?.() ?? new Date();
 
@@ -54,7 +70,10 @@ export type BriefResponse = {
 // Briefs are cached (Supabase when hosted) so reopening a lead is instant. A
 // lead's brief is dropped when the rep saves follow-ups on it, so the next open
 // reflects the latest call.
-const BRIEF_TTL = 7 * 24 * 3600 * 1000;
+// A call card is reused for a month (Walt 10/1: "use it rather than wasting tokens to recreate"). The parts that
+// change call to call (last call, call count, their time, opens, the follow-up script) are built fresh without the AI.
+// "Rewrite card" or a new briefVersion writes a new one.
+const BRIEF_TTL = 30 * 24 * 3600 * 1000;
 const briefKey = (d: Deps, leadId: string) => `brief:${config.briefVersion}:${d.rep.closeUserId}:${leadId}`;
 const briefCache = {
   get: (key: string) => store.cacheGet<Brief>(`brief:${config.briefVersion}:${key}`),
@@ -83,12 +102,16 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
       const context = renderContext(ctx, d.rep, { now: now(d), website, summariesOnly: true });
       const task = "Write the Lead Brief (call card) for this lead, following the Lead Brief section of the playbook.";
       let { data } = await d.llm({ schema: BriefSchema, effort: config.effortFast, model: config.briefModel, context, task });
+      // The opener you already used on this lead stays (Walt 10/1): same words every call, no rewrite pass for it.
+      if (ctx.saidOpener) data = { ...data, opener: ctx.saidOpener };
       // Buyers respond to hyper-specifics: an opener that names none of the products gets one rewrite.
-      if (openerProducts(data.opener, data.buys) < 2) {
-        ({ data } = await d.llm({
-          schema: BriefSchema, effort: config.effortFast, model: config.briefModel, context,
-          task: `${task}\n\nYour last opener named none of the specific products: "${data.opener}". Rewrite the card so the opener names 3–4 of the products in buys (${data.buys.join(", ")}) in one run, tied to their work.`,
-        }));
+      // So does one that's hard to say out loud ("...flat washers crews use for renovation and façade work", 9/28).
+      const vague = !ctx.saidOpener && openerProducts(data.opener, data.buys) < 2;
+      if (vague || (!ctx.saidOpener && openerTangled(data.opener))) {
+        const why = vague
+          ? `Your last opener named none of the specific products: "${data.opener}". Rewrite the card so the opener names 3–4 of the products in buys (${data.buys.join(", ")}) in one run, tied to their work.`
+          : `Your last opener is hard to follow out loud: "${data.opener}". Rewrite the card so the opener is two short sentences: "Hi, this is ${d.rep.name.split(/\s+/)[0]} with Westgate Supply." then "We supply [3–4 products] for [their work]." No "[crews] use for" clause.`;
+        ({ data } = await d.llm({ schema: BriefSchema, effort: config.effortFast, model: config.briefModel, context, task: `${task}\n\n${why}` }));
       }
       await briefCache.set(key, data).catch((err) => console.error("brief cache write:", (err as Error).message));
       return data;
@@ -239,6 +262,13 @@ function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" 
 }
 
 /** Hard rules on top of the model's brief: a clean A–D rating, and vendors are never pitched. */
+/** An opener that crams who we are and the products into one run-on, or hangs a "[crews] use for" clause off the list. */
+export function openerTangled(opener: string): boolean {
+  const sentences = opener.split(/(?<=[.!?])\s+/);
+  return /\b(crews|contractors|teams|shops|installers|you|they|companies|firms)\s+(use|need|rely on)\s+(for|on|in)\b/i.test(opener)
+    || sentences.some((s) => /westgate supply\s*,/i.test(s) && /\bwe (supply|carry|stock)\b/i.test(s));
+}
+
 /** How many of the brief's `buys` items the opener actually names. */
 export function openerProducts(opener: string, buys: string[]): number {
   const text = opener.toLowerCase();
@@ -619,6 +649,23 @@ export async function repStats(d: Deps): Promise<RepStats> {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 
+/**
+ * A name as heard, never filled in from the address: "Jacob McTurk" for jacob@mcturk.net drops "McTurk" (Walt 9/29),
+ * since the domain is the company, not his last name. Words that are just the domain's name or the mailbox are cut.
+ */
+export function unguessedName(name: string, email: string | null | undefined): string {
+  if (!email || !name) return name;
+  const [local, domain] = [email.split("@")[0].toLowerCase(), (email.split("@")[1] ?? "").toLowerCase()];
+  const label = domain.split(".")[0].replace(/[^a-z]/g, "");
+  const words = name.trim().split(/\s+/);
+  const kept = words.filter((w, i) => {
+    const bare = w.toLowerCase().replace(/[^a-z]/g, "");
+    if (i === 0 || bare.length < 3) return true;
+    return bare !== label && !(label.includes(bare) && bare.length >= 4) && bare !== local;
+  });
+  return kept.join(" ") || words[0];
+}
+
 export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: string[], at: Date): Proposals {
   const out: Proposals = structuredClone(p);
 
@@ -706,10 +753,18 @@ export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: stri
   }
 
   // Email: recipients must be real addresses; always a draft (enforced in apply).
+  // Names come from the call or Close, never from an email address (Jacob "McTurk", 9/29).
+  for (const c of out.contacts) if (c.email) c.name = unguessedName(c.name, c.email);
+  for (const u of out.contact_updates) if (u.name && u.email) u.name = unguessedName(u.name, u.email);
   if (out.email) {
+    for (const r of out.email.to) {
+      const known = ctx.contacts.find((c) => c.emails.some((e) => e.email.toLowerCase() === r.email.toLowerCase()))
+        ?? out.contacts.find((c) => (c.email ?? "").toLowerCase() === r.email.toLowerCase());
+      r.name = known && !/main|office|front desk|reception/i.test(known.name) ? known.name : unguessedName(r.name, r.email);
+    }
     const bad = out.email.to.filter((r) => !EMAIL_RE.test(r.email));
     if (bad.length) warnings.push(`Check these email addresses before approving: ${bad.map((b) => b.email || b.name).join(", ")}.`);
-    out.email.body = stripDashes(out.email.body);
+    out.email.body = formatParagraphs(stripDashes(out.email.body));
     // Playbook §4: at most one exclamation mark (keep the first), never over 220 words.
     let bangs = 0;
     out.email.body = out.email.body.replace(/!/g, () => (++bangs === 1 ? "!" : "."));
@@ -821,7 +876,7 @@ export async function applyProposals(d: Deps, leadId: string, proposals: Proposa
   }
 
   if (results.some((r) => !r.ok)) recentApplies.delete(fingerprint); // let the rep retry after a failure
-  await store.cacheDelete(briefKey(d, leadId)).catch(() => {});
+  // The card stays: what the call changed shows in the fresh header and follow-up script, not a full rewrite.
   return { results, warnings };
 }
 

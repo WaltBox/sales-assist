@@ -243,7 +243,7 @@ test("voicemail callback names the person whose number was dialed", async () => 
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_vmCorbin", rating: "B" });
   const task = close.writes.find((w) => w.op === "task")!.body as { text: string };
   assert.match(task.text, /^\[B\] Call back Corbin at Rodda Electric, Inc\. — \(817\) 240-1173\. Left a voicemail \d+\/\d+\./);
-  assert.match(r.saved[0], /^Call back Corbin \w{3}, \w{3} \d+, 10:00 AM/);
+  assert.match(r.saved[0], /^Call back Corbin \w{3}, \w{3} \d+, (9:30 AM|2:00 PM)/); // the other half of the day
 });
 
 test("a name typed in 'Anything to add' is used when the number isn't known", async () => {
@@ -316,22 +316,55 @@ test("line card drafts carry the PDF from the Close template; a failure is flagg
 
 // ---------- §6 follow-up timing ----------
 
-test("§6: voicemail → 2 business days 10 AM; got a name → next business day 10 AM; later open callback is kept", async () => {
+test("§6: voicemail and got a name → 2 business days, the other half of the day (9/29, 9/30); later open callback is kept", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
   const vmClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6vm", disposition: "vm-left" })] });
   await quickOutcome({ ...deps(vmClose), now: () => thu, rep: { ...rep, closeUserId: "user_s6a" } }, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_s6vm", rating: "B" });
-  assert.equal((vmClose.writes[0].body as { dueAt: string }).dueAt, "2026-09-28T10:00:00-07:00"); // Thu + 2 business days = Mon
+  assert.equal((vmClose.writes[0].body as { dueAt: string }).dueAt, "2026-09-28T14:00:00-07:00"); // Thu 9 AM + 2 business days = Mon, afternoon
 
   const nameClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6nm" })] });
   await quickOutcome({ ...deps(nameClose), now: () => thu, rep: { ...rep, closeUserId: "user_s6b" } }, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_s6nm", rating: "B" });
-  assert.equal((nameClose.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-25T10:00:00-07:00");
+  assert.equal((nameClose.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-28T14:00:00-07:00"); // Thu → Mon, never Fri right after
+  // An afternoon call flips to the next morning.
+  const pmClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6pm", disposition: "vm-left" })] });
+  await quickOutcome({ ...deps(pmClose), now: () => new Date("2026-09-24T22:00:00Z"), rep: { ...rep, closeUserId: "user_s6d" } }, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_s6pm", rating: "B" });
+  assert.equal((pmClose.writes[0].body as { dueAt: string }).dueAt, "2026-09-28T09:30:00-07:00");
 
   const busy = new FakeClose({ calls: [roddaCall({ id: "acti_s6k", disposition: "no-answer" })] });
   busy.openTasks = async () => [{ id: "task_later", text: "Call back", date: "2026-09-29T10:00:00-07:00", is_complete: false }];
   const r = await quickOutcome({ ...deps(busy), now: () => thu, rep: { ...rep, closeUserId: "user_s6c" } }, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_s6k", rating: "B" });
   assert.equal(busy.writes.length, 0);
   assert.match(r.saved[0], /open callback already on/);
+});
+
+test("a tap moves the callback that was due to the new time, keeping its wording (9/30)", async () => {
+  const { quickOutcome } = await import("../src/queue.js");
+  const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_due", disposition: "no-answer", duration: 0 })] });
+  close.openTasks = async () => [{ id: "task_due", text: "Confirm J. Waite received line card", date: "2026-09-24T08:30:00-07:00", is_complete: false }];
+  await quickOutcome({ ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_due" } }, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_due", rating: "B" });
+  assert.equal(close.writes.filter((w) => w.op === "task").length, 0, "no second callback");
+  const moved = close.writes.find((w) => w.op === "task-update")!.body as { taskId: string; date: string; text?: string };
+  assert.deepEqual([moved.taskId, moved.date, moved.text], ["task_due", "2026-09-25T14:00:00-07:00", undefined]);
+});
+
+test("changing a mistaken tap moves the callback it made instead of adding a second one (9/29)", async () => {
+  const { quickOutcome } = await import("../src/queue.js");
+  const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_chg", disposition: "no-answer", duration: 0 })] });
+  const d = { ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_chg" } };
+  const first = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_chg", rating: "B" });
+  assert.equal(first.setStatus, "Qualified");
+  assert.ok(first.task);
+  await assert.rejects(quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B" }), /already saved/);
+  const fixed = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B",
+    change: { task_id: first.task!.id, queued_id: first.queued, prev_status: first.prevStatus, set_status: first.setStatus } });
+  assert.equal(close.writes.filter((w) => w.op === "task").length, 1, "no second callback");
+  const moved = close.writes.filter((w) => w.op === "task-update").pop()!.body as { taskId: string; date: string };
+  assert.equal(moved.taskId, first.task!.id);
+  assert.equal(moved.date, "2026-09-25T14:00:00-07:00", "no answer in the morning: tomorrow afternoon");
+  assert.equal(fixed.label, "No answer");
 });
 
 test("§6: the model gets precomputed due dates instead of doing date math", async () => {
@@ -464,6 +497,14 @@ test("openers must name the specific products, not just 'our line card'", async 
   assert.equal(openerProducts("Hi Tammy, this is Walt with Westgate Supply, following up after we talked on the 24th about sending you our line card.", buys), 0);
   assert.equal(openerProducts("Hi Tammy, this is Walt with Westgate Supply. We talked on the 24th, I'm the one for your U-bolts, beam clamps and threaded rod.", buys), 3);
   assert.equal(openerProducts("We supply the pipe, fittings, hardware and fasteners commercial plumbing contractors use.", ["Pipe", "Fittings", "Fasteners"]), 3);
+});
+
+test("openers are two short sentences, not a run-on with a 'crews use for' clause (9/28)", async () => {
+  const { openerTangled } = await import("../src/assistant.js");
+  assert.equal(openerTangled("Hi, this is Walt with Westgate Supply, we supply the concrete screws, wedge anchors, self-drilling screws and flat washers crews use for renovation and façade work."), true);
+  assert.equal(openerTangled("Hi, this is Walt with Westgate Supply. We supply pipe, fittings, hardware and fasteners commercial plumbing contractors use for install work."), true);
+  assert.equal(openerTangled("Hi, this is Walt with Westgate Supply. We supply concrete screws, wedge anchors, self-drilling screws and flat washers for renovation and façade work."), false);
+  assert.equal(openerTangled("Hi Tammy, this is Walt with Westgate Supply. We talked on the 24th, I'm the one for your U-bolts, beam clamps and threaded rod."), false);
 });
 
 test("a brief whose opener names no products is rewritten once", async () => {

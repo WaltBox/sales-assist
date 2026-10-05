@@ -178,7 +178,8 @@ export function emailMatchesDomain(email: string, domain: string | null): boolea
 
 // Pipeline order for "never move a lead backwards". Statuses not listed
 // (Bad Fit, Not Interested, Disqualified, Vendor...) are side exits.
-const LADDER = ["potential", "called", "sent line card", "qualified", "rfq received", "quoted", "customer"];
+// Qualified sits before Sent Line Card (Walt 9/30): a qualified lead that got the line card is "Sent Line Card".
+const LADDER = ["potential", "good lead", "called", "qualified", "sent line card", "rfq received", "quoted", "customer"];
 
 export function isBackwardsMove(fromLabel: string | null | undefined, toLabel: string): boolean {
   const from = LADDER.indexOf((fromLabel ?? "").toLowerCase());
@@ -231,6 +232,24 @@ export function businessDaysAt(timeZone: string, now: Date, n: number, hour: num
   const p = localParts(d, timeZone);
   return zonedTime(p.year, p.month, p.day, hour, minute, timeZone);
 }
+
+/** Weekdays between two instants in a time zone, counted by calendar date (0 = same business day). */
+export function businessDaysBetween(from: Date, to: Date, tz: string): number {
+  const day = (d: Date) => { const p = localParts(d, tz); return Date.UTC(p.year, p.month - 1, p.day); };
+  let n = 0;
+  for (let t = day(from) + 864e5; t <= day(to); t += 864e5) {
+    const wd = new Date(t).getUTCDay();
+    if (wd !== 0 && wd !== 6) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Lead statuses that mean "stop working this account": the rep's call in Close, or Shot down in the side panel
+ * (Walt 10/5). They come off the accounts board and out of the automatic emails.
+ */
+export const OUT_STATUSES = ["not interested", "bad fit", "disqualified"];
+export const isOutStatus = (label: string | null | undefined) => OUT_STATUSES.includes((label ?? "").trim().toLowerCase());
 
 /** A fuller version of an existing name: same last name, and the old first name is missing or a prefix/initial of the new one. */
 export function fillsInName(existing: string, fuller: string): boolean {

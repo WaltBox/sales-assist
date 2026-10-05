@@ -27,6 +27,10 @@ export type Automation = {
   scheduledFor: string | null; createdAt: string;
   status: "scheduled" | "sent" | "skipped" | "stopped" | "failed";
   statusAt: string | null; note: string | null; checkedAt: string | null;
+  /** The copy variant ("friday") and the account's cadence arm (days between bumps), for the follow-up test (10/2). */
+  variant?: string | null; arm?: number | null;
+  /** The meme in this bump (file name), so a company never gets the same one twice. */
+  meme?: string | null;
 };
 
 export interface Store {

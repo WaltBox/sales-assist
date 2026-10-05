@@ -4,7 +4,7 @@ import type { Deps, Llm } from "../src/assistant.js";
 import { transcriptText } from "../src/close.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID, DEMO_USER_ID, roddaCall } from "../src/fixtures.js";
-import { listQueue, quickOutcome, type QueueItem } from "../src/queue.js";
+import { listQueue, queueShotDown, quickOutcome, type QueueItem } from "../src/queue.js";
 import { EmailReviewSchema, isSelfTest, reviewTask } from "../src/validate.js";
 
 // Walt 9/26: a test call "did nothing". It had written a note and a task, but the email draft was
@@ -109,9 +109,10 @@ test("a task that lands on a weekend moves to Monday, same time, and says so", a
 });
 
 test("send line card now: ready on the call screen, sent once to the address you confirm, and the after-call step doesn't draft a second one", async () => {
-  const { lineCardFor, sendLineCard } = await import("../src/linecard.js");
+  const { lineCardFor, sendLineCard, mailDns } = await import("../src/linecard.js");
+  mailDns.resolveMx = (async () => [{ exchange: "mx.example.com", priority: 10 }]) as never; // no real DNS in tests
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_lcNow" })] });
-  const d: Deps = { close, llm: demoLlm, rep: { ...rep, closeUserId: "user_lcNow" } };
+  const d: Deps = { close, llm: demoLlm, rep: { ...rep, closeUserId: "user_lcNow" }, siteEmails: async () => ["info@roddaelectric.com"] };
   const pre = await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod", "Anchors", "Beam clamps"] });
   assert.equal(pre.to, "", "no email on file for Rob yet: you type the one they give you");
   // Sent while they're on the phone: short and casual, like it was typed on the call (9/28).
@@ -119,13 +120,25 @@ test("send line card now: ready on the call screen, sent once to the address you
   assert.doesNotMatch(pre.body, /[—–]/);
   assert.equal(pre.subject, "Westgate Supply – line card");
 
+  // Not on a call yet (the pre-call screen): who we are first, and addresses to pick from (DMG, 9/29).
+  const cold = await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod"], cold: true });
+  assert.match(cold.body, /^Hi Rob,\n\nI'm Walt with Westgate Supply( and tried you by phone today)?\. Here's our line card\./);
+  assert.ok(pre.suggestions.length >= 1, JSON.stringify(pre.suggestions));
+
+  // Emailing someone who wasn't on the call: say who sent you (Colton → Mykala, 9/28).
+  assert.match((await lineCardFor(d, DEMO_LEAD_ID, { name: "Mykala", referredBy: "Colton" })).body, /^Hi Mykala,\n\nColton suggested I send this your way\. Here's our line card\./);
+  // A name typed on the call screen wins over the contact on file.
+  assert.match((await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", name: "Erik Reed" })).body, /^Hi Erik,/);
   await assert.rejects(sendLineCard(d, DEMO_LEAD_ID, { to: "not an email" }), /doesn't look like an email/);
-  const r = await sendLineCard(d, DEMO_LEAD_ID, { to: "renee@roddaelectric.com", askFor: "Rob" });
+  const r = await sendLineCard(d, DEMO_LEAD_ID, { to: "renee@roddaelectric.com", askFor: "Rob", name: "Renee" });
   assert.equal(r.to, "renee@roddaelectric.com", "the address given on the call wins");
   const draft = close.writes.filter((w) => w.op === "email").pop()!.body as { to: string[]; attachments: Array<{ filename: string }> };
   assert.deepEqual(draft.to, ["renee@roddaelectric.com"]);
   assert.equal(draft.attachments[0].filename, "Westgate_Supply_Line_Card.pdf");
   assert.equal(close.writes.filter((w) => w.op === "send").length, 1);
+  // Someone not on the lead yet is added as a contact, so the email is filed under them (Ethan at Titan, 9/29).
+  assert.equal(r.newContact, true);
+  assert.deepEqual(close.writes.filter((w) => w.op === "contact").map((w) => (w.body as { email: string }).email), ["renee@roddaelectric.com"]);
 
   // Already emailed them: the next one is a reply in that thread, says "resending", and flags the earlier send.
   const close2 = new FakeClose({ calls: [roddaCall({ id: "acti_lcAgain" })] });
@@ -137,10 +150,14 @@ test("send line card now: ready on the call screen, sent once to the address you
   assert.deepEqual(again.alreadySent, { at: "2026-09-26T01:34:00Z", opened: false }, "only their spam filter touched it");
   assert.match(again.body, /^Hi Rob!\n\nJust bumping this back to the top of your inbox\. The line card is in my email below\./);
   assert.equal(again.attach, false);
-  const sentAgain = await sendLineCard(d2, DEMO_LEAD_ID, { to: "rob.roy@gmail.com" });
+  const forklift = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
+  const sentAgain = await sendLineCard(d2, DEMO_LEAD_ID, { to: "rob.roy@gmail.com", meme: forklift });
   assert.equal(sentAgain.threaded, true);
-  const reply = close2.writes.filter((w) => w.op === "email").pop()!.body as { inReplyToId: string; threadId: string; attachments?: unknown[] };
+  const reply = close2.writes.filter((w) => w.op === "email").pop()!.body as { inReplyToId: string; threadId: string; attachments?: unknown[]; html?: string | null };
   assert.equal((reply.attachments ?? []).length, 0, "the bump has no attachment");
+  assert.match(reply.html ?? "", /forklift\.jpg/, "the call-screen bump carries a meme (10/2)");
+  const { store } = await import("../src/store.js");
+  assert.deepEqual(((await store.getSetting<Record<string, string[]>>(d2.rep.closeUserId, "rescueMemes")) ?? {})[DEMO_LEAD_ID], ["forklift.jpg"], "remembered so they never get it twice");
   assert.equal(reply.inReplyToId, "acti_firstCard");
   assert.equal(reply.threadId, "thread_first");
 
@@ -160,5 +177,58 @@ test("greeting from an email address only when it's clearly a first name", async
   assert.equal(nameFromEmail("waltboxwell@gmail.com"), null);
   assert.equal(nameFromEmail("jkristo@southshorecontrols.com"), null);
   assert.equal(nameFromEmail("cmoreno@titanmf.com"), null);
+  assert.equal(nameFromEmail("bobeso@iemts.com"), null, "B. Obeso, not Bobeso (9/29)");
+  assert.equal(nameFromEmail("mykala@threepeaksdrilling.com"), null, "not a common name: ask, don't guess");
+  assert.equal(nameFromEmail("julie@mercertech.com"), "Julie");
   assert.equal(nameFromEmail("purchasing@samjackson.com"), null);
+});
+
+test("line card address check: a typo'd domain is caught before it bounces (hall@gatewayspecific.com, 9/28)", async () => {
+  const { checkAddress, mailDns } = await import("../src/linecard.js");
+  const gone = Object.assign(new Error("queryMx ENOTFOUND"), { code: "ENOTFOUND" });
+  mailDns.resolveMx = (async (dom: string) => { if (dom === "gatewayspecific.com") throw gone; return [{ exchange: "mx", priority: 10 }]; }) as never;
+  const bad = await checkAddress("hall@gatewayspecific.com", "https://gatewaypacific.com");
+  assert.equal(bad.problem, "no_domain");
+  assert.equal(bad.suggestion, "hall@gatewaypacific.com");
+  assert.match(bad.message!, /gatewayspecific\.com doesn't exist.*Their website is gatewaypacific\.com/);
+  // The domain exists but isn't theirs, and it's one letter off: a warning, not a block.
+  const near = await checkAddress("hall@gatewaypacfic.com", "gatewaypacific.com");
+  assert.equal(near.problem, "not_their_domain");
+  assert.equal(near.suggestion, "hall@gatewaypacific.com");
+  // Their own domain, a subdomain of it, a personal Gmail, or a different company's domain: fine.
+  for (const ok of ["hall@gatewaypacific.com", "hall@mail.gatewaypacific.com", "jhall@gmail.com", "hall@parentco.com"]) {
+    assert.equal((await checkAddress(ok, "https://www.gatewaypacific.com/")).problem, null, ok);
+  }
+  // DNS trouble never blocks a send.
+  mailDns.resolveMx = (async () => { throw Object.assign(new Error("x"), { code: "ESERVFAIL" }); }) as never;
+  assert.equal((await checkAddress("hall@gatewaypacific.com", null)).problem, null);
+});
+
+test("shot down (10/5): the call is still read for its note, but no callback, status or email comes of it", async () => {
+  const { markNotInterested } = await import("../src/accounts.js");
+  // Shot down with no outcome tap: one review is queued, and it saves the note and contact only.
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_shot1" })] });
+  const d: Deps = { close, llm: demoLlm, rep: { ...rep, closeUserId: "user_shot_pipeline1" } };
+  const r = await markNotInterested(d, DEMO_LEAD_ID, "Happy with their supplier");
+  assert.equal(r.status, "Not Interested");
+  const id = await queueShotDown(d, DEMO_LEAD_ID, { call_id: "acti_shot1", note: "Happy with their supplier" });
+  assert.ok(id);
+  assert.equal(await queueShotDown(d, DEMO_LEAD_ID, { call_id: "acti_shot1" }), null, "queued once per call");
+  const [it] = await settle(d);
+  assert.equal(it.outcome, "reached_buyer", "a no from a person is a reach");
+  assert.ok(close.writes.some((w) => w.op === "note" && !(w.body as { note: string }).note.startsWith("[Not interested]")), "the call note is saved");
+  assert.ok(!close.writes.some((w) => w.op === "task"), "no callback");
+  assert.ok(!close.writes.some((w) => w.op === "email"), "no email draft");
+  assert.equal(close.writes.filter((w) => w.op === "status").length, 1, "the only status change is Not Interested");
+  assert.ok((it.alerts ?? []).some((a) => /Skipped the callback, status and email: the lead is marked Not Interested/.test(a.text)), "and the card says why");
+
+  // An outcome tap first, then shot down before the transcript is read: the build doesn't bring the callback back.
+  const close2 = new FakeClose({ calls: [roddaCall({ id: "acti_shot2" })] });
+  const d2: Deps = { close: close2, llm: demoLlm, rep: { ...rep, closeUserId: "user_shot_pipeline2" } };
+  close2.leadStatus.set(DEMO_LEAD_ID, "Not Interested"); // shot down lands while the review is building
+  await quickOutcome(d2, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_shot2" });
+  const [it2] = await settle(d2);
+  assert.ok(!close2.writes.some((w) => w.op === "email"), "no email draft after a shot down");
+  assert.ok(!close2.writes.some((w) => w.op === "task-update"), "the tap's callback isn't rewritten");
+  assert.ok((it2.alerts ?? []).some((a) => /marked Not Interested/.test(a.text)));
 });

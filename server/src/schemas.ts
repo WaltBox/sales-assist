@@ -14,7 +14,7 @@ export const BriefSchema = z.object({
     name: z.string().describe("First name (or full name) of the purchasing person to ask for; 'Purchasing' if unknown"),
     role: z.string().nullable().describe("Under 10 words, e.g. 'covering purchasing for Rob Roy (back Oct 12)'"),
   }),
-  opener: z.string().describe("1–2 spoken sentences: who we are and 3–4 specific products from `buys` we'd supply them, named in one run (\"the pipe, fittings, hardware and fasteners\"). Follow-ups too: pick up from the last conversation and still name the products."),
+  opener: z.string().describe("2 short spoken sentences: who we are, then 3–4 specific products from `buys` in one run and what work they're for (\"Hi, this is Walt with Westgate Supply. We supply pipe, fittings, hardware and fasteners for commercial plumbing work.\"). No \"[crews] use for\" clauses. Follow-ups too: pick up from the last conversation and still name the products."),
   ask: z.string().describe("1–2 spoken sentences: the ask for a list or RFQ, any format"),
   objection: z.string().describe("The most likely pushback, a few words, e.g. 'We already have a supplier'"),
   objection_response: z.string().describe("1–2 spoken sentences"),
@@ -31,7 +31,7 @@ export const NoteProposal = z.object({
 });
 
 export const ContactProposal = z.object({
-  name: z.string(),
+  name: z.string().describe("As said on the call or in Close. Never work out a last name from the email address or its domain (jacob@mcturk.net is \"Jacob\", not \"Jacob McTurk\")."),
   title: z.string().nullable().describe("Only if said on the call or in Close; never guessed"),
   email: z.string().nullable(),
   phone: z.string().nullable(),
@@ -60,9 +60,9 @@ export const TaskProposal = z.object({
 });
 
 export const EmailProposal = z.object({
-  to: z.array(z.object({ name: z.string(), email: z.string() })),
+  to: z.array(z.object({ name: z.string().describe("The name as said on the call or in Close. Never work out a last name from the email address or its domain."), email: z.string() })),
   subject: z.string().describe("Use the subject lines from the Email & Product Knowledge Playbook §4"),
-  body: z.string().describe("Plain text, 120–180 words, signed with the rep's full name only. No em dashes or en dashes."),
+  body: z.string().describe("Plain text, 120–180 words, in short paragraphs separated by a blank line: the greeting on its own line, then 2–4 short paragraphs, the thanks line, and the rep's full name on its own line. No em dashes or en dashes."),
   attach_line_card: z.boolean().describe("True when the prospect asked for the line card or the body says it's attached"),
   address_as_heard: z.string().nullable().describe("If a recipient address came from the call, exactly how it sounded in the transcript; else null"),
 });
@@ -152,6 +152,13 @@ export const QuickOutcomeRequest = z.object({
   note: z.string().max(1000).nullable().optional(),
   call_id: z.string().nullable().optional(),
   rating: Rating.nullable().optional(),
+  /** Changing a tap made by mistake (Walt 9/29): what the first tap saved, so it's replaced, not added to. */
+  change: z.object({
+    task_id: z.string().max(100).nullable().optional(),
+    queued_id: z.string().max(100).nullable().optional(),
+    prev_status: z.string().max(80).nullable().optional(),
+    set_status: z.string().max(80).nullable().optional(),
+  }).nullable().optional(),
 });
 
 export const QueueChatRequest = z.object({

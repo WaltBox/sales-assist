@@ -22,6 +22,17 @@ export const config = {
   // Per-feature models: the brief and chat are waited on before a dial, so they default to the faster model.
   briefModel: process.env.BRIEF_MODEL ?? "claude-sonnet-5",
   chatModel: process.env.CHAT_MODEL ?? "claude-sonnet-5",
+  // When the calling day ends, for the dial pace (HH:MM, rep's local time). Walt 9/29: "we end at 3:30".
+  dayEnd: /^\d{1,2}:\d{2}$/.test(process.env.DAY_END ?? "") ? process.env.DAY_END! : "15:30",
+  // Automatic emails start in test mode (only Test Lead Fabrication) until the rep turns it off (10/1).
+  autoTestModeDefault: process.env.AUTO_TEST_MODE !== "0",
+  // Which AI writes by default (Walt 9/30: "we're going to be using OpenAI by default now"). The other one is the
+  // backup when the first is down. LLM_PROVIDER=claude switches back.
+  provider: (process.env.LLM_PROVIDER === "claude" ? "claude" : "openai") as "openai" | "claude",
+  openaiModel: process.env.OPENAI_MODEL ?? "gpt-5.1",
+  // For the jobs that use the faster Claude model (brief, chat, after-call, email): waited on during calls.
+  // gpt-5-mini needs a verified OpenAI organization (9/30); until then the fast jobs use gpt-5.1 too.
+  openaiFastModel: process.env.OPENAI_FAST_MODEL ?? "gpt-5.1",
   afterCallModel: process.env.AFTER_CALL_MODEL ?? "claude-sonnet-5",
   emailModel: process.env.EMAIL_MODEL ?? "claude-sonnet-5",
   effortEmail: (process.env.EFFORT_EMAIL ?? "medium") as "low" | "medium" | "high",
@@ -50,7 +61,8 @@ export const config = {
   autoSave: process.env.AUTO_SAVE !== "0",
   lineCardTemplateId: process.env.LINE_CARD_TEMPLATE_ID ?? "tmpl_h0xbgrP8EjkmKlb5zMD8gKpHzfd8khSxYt2EpqoTeLA",
   // Bump when the brief format changes so old cached briefs are ignored. v10: openers always name 3-4 specific products.
-  briefVersion: "v10",
+  // v11: two short sentences, no "[crews] use for" clause (Walt 9/28).
+  briefVersion: "v11",
 };
 
 export function loadReps(): Map<string, Rep> {

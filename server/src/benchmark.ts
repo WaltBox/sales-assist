@@ -131,6 +131,40 @@ export function enforceBenchmark(
 }
 
 /** No em or en dashes in email bodies (Walt 9/24). Number ranges keep a hyphen. */
+/**
+ * Paragraphs, even when the model writes one block (Walt 9/29, the Anthony Labetti draft): greeting on its own,
+ * then the pitch, the line card, the "got it" ask and the call line as short paragraphs, the thanks, the name.
+ * An email that already has its paragraphs is left alone.
+ */
+export function formatParagraphs(body: string, repName?: string): string {
+  let text = body.replace(/\r\n/g, "\n").trim();
+  let sig = "";
+  if (repName && text.endsWith(repName)) { sig = repName; text = text.slice(0, -repName.length).trim(); }
+  else {
+    // No name given: a last line that's just a name ("Walt Boxwell") is the signature.
+    const last = text.match(/\n\s*([A-Z][a-z]+(?: [A-Z][a-z.'-]+){1,2})\s*$/);
+    if (last) { sig = last[1]; text = text.slice(0, last.index).trim(); }
+  }
+  const paras = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (paras.length >= 3) return [...paras, sig].filter(Boolean).join("\n\n");
+  let flat = paras.join(" ").replace(/\s*\n\s*/g, " ").trim();
+  const out: string[] = [];
+  const hi = flat.match(/^((?:hi|hello|hey|good (?:morning|afternoon))\b[^,.!?\n]{0,40}[,!])\s*/i);
+  if (hi) { out.push(hi[1]); flat = flat.slice(hi[0].length); }
+  let closer = "";
+  const bye = flat.match(/\s*((?:thanks|thank you|thanks again|best|cheers|appreciate it)\b[^.!?]{0,40}[.!]?)$/i);
+  if (bye && bye.index! > 0) { closer = bye[1]; flat = flat.slice(0, bye.index).trim(); }
+  const sentences = flat.split(/(?<=[.!?]["”']?)\s+(?=["“']?[A-Z])/).filter((x) => x.trim());
+  const cue = /^["“']?(i've attached|i have attached|attached|mind replying|could you reply|can you reply|would you mind replying|i'll give you a call|i'll call|i will call)\b/i;
+  let cur: string[] = [];
+  for (const sn of sentences) {
+    if (cur.length && (cue.test(sn) || cur.length >= 3)) { out.push(cur.join(" ")); cur = []; }
+    cur.push(sn);
+  }
+  if (cur.length) out.push(cur.join(" "));
+  return [...out, closer, sig].filter(Boolean).join("\n\n");
+}
+
 export function stripDashes(body: string) {
   return body
     .replace(/(\d)\s*[–—]\s*(\d)/g, "$1-$2")

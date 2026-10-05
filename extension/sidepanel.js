@@ -194,16 +194,23 @@ function hungUp() {
 
 async function pickOutcome(outcome) {
   const st = S;
-  if (st.outcome) return;
+  const prev = st.outcome;
+  if (st.shotDown && st.shotDown.saved) return; // shot down: no callback to set
+  // Tapped the wrong one (Walt 9/29): "Change" re-opens the buttons, and the new pick replaces what the first saved.
+  if (prev && !(prev.changing && !prev.busy && outcome !== prev.picked)) return;
+  const r0 = prev && prev.result;
+  const change = r0 ? { task_id: r0.task ? r0.task.id : null, queued_id: r0.queued || null, prev_status: prev.origStatus ?? r0.prevStatus ?? null, set_status: r0.setStatus ?? null } : null;
   st.outcome = { picked: outcome, busy: true };
   render();
   try {
     const r = await api(`/api/leads/${st.leadId}/outcome`, {
-      outcome, note: drafts[`note:${st.leadId}`] || null, call_id: st.callId, rating: st.brief ? st.brief.rating : null,
+      outcome, note: drafts[`note:${st.leadId}`] || null, call_id: st.callId, rating: st.brief ? st.brief.rating : null, change,
     });
-    st.outcome = { picked: outcome, busy: false, result: r, noteSent: drafts[`note:${st.leadId}`] || "" };
+    st.outcome = { picked: outcome, busy: false, result: r, noteSent: drafts[`note:${st.leadId}`] || "",
+      origStatus: change ? change.prev_status : r.prevStatus, changedFrom: prev ? prev.picked : null };
     st.handledCallId = st.callId;
-    if (outcome === "reached_buyer" || outcome === "got_name") countReached(st.callId);
+    if (change) syncStats(true); // the reached count follows the corrected outcome
+    else if (outcome === "reached_buyer" || outcome === "got_name") countReached(st.callId);
     refreshQueue();
     if (r.queued) watchBuild(st, st.outcome, r.queued);
   } catch (e) {
@@ -304,9 +311,14 @@ let stats = null; // { day, server, dials, reached, dialIds:[], reachedIds:[], a
 let week = null;
 let statsTimer = null;
 
+// Yesterday's numbers never show as today's (Walt 9/29: 140 dials still up the next morning).
+const todayLocal = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, same as the server's day
+const statsFresh = () => !!(stats && stats.server && stats.day === todayLocal());
+
 async function loadStats() {
   if (PREVIEW) return;
-  stats = (await chrome.storage.local.get("stats")).stats || null;
+  const saved = (await chrome.storage.local.get("stats")).stats || null;
+  stats = saved && saved.day === todayLocal() ? saved : null;
 }
 function saveStats() {
   if (!PREVIEW && stats) chrome.storage.local.set({ stats });
@@ -318,7 +330,12 @@ async function syncStats(fresh = false) {
   let s;
   try {
     s = await api(`/api/stats/today?${new URLSearchParams({ ...(fresh ? { fresh: "1" } : {}), ...(local !== null ? { local_dials: String(local) } : {}) })}`);
-  } catch { return; }
+  } catch {
+    // Server unreachable (restarting, offline): try again soon instead of waiting for the panel to reopen.
+    clearTimeout(statsTimer);
+    statsTimer = setTimeout(() => syncStats(true), 30_000);
+    return;
+  }
   if (stats && stats.day === s.day && stats.server && (stats.dials !== s.dials || stats.reached !== s.reached)) {
     console.info(`[stats] Close wins: dials ${stats.dials} → ${s.dials}, reached ${stats.reached} → ${s.reached}`);
   }
@@ -338,6 +355,7 @@ async function syncStats(fresh = false) {
   saveStats();
   scheduleStatsSync();
   if (view !== "item" && view !== "draft") render();
+  checkMilestone();
 }
 
 function scheduleStatsSync() {
@@ -357,6 +375,68 @@ function countDial(callId) {
   stats.approxUntil = Date.now() + TRANSCRIPT_GRACE_MS;
   saveStats();
   scheduleStatsSync();
+  checkMilestone();
+}
+
+// ---------- 100 dials: confetti and a pat on the back (Walt 9/28) ----------
+
+const MILESTONES = {
+  100: ["100 dials. That's the work most people won't do.", "Triple digits. Every one of these is a shot at an RFQ.", "100 calls in. The next yes is in the next 20.", "100 dials. That's how accounts get opened."],
+  150: ["150 dials. You're outworking the whole list.", "150. The pipeline feels that.", "150 calls. Keep the streak going."],
+  200: ["200 dials. That's a legendary day.", "200. Nobody's out-hustling you today.", "200 calls. Go get the RFQs they turn into."],
+};
+
+async function checkMilestone() {
+  if (!stats) return;
+  const store = PREVIEW ? { get: async () => { try { return JSON.parse(localStorage.getItem("celebrated") || "null"); } catch { return null; } }, set: async (v) => { try { localStorage.setItem("celebrated", JSON.stringify(v)); } catch {} } }
+    : { get: async () => (await chrome.storage.local.get("celebrated")).celebrated || null, set: (v) => chrome.storage.local.set({ celebrated: v }) };
+  const saved = await store.get();
+  const done = saved && saved.day === stats.day ? saved.hits : [];
+  const reached = Object.keys(MILESTONES).map(Number).filter((m) => stats.dials >= m && !done.includes(m));
+  if (!reached.length) return;
+  await store.set({ day: stats.day, hits: [...done, ...reached] });
+  celebrate(Math.max(...reached)); // one party, for the biggest one just passed
+}
+
+function celebrate(n) {
+  document.querySelector(".party")?.remove();
+  const lines = MILESTONES[n];
+  const msg = lines[Math.floor(Math.random() * lines.length)];
+  const canvas = el("canvas", { class: "confetti", "aria-hidden": "true" });
+  const card = el("div", { class: "partycard", role: "status" }, [
+    el("p", { class: "partynum mono", text: String(n) }),
+    el("p", { class: "partylabel", text: "dials today" }),
+    el("p", { class: "partymsg", text: msg }),
+    el("button", { class: "btn primary", text: "Keep going", onclick: () => wrap.remove() }),
+  ]);
+  const wrap = el("div", { class: "party", onclick: (e) => { if (e.target === wrap) wrap.remove(); } }, [canvas, card]);
+  document.body.append(wrap);
+  setTimeout(() => wrap.remove(), 9000);
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  // Bright, colorful confetti (Walt 9/28: "should be colorful"), falling for about 5 seconds.
+  const ctx = canvas.getContext("2d");
+  const W = (canvas.width = window.innerWidth), H = (canvas.height = window.innerHeight);
+  const colors = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#5856d6", "#af52de", "#ff2d55", "#dc0025"];
+  const bits = Array.from({ length: 180 }, () => ({
+    x: Math.random() * W, y: -20 - Math.random() * H * 0.6, w: 5 + Math.random() * 6, h: 8 + Math.random() * 8,
+    vx: -1.5 + Math.random() * 3, vy: 2 + Math.random() * 3.5, r: Math.random() * Math.PI, vr: -0.2 + Math.random() * 0.4,
+    c: colors[Math.floor(Math.random() * colors.length)], round: Math.random() < 0.3,
+  }));
+  const t0 = performance.now();
+  const frame = (t) => {
+    if (!canvas.isConnected) return;
+    ctx.clearRect(0, 0, W, H);
+    const fade = Math.max(0, 1 - Math.max(0, t - t0 - 3500) / 1500);
+    for (const b of bits) {
+      b.x += b.vx; b.y += b.vy; b.r += b.vr; b.vx += (Math.random() - 0.5) * 0.08;
+      ctx.save(); ctx.globalAlpha = fade; ctx.translate(b.x, b.y); ctx.rotate(b.r);
+      ctx.fillStyle = b.c;
+      if (b.round) { ctx.beginPath(); ctx.arc(0, 0, b.w / 2, 0, Math.PI * 2); ctx.fill(); } else ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      ctx.restore();
+    }
+    if (fade > 0) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 function countReached(callId) {
   if (!stats || !callId || stats.reachedIds.includes(callId)) return;
@@ -370,7 +450,7 @@ const statsApprox = () => !!stats && ((stats.server && stats.server.approximate)
 function statsStrip() {
   const n = (v, word) => [el("b", { text: String(v) }), ` ${word}`];
   const sep = () => el("span", { class: "sep", text: " · " });
-  if (!stats || !stats.server) return el("button", { class: "stats", text: "Today", onclick: openStats });
+  if (!statsFresh()) return el("button", { class: "stats", text: "Today", onclick: openStats });
   const s = stats.server;
   const tilde = statsApprox() ? "~" : "";
   return el("button", { class: `stats${view === "stats" || view === "week" ? " on" : ""}`, title: "Today's numbers from Close", onclick: openStats }, [
@@ -418,7 +498,7 @@ function renderStats() {
     ]) : null,
     s.pace ? el("div", { class: "card space" }, [
       el("p", { class: "label", text: "Pace" }),
-      el("p", {}, [el("b", { text: `On pace for ${s.pace.onPaceFor}` }), el("span", { class: "muted", text: ` · ${s.pace.perHour}/hr until 5 PM` })]),
+      el("p", {}, [el("b", { text: `On pace for ${s.pace.onPaceFor}` }), el("span", { class: "muted", text: ` · ${s.pace.perHour}/hr until ${s.pace.until || "3:30 PM"}` })]),
     ]) : null,
     t ? el("p", { class: "muted small", text: "~ Reached, voicemails and RFQs update when the last few minutes of transcripts land." }) : null,
     el("button", { class: "btn", text: "This week →", onclick: openWeek }),
@@ -569,7 +649,9 @@ function render() {
   // Keep focus and caret in whichever input the rep is typing in.
   const active = document.activeElement;
   const key = active && active.getAttribute && active.getAttribute("data-key");
-  const caret = key && "selectionStart" in active ? active.selectionStart : null;
+  // (Line card fields too: the call screen redraws every few seconds, 9/28.)
+  let caret = null, caretEnd = null;
+  try { if (key && active.selectionStart != null) { caret = active.selectionStart; caretEnd = active.selectionEnd; } } catch {}
 
   const app = document.getElementById("app");
   if (!settings.token) app.replaceChildren(header(null), el("main", { class: "page" }, [
@@ -591,7 +673,7 @@ function render() {
 
   if (key) {
     const n = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
-    if (n) { n.focus(); if (caret !== null) try { n.setSelectionRange(caret, caret); } catch {} }
+    if (n) { n.focus(); if (caret !== null) try { n.setSelectionRange(caret, caretEnd ?? caret); } catch {} }
   }
 }
 
@@ -652,9 +734,10 @@ function theirClock(h) {
   const mins = Number(parts.hour) * 60 + Number(parts.minute);
   const weekend = parts.weekday === "Sat" || parts.weekday === "Sun";
   const time = new Intl.DateTimeFormat("en-US", { timeZone: h.timeZoneId, hour: "numeric", minute: "2-digit" }).format(now);
-  const open = !weekend && mins >= 8 * 60 && mins < 16 * 60 + 30;
-  const why = weekend ? "Weekend." : mins < 8 * 60 ? "Too early." : !open ? "After hours." : null;
-  return { time, open, why };
+  // After 4:00 PM their time buyers are wrapping up: suggest skipping (Walt 9/29).
+  const open = !weekend && mins >= 8 * 60 && mins < 16 * 60;
+  const why = weekend ? "it's the weekend there" : mins < 8 * 60 ? "it's before 8 AM there" : !open ? "it's after 4 PM there, and buyers are wrapping up" : null;
+  return { time, open, why, late: !weekend && mins >= 16 * 60 };
 }
 
 // ---------- opener: highlight what we supply ----------
@@ -751,8 +834,9 @@ async function loadLineCard(st) {
   const b = st.brief || {};
   st.lc = { ...(st.lc || {}), loading: true };
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { to: st.lc.to || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
-    st.lc = { ...st.lc, loading: false, preview: r, to: st.lc.to || r.to };
+    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
+    const first = r.name && !/main|office|purchasing/i.test(r.name) ? r.name : "";
+    st.lc = { ...st.lc, loading: false, preview: r, to: st.lc.to || r.to, name: st.lc.name ?? first };
   } catch (e) {
     st.lc = { ...st.lc, loading: false, error: e.message };
   }
@@ -765,8 +849,9 @@ async function sendLineCardNow(st) {
   st.lc.error = null;
   render();
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { to: st.lc.to, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
+    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
     st.lc.sent = r;
+    watchBounce(st, r);
   } catch (e) {
     st.lc.error = e.message;
   }
@@ -774,26 +859,167 @@ async function sendLineCardNow(st) {
   render();
 }
 
-function lineCardAsk(st) {
+// Bounces come back within a minute or two, usually while they're still on the phone (gatewayspecific.com, 9/28).
+function watchBounce(st, sent) {
+  const since = new Date(new Date(sent.at).getTime() - 5000).toISOString();
+  for (const s of [15, 35, 60, 100, 160]) {
+    setTimeout(async () => {
+      if (!st.lc || st.lc.sent !== sent || sent.bounce) return;
+      try {
+        const r = await api(`/api/leads/${st.leadId}/linecard/bounce?to=${encodeURIComponent(sent.to)}&since=${encodeURIComponent(since)}`);
+        if (r.bounced && st.lc.sent === sent) { sent.bounce = r; if (st === S) render(); }
+      } catch {}
+    }, s * 1000);
+  }
+}
+
+// Someone else on their team wants it too (Ethan at Titan, 9/29): a fresh line card to a new address, not a resend.
+function sendToSomeoneElse(st) {
+  st.lc = { ...(st.lc || {}), sent: null, preview: null, error: null, expand: true, to: "", name: "", referredBy: "", badTo: null, another: true };
+  render();
+  setTimeout(() => { const i = document.getElementById("lc-to"); if (i) i.focus(); }, 0);
+}
+
+// Wrong address: back to the form with the email field ready to fix. The new address gets a fresh email.
+function fixLineCardEmail(st) {
+  const bad = st.lc.sent ? st.lc.sent.to : null;
+  st.lc = { ...st.lc, sent: null, preview: null, error: null, expand: true, badTo: bad };
+  loadLineCard(st).then(() => { const i = document.getElementById("lc-to"); if (i) { i.focus(); i.select(); } });
+  render();
+}
+
+// "RFQ came in" (Mitchell Concrete, 9/29): it arrived outside Close (another inbox, a call, a text), so the app
+// can't see it. Saved as an [RFQ received] note: off the calls and automatic emails, onto the RFQs page.
+function rfqButton(st) {
+  const r = st.rfqIn || {};
+  if (r.saved) return el("div", { class: "rfqin saved" }, [el("i", { class: "dot" }), el("span", { text: `RFQ marked received${r.completed ? ` · ${r.completed} callback${r.completed === 1 ? "" : "s"} cleared` : ""}. It's on the RFQs page.` })]);
+  if (!r.open) return el("button", { class: "btn small rfqbtn", text: "RFQ came in", onclick: () => { st.rfqIn = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("rfq-note"); if (i) i.focus(); }, 0); } });
+  const save = async () => {
+    st.rfqIn = { ...r, busy: true, error: null }; render();
+    try {
+      const res = await api(`/api/leads/${st.leadId}/rfq-received`, { note: st.rfqIn.note || null });
+      st.rfqIn = { saved: true, completed: res.completedTasks };
+    } catch (e) { st.rfqIn = { ...st.rfqIn, busy: false, error: e.message }; }
+    if (st === S) render();
+  };
+  return el("div", { class: "rfqin" }, [
+    el("input", { id: "rfq-note", "data-key": "rfq-note", type: "text", value: r.note || "", placeholder: "What came in? (optional, e.g. \"materials list to Jacob's inbox\")", maxlength: "200",
+      oninput: (e) => { st.rfqIn = { ...(st.rfqIn || {}), note: e.target.value }; }, onkeydown: (e) => { if (e.key === "Enter") save(); } }),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn small primary", disabled: !!r.busy, text: r.busy ? "Saving…" : "Save to Close", onclick: save }),
+      el("button", { class: "link", text: "Cancel", onclick: () => { st.rfqIn = null; render(); } }),
+    ]),
+    r.error ? el("p", { class: "bad small", text: `Couldn't save: ${r.error}` }) : null,
+  ]);
+}
+
+// "Shot down" (Walt 10/5): they said no. The lead goes to Not Interested in Close with a note, its open callbacks
+// are marked done, and it leaves the calls and the automatic emails. Two steps (tap, then save) so a slip doesn't
+// close an account; Undo puts the status back.
+function shotDownButton(st) {
+  const r = st.shotDown || {};
+  const undo = async () => {
+    st.shotDown = { ...r, busy: true, error: null }; render();
+    try {
+      const res = await api(`/api/leads/${st.leadId}/not-interested`, { undo: true, prev_status: r.prevStatus });
+      st.shotDown = { undone: res.status };
+    } catch (e) { st.shotDown = { ...r, busy: false, error: e.message }; }
+    if (st === S) render();
+  };
+  if (r.saved) return el("div", { class: "rfqin saved shot" }, [el("i", { class: "dot" }),
+    el("span", { text: `Marked Not Interested${r.completed ? ` · ${r.completed} callback${r.completed === 1 ? "" : "s"} cleared` : ""}. No more calls or automatic emails.` }),
+    r.prevStatus ? el("button", { class: "link", disabled: !!r.busy, text: r.busy ? "Undoing…" : "Undo", onclick: undo }) : null,
+    r.error ? el("span", { class: "bad small", text: `Couldn't undo: ${r.error}` }) : null,
+  ]);
+  const open = () => { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); };
+  if (!r.open) return el("div", { class: "shotwrap" }, [
+    el("button", { class: "btn small shotbtn", text: "Shot down", title: "They're not interested: no more calls or automatic emails", onclick: open }),
+    r.undone ? el("span", { class: "muted small", text: `Undone: back to ${r.undone}. The callbacks it cleared stay done, so tap an outcome to set a new one.` }) : null,
+  ]);
+  const save = async () => {
+    const note = (st.shotDown.note || "").trim() || drafts[`note:${st.leadId}`] || null;
+    const tapped = !!(st.outcome && st.outcome.result);
+    st.shotDown = { ...r, busy: true, error: null }; render();
+    try {
+      const res = await api(`/api/leads/${st.leadId}/not-interested`, { note, call_id: st.callId });
+      st.shotDown = { saved: true, completed: res.completedTasks, prevStatus: res.prevStatus };
+      if (st.callId) {
+        st.handledCallId = st.callId;
+        if (!tapped) countReached(st.callId); // a "no" from a person is still a reach
+      }
+      refreshQueue();
+    } catch (e) { st.shotDown = { ...st.shotDown, busy: false, error: e.message }; }
+    if (st === S) render();
+  };
+  return el("div", { class: "rfqin shotin" }, [
+    el("input", { id: "shot-note", "data-key": "shot-note", type: "text", value: r.note || "", placeholder: "Why? (optional, e.g. \"buys through a sister company\")", maxlength: "300",
+      oninput: (e) => { st.shotDown = { ...(st.shotDown || {}), note: e.target.value }; }, onkeydown: (e) => { if (e.key === "Enter") save(); } }),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn small primary", disabled: !!r.busy, text: r.busy ? "Saving…" : "Mark not interested", onclick: save }),
+      el("button", { class: "link", text: "Cancel", onclick: () => { st.shotDown = null; render(); } }),
+    ]),
+    r.error ? el("p", { class: "bad small", text: `Couldn't save: ${r.error}` }) : null,
+  ]);
+}
+
+// "They got it": the buyer confirmed the line card came through, not in spam (Walt 9/29). Saved to Close as a
+// [Got it] note, which the accounts board and automatic emails read. Close notes aren't deleted from here,
+// so once saved it stays ticked; a mistake gets fixed by deleting that note in Close.
+function gotItBox(st, label) {
+  const g = st.gotIt || null;
+  const who = (st.lc && st.lc.name) || (st.brief && st.brief.ask_for && !/purchasing/i.test(st.brief.ask_for.name) ? st.brief.ask_for.name : null);
+  return el("label", { class: `gotit${g === "saved" ? " saved" : ""}` }, [
+    el("input", { type: "checkbox", checked: g === "saved" || g === "saving", disabled: g === "saved" || g === "saving", onchange: async (e) => {
+      if (!e.target.checked) return;
+      st.gotIt = "saving"; render();
+      try { await api(`/api/leads/${st.leadId}/linecard/got-it`, { name: who }); st.gotIt = "saved"; }
+      catch (err) { st.gotIt = null; st.gotItError = err.message; }
+      if (st === S) render();
+    } }),
+    el("span", { text: label }),
+    el("small", { class: "gotitnote", text: g === "saved" ? "Saved to Close" : g === "saving" ? "Saving…" : st.gotItError ? `Couldn't save: ${st.gotItError}` : "saves to Close" }),
+  ]);
+}
+
+/** after: on the call-ended screen, so no lines to say and no checklist; send it and move on (Walt 9/29). */
+function lineCardAsk(st, after = false) {
   if (!st.lc) setTimeout(() => loadLineCard(st), 0);
   const lc = st.lc || {};
   const pv = lc.preview;
   const from = myEmail || "my email";
   const whenText = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const items = ["Read their email address back", "Asked for a \"got it\" reply"];
-  const checks = el("div", { class: "lcchecks" }, items.map((c) => el("label", {}, [
-    el("input", { type: "checkbox", checked: st.captured.has(c), onchange: (e) => { if (e.target.checked) st.captured.add(c); else st.captured.delete(c); } }),
-    el("span", { text: c }),
-  ])));
+  const checks = after ? null : el("div", { class: "lcchecks" }, [
+    el("label", {}, [
+      el("input", { type: "checkbox", checked: st.captured.has("Read their email address back"), onchange: (e) => { if (e.target.checked) st.captured.add("Read their email address back"); else st.captured.delete("Read their email address back"); } }),
+      el("span", { text: "Read their email address back" }),
+    ]),
+    gotItBox(st, "They got it (not in spam)"),
+  ]);
 
   // Sent on this call: a slim confirmation and the line to say.
+  if (lc.sent && lc.sent.bounce) {
+    return el("section", { class: "lcbox bounced" }, [
+      el("header", { class: "lchead" }, [el("span", { class: "lct", text: "Line card" }), el("span", { class: "lcpill bad", text: "Bounced" })]),
+      el("div", { class: "lcbody" }, [
+        el("p", { class: "lcmeta", text: `${lc.sent.to} didn't take it. ${lc.sent.bounce.reason}` }),
+        after ? null : el("p", { class: "lcquote", text: `"Looks like that one bounced back. Can you spell your email for me one more time?"` }),
+        el("button", { class: "send lcsend", text: "Fix the email and resend", onclick: () => fixLineCardEmail(st) }),
+      ]),
+    ]);
+  }
   if (lc.sent) {
     return el("section", { class: "lcbox" }, [
       el("header", { class: "lchead" }, [el("span", { class: "lct", text: "Line card" }), el("span", { class: "lcpill ok", text: `Sent ${whenText(lc.sent.at)}` })]),
       el("div", { class: "lcbody" }, [
         el("p", { class: "lcmeta", text: `To ${lc.sent.to}${lc.sent.threaded ? " · a reply in your earlier thread" : " · line card attached"}` }),
-        el("p", { class: "lcquote", text: `"I just sent it. If it's not in your inbox, check spam and click Not spam."` }),
-        checks,
+        after ? el("p", { class: "lcmeta", text: "You're good to move on. If it bounces in the next couple of minutes, it shows up here." })
+          : el("p", { class: "lcquote", text: `"I just sent it. If it's not in your inbox, check spam and click Not spam."` }),
+        // Sent from the pre-call or call-ended screen too: they can still tell you it landed (Walt 9/30, Kwan Wo).
+        checks || el("div", { class: "lcchecks" }, [gotItBox(st, "They got it (not in spam)")]),
+        el("div", { class: "lclinks" }, [
+          el("button", { class: "lclink lcfix", text: "Send to someone else too", onclick: () => sendToSomeoneElse(st) }),
+          el("button", { class: "lclink lcfix", text: "Wrong email? Fix it and resend", onclick: () => fixLineCardEmail(st) }),
+        ]),
       ]),
     ]);
   }
@@ -804,7 +1030,9 @@ function lineCardAsk(st) {
       el("div", { class: "lcrow" }, [
         el("i", { class: "dot" }), el("span", { class: "lct", text: "Line card" }), el("span", { class: "lcs", text: `sent ${whenText(already.at)} · opened` }),
         el("button", { class: "lclink", text: "Send again", onclick: () => { st.lc = { ...lc, expand: true }; render(); } }),
+        el("button", { class: "lclink", text: "Send to someone else", onclick: () => sendToSomeoneElse(st) }),
       ]),
+      gotItBox(st, "They got it (not in spam)"),
     ]);
   }
   return el("section", { class: "lcbox" }, [
@@ -813,23 +1041,112 @@ function lineCardAsk(st) {
       el("span", { class: `lcpill ${already ? "warn" : ""}`, text: already ? `Sent ${whenText(already.at)} · not opened` : "Not sent yet" }),
     ]),
     el("div", { class: "lcbody" }, [
-      el("p", { class: "lcquote", text: already
+      after ? null : el("p", { class: "lcquote", text: already
         ? `"I sent it over earlier. I'll send it again right now so it's at the top of your inbox. Mind firing back a quick 'got it'?"`
         : `"I'll send it right now from ${from}. Mind firing back a quick 'got it' when you see it? Sometimes it lands in junk."` }),
-      el("label", { class: "lcfield" }, [
-        el("span", { class: "label", text: "Send to" }),
-        el("input", {
-          id: "lc-to", type: "email", value: lc.to || "", placeholder: "their email", autocomplete: "off",
-          oninput: (e) => { st.lc = { ...(st.lc || {}), to: e.target.value.trim() }; },
-        }),
+      // Name and email are both editable: the person on the phone isn't always who's on file (Walt 9/28).
+      el("div", { class: "lcfields" }, [
+        el("label", { class: "lcfield lcname" }, [
+          el("span", { class: "label", text: "Name" }),
+          el("input", {
+            id: "lc-name", "data-key": "lc-name", type: "text", value: lc.name || "", placeholder: "first name", autocomplete: "off",
+            oninput: (e) => { st.lc = { ...(st.lc || {}), name: e.target.value }; },
+            onchange: () => loadLineCard(st),
+          }),
+        ]),
+        el("label", { class: "lcfield lcemail" }, [
+          el("span", { class: "label", text: "Send to" }),
+          el("input", {
+            id: "lc-to", "data-key": "lc-to", type: "text", inputmode: "email", spellcheck: "false", autocapitalize: "off", value: lc.to || "", placeholder: "their email", autocomplete: "off",
+            oninput: (e) => { st.lc = { ...(st.lc || {}), to: e.target.value.trim() }; },
+            onchange: () => loadLineCard(st),
+          }),
+        ]),
+        // Emailing someone who wasn't on the call? Put who gave you the email (Colton → Mykala, 9/28).
+        el("label", { class: "lcfield lcref" }, [
+          el("span", { class: "label", text: "Referred by" }),
+          el("input", {
+            id: "lc-ref", "data-key": "lc-ref", type: "text", value: lc.referredBy || "", placeholder: "who gave you the email (optional)", autocomplete: "off",
+            oninput: (e) => { st.lc = { ...(st.lc || {}), referredBy: e.target.value }; },
+            onchange: () => loadLineCard(st),
+          }),
+        ]),
       ]),
-      el("button", { class: "send lcsend", disabled: lc.sending || lc.loading || !lc.to, text: lc.sending ? "Sending…" : already ? "Send it again" : "Send line card now", onclick: () => sendLineCardNow(st) }),
+      addressWarning(st, lc, pv),
+      addressPicks(st, lc, pv),
+      nameCheck(lc, pv),
+      already ? null : memeChooser(st, lc),
+      el("button", { class: "send lcsend", disabled: lc.sending || lc.loading || !lc.to || !!(pv && pv.to === lc.to && pv.check && pv.check.problem === "no_domain"), text: lc.sending ? "Sending…" : already && after ? "Send follow-up now" : already ? "Send it again" : "Send line card now", onclick: () => sendLineCardNow(st) }),
       el("div", { class: "lcfoot" }, [
-        pv ? el("details", { class: "lcprev" }, [el("summary", { text: pv.reply ? "Preview · reply in the same thread" : "Preview email" }), el("p", { class: "rbody", text: `${pv.subject}\n\n${pv.body}` })]) : el("span"),
+        pv ? el("details", { class: "lcprev" }, [el("summary", { text: pv.reply ? "Preview · reply in the same thread" : "Preview email" }), el("p", { class: "rbody", text: `${pv.subject}\n\n${pv.body}` }), pv.memeUrl ? el("img", { class: "lcmemeprev", src: pv.memeUrl, alt: "" }) : null]) : el("span"),
+        already ? el("button", { class: "lclink", text: "Send to someone else", onclick: () => sendToSomeoneElse(st) }) : null,
       ]),
+      lc.another && !lc.to ? el("p", { class: "lcmeta", text: "Type their email and first name. They get the line card as a new email, and they're added as a contact in Close." }) : null,
       lc.error ? el("p", { class: "err", text: lc.error }) : null,
-      checks,
+      checks || (already ? el("div", { class: "lcchecks" }, [gotItBox(st, "They got it (not in spam)")]) : null),
     ]),
+  ]);
+}
+
+// A meme in the first line card email too (Walt 10/2), above the name; the PDF is still attached.
+// Only memes this company hasn't had; picking one counts toward "never the same one twice".
+function memeChooser(st, lc) {
+  const set = (name) => { st.lc = { ...st.lc, meme: name, memeOpen: false }; loadLineCard(st); };
+  const chosen = lc.meme && (lc.memes || []).find((m) => m.name === lc.meme);
+  if (!lc.memeOpen) {
+    return el("div", { class: "lcmeme" }, chosen
+      ? [el("img", { class: "lcmemethumb", src: chosen.url, alt: "" }), el("span", { class: "muted", text: "Meme in the email" }),
+        el("button", { class: "lclink", text: "Change", onclick: () => { st.lc = { ...st.lc, memeOpen: true }; render(); } }),
+        el("button", { class: "lclink", text: "Remove", onclick: () => set(null) })]
+      : [el("button", { class: "btn small", text: "Add a meme", onclick: async () => {
+        st.lc = { ...st.lc, memeOpen: true, memesLoading: true }; render();
+        try { const r = await api(`/api/memes?lead=${encodeURIComponent(st.leadId)}`); st.lc = { ...st.lc, memes: r.memes, memesLoading: false }; }
+        catch (e) { st.lc = { ...st.lc, memesLoading: false, memeError: e.message }; }
+        render();
+      } })]);
+  }
+  if (lc.memesLoading) return el("p", { class: "muted", text: "Loading memes…" });
+  if (lc.memeError) return el("p", { class: "bad small", text: lc.memeError });
+  const memes = lc.memes || [];
+  if (!memes.length) return el("p", { class: "muted", text: "No memes yet: add images to the memes folder." });
+  return el("div", { class: "lcmemegrid" }, [
+    ...memes.map((m) => el("button", { class: `lcmemeopt${m.seen ? " seen" : ""}${lc.meme === m.name ? " on" : ""}`, disabled: m.seen, title: m.seen ? "Already sent to them" : m.name, onclick: () => set(m.name) },
+      [el("img", { src: m.url, alt: m.name }), m.seen ? el("span", { text: "sent" }) : null])),
+    el("button", { class: "lclink", text: "Cancel", onclick: () => { st.lc = { ...st.lc, memeOpen: false }; render(); } }),
+  ]);
+}
+
+// The greeting's name: say when it's only a guess from the address, or missing (Walt 9/29: "Hi Bobeso").
+function nameCheck(lc, pv) {
+  if (!pv || pv.to !== lc.to || !lc.to) return null;
+  const typed = (lc.name || "").trim();
+  if (pv.nameGuessed && (!typed || typed === pv.name)) return el("p", { class: "lcwarn", text: `"Hi ${pv.name}" is a guess from the email address. Check it's their first name, or clear it for "Hi there".` });
+  if (!typed && /^Hi there,/.test(pv.body || "")) return el("p", { class: "lcmeta", text: "No name, so it says \"Hi there,\". Type their first name if you got it." });
+  return null;
+}
+
+// Addresses to pick from: the lead's contacts in Close, then their website when Close has none (DMG, 9/29).
+function addressPicks(st, lc, pv) {
+  const picks = ((pv && pv.suggestions) || []).filter((p) => p.email !== (lc.to || "").toLowerCase());
+  if (!picks.length) return null;
+  return el("div", { class: "lcpicks" }, [
+    el("span", { class: "label", text: pv.suggestions.some((p) => p.site) && !pv.suggestions.some((p) => !p.site) ? "On their website" : "On file" }),
+    ...picks.map((p) => el("button", { class: "lcpick", title: p.site ? "From their website" : "A contact in Close", onclick: () => {
+      const first = p.name ? p.name.split(/\s+/)[0] : null;
+      st.lc = { ...st.lc, to: p.email, name: first ?? st.lc.name ?? "" };
+      loadLineCard(st);
+    } }, [p.email, p.site ? el("small", { text: " · website" }) : null])),
+  ]);
+}
+
+// Typo check on the address before it goes: no such domain (blocks the send), or near their website's domain (a warning).
+function addressWarning(st, lc, pv) {
+  const c = pv && pv.to === lc.to ? pv.check : null;
+  const bad = lc.badTo && lc.badTo === lc.to ? `${lc.badTo} bounced. Fix the address before resending.` : null;
+  if (!(c && c.problem) && !bad) return null;
+  return el("div", { class: `lcwarn ${c && c.problem === "no_domain" ? "bad" : ""}` }, [
+    el("span", { text: (c && c.message) || bad }),
+    c && c.suggestion ? el("button", { class: "lclink", text: `Use ${c.suggestion}`, onclick: () => { st.lc = { ...st.lc, to: c.suggestion }; loadLineCard(st); } }) : null,
   ]);
 }
 
@@ -1034,6 +1351,15 @@ function renderPre() {
     el("p", { class: "sub" }, [sub, h.website ? " · " : null, h.website ? el("button", { class: "link", text: "Website", onclick: () => { view = "site"; render(); } }) : null]),
   ]));
   for (const f of st.flags) page.append(el("div", { class: "flag", text: f }));
+  // Outside their calling hours: suggest skipping it for now (Walt 9/29: "don't call after 4:00 their time").
+  if (clock && !clock.open && b.rating !== "D") {
+    const next = listInfo && listInfo.next;
+    page.append(el("section", { class: "skipcall" }, [
+      el("p", { class: "skiptitle", text: "Skip this one for now" }),
+      el("p", {}, [`It's ${clock.time} their time: ${clock.why}. `, `Call them ${h.bestWindow ? `in their best window (${h.bestWindow})` : clock.late ? "tomorrow morning, their time" : "during their business hours"} instead.`]),
+      next ? el("button", { class: "btn small", text: `Next lead: ${next.name}  →`, onclick: () => openLead(next.id) }) : null,
+    ]));
+  }
 
   // Details as small raised chips (not another box). The opener is the star.
   const plan = h.callPlan || null;
@@ -1062,7 +1388,15 @@ function renderPre() {
     b.fit_summary ? el("p", { class: "fitsum", title: "Tap to expand", text: b.fit_summary, onclick: (e) => e.currentTarget.classList.toggle("open") }) : null,
   ]));
 
+  page.append(rfqButton(st));
   page.append(lastCallBlock(h.lastCall));
+  // Line card already out: the follow-up (a short bump in the same thread) is ready to send before you dial,
+  // with a custom one a tap away (Walt 9/29, Westport: "why does this not have a follow up email ready to go?").
+  // Never emailed: the line card to the address on file, ready to send without a call (Walt 9/29, DMG).
+  page.append(el("div", { class: "afterlc" }, [lineCardAsk(st, true)]));
+  if (h.opens && h.opens.emails > 0) {
+    page.append(el("section", { class: "plain afterfollow" }, [el("p", { class: "label", text: "Or a custom follow-up" }), followUpBlock(st.leadId, true)]));
+  }
 
   page.append(el("section", { class: "hero" }, [
     el("p", { class: "label", text: "Opener" }),
@@ -1130,6 +1464,12 @@ function renderOnCall() {
   const ask = b.ask_for || { name: "Purchasing", role: null };
   const elapsed = st.callStartedAt ? (Date.now() - new Date(st.callStartedAt).getTime()) / 1000 : 0;
   const fu = followUpScript(st);
+  // What the Say box shows goes to Close as a note, once per call (Walt 10/1).
+  const said = fu ? fu.say : b.opener;
+  if (said && st.callId && st.saidFor !== st.callId) {
+    st.saidFor = st.callId;
+    api(`/api/leads/${st.leadId}/said`, { text: said, call_id: st.callId }).catch(() => { st.saidFor = null; });
+  }
   return el("div", { class: "oncall" }, [
     el("div", { class: "bar" }, [
       el("span", { class: "live" }), el("strong", { text: "On call" }), el("span", { id: "call-timer", class: "timer mono", text: mmss(Math.max(0, elapsed)) }),
@@ -1139,6 +1479,7 @@ function renderOnCall() {
     ]),
     el("div", { class: "body" }, [
       st.rescue ? rescueBlock(st) : lineCardAsk(st),
+      rfqButton(st),
       el("div", {}, [el("p", { class: "label", text: "Ask for" }), el("p", { class: "askname", text: ask.name }), ask.role ? el("p", { class: "askrole", text: ask.role }) : null]),
       fu ? el("div", {}, [
         el("p", { class: "label", text: "Say" }), el("p", { class: "say" }, fu.say),
@@ -1146,7 +1487,7 @@ function renderOnCall() {
       ]) : null,
       fu ? el("div", { class: "checks" }, [
         el("p", { class: "label", text: "This call" }),
-        ...fu.objectives.map((c) => el("label", {}, [
+        ...fu.objectives.map((c, i) => i === 0 ? gotItBox(st, "They got the line card (not in spam)") : el("label", {}, [
           el("input", { type: "checkbox", checked: st.captured.has(c), onchange: (e) => { if (e.target.checked) st.captured.add(c); else st.captured.delete(c); } }),
           el("span", { text: c }),
         ])),
@@ -1174,33 +1515,42 @@ function renderOnCall() {
 
 const OUTCOMES = [
   ["reached_buyer", "Reached buyer", "callback set from the call"],
-  ["got_name", "Got a name", "callback set from the call"],
-  ["voicemail", "Voicemail", "callback in 2 days, AM"],
+  ["got_name", "Got a name", "callback in 2 days, other half of day"],
+  ["voicemail", "Voicemail", "callback in 2 days, other half of day"],
   ["no_answer", "No answer", "callback · other half of day"],
 ];
 
 function renderEnded() {
   const st = S;
   const o = st.outcome;
+  // Shot down: the account is closed out, so the outcome taps, the line card and the follow-up are off.
+  const down = !!(st.shotDown && st.shotDown.saved);
   const dur = st.ended && st.ended.duration ? ` · ${mmss(st.ended.duration)}` : "";
   const out = [header({ text: `Call ended${dur}`, cls: "neutral" })];
   const page = el("main", { class: "page" }, [
     el("div", { class: "title" }, [el("h1", { text: st.header ? st.header.company : "" }), el("p", { class: "sub", text: "One tap and move on. Follow-ups build in the background." })]),
+    o && o.result && !o.busy && !down ? el("div", { class: "outchange" }, [
+      el("span", { class: "muted", text: o.changing ? "Pick the right one. It replaces the callback and status the first tap saved." : o.changedFrom ? `Changed from ${OUTCOMES.find(([k]) => k === o.changedFrom)[1]}.` : "Tapped the wrong one?" }),
+      el("button", { class: "link", text: o.changing ? "Cancel" : "Change", onclick: () => { o.changing = !o.changing; render(); } }),
+    ]) : null,
     el("div", { class: "outcomes" }, OUTCOMES.map(([k, label, sub]) => el("button", {
       class: `outcome${o && o.picked === k ? " picked" : !o && st.ended && st.ended.suggested === k ? " suggested" : ""}`,
-      disabled: !!o,
+      disabled: down || (!!o && !(o.changing && !o.busy && o.picked !== k)),
       onclick: () => pickOutcome(k),
     }, [el("strong", { text: label }), el("span", { text: sub })]))),
+    el("div", { class: "aftertaps" }, [rfqButton(st), shotDownButton(st)]),
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
-    st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
+    // Send the line card from here once you've hung up, instead of staying on the call (Walt 9/29).
+    !down && (!o || o.picked === "reached_buyer" || o.picked === "got_name") ? el("div", { class: "afterlc" }, [lineCardAsk(st, true)]) : null,
+    !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),
       followUpBlock(st.leadId, true),
     ]) : null,
   ]);
   if (o && o.busy) page.append(el("div", { class: "card loading" }, [el("span", { class: "spinner" }), "Saving to Close…"]));
   if (o && o.error) page.append(el("div", { class: "card savedbox err" }, [el("span", { class: "dot" }), el("p", { text: o.error })]));
-  if (o && o.result) {
+  if (o && o.result && !down) {
     const r = o.result;
     const failed = r.results.filter((x) => !x.ok);
     page.append(el("div", { class: "card savedbox" }, [el("span", { class: "dot" }), el("p", {}, [
@@ -1542,6 +1892,11 @@ function renderSite() {
 }
 
 // ---------- ticking clocks without full re-renders ----------
+
+// Past midnight with the panel open: clear yesterday's numbers and load today's.
+setInterval(() => {
+  if (stats && stats.day !== todayLocal()) { stats = null; render(); syncStats(true); }
+}, 60_000);
 
 setInterval(() => {
   const step = document.getElementById("leadload-step");

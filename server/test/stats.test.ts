@@ -63,8 +63,9 @@ test("today's stats count only this rep's outbound calls since local midnight", 
   assert.equal(s.best?.seconds, 96);
   assert.equal(s.best?.company, "Rodda Electric, Inc.");
   assert.equal(s.approximate, false);
-  // 3 dials in 5.5 hours since 9 AM, 2.5 hours left until 5 PM.
+  // 3 dials in 5.5 hours since 9 AM, 1 hour left until 3:30 PM.
   assert.equal(s.pace?.onPaceFor, 4);
+  assert.equal(s.pace?.until, "3:30 PM");
   assert.deepEqual([...s.callIds].sort(), ["acti_demoRoddaCall0001", "acti_na", "acti_vm"]);
 });
 

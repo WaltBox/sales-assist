@@ -270,3 +270,86 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .dtable td a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .dtable td a:hover { text-decoration: underline; }
 .dtable tr:hover td { background: #faf8f2; }
+/* Accounts in sections, in the order to work them (9/29) */
+.sects { display: flex; flex-direction: column; gap: 22px; }
+.secthead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 2px 8px; }
+.secthead h3 { font-family: var(--label); font-size: 14px; letter-spacing: .12em; text-transform: uppercase; margin: 0; }
+.secthead h3 .c { margin-left: 8px; color: var(--red); }
+.sect-later .secthead, .sect-today .secthead, .sect-rest .secthead { cursor: pointer; }
+.sect-later .secthead h3 .c, .sect-today .secthead h3 .c, .sect-rest .secthead h3 .c { color: var(--muted); }
+.sect-later .secthead .btn, .sect-today .secthead .btn, .sect-rest .secthead .btn { margin-left: auto; }
+.gotit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0; }
+/* RFQs in: everyone who's converted (9/29) */
+.sect-rfqs .secthead h3 .c { color: var(--green); }
+.rfqgrid .gr { grid-template-columns: minmax(180px, 2fr) 80px minmax(160px, 2.2fr) 120px minmax(180px, 2fr); }
+.rfqgrid .files { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pobadge { display: inline-block; font-family: var(--label); font-size: 10.5px; letter-spacing: .08em; padding: 1px 6px; margin-right: 6px; background: var(--green); color: #fff; }
+.rfqst { font-weight: 600; font-size: 14px; }
+.rfqst.st-price { color: var(--red); }
+.rfqst.st-reply { color: var(--red); }
+.rfqst.st-quoted { color: var(--green); }
+.rfqgrid .gr { cursor: default; }
+/* RFQs page (9/29) */
+.rfqnote { margin: 0 2px; font-size: 14px; color: var(--muted); }
+.rfqnote a { color: var(--green); font-weight: 600; }
+.rfqgrid .gr { grid-template-columns: minmax(180px, 1.6fr) minmax(170px, 1.8fr) minmax(170px, 1.6fr) 150px 90px; cursor: default; }
+.rfqin { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rfqst { display: block; font-weight: 600; font-size: 14px; }
+.waiting { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; }
+.waiting i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.w-you { color: var(--red); }
+.w-westgate { color: #a86a00; }
+.w-buyer { color: var(--navy); }
+.w-done { color: var(--muted); }
+.rfqedit { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rfqedit select, .rfqedit input { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--ink); background: var(--white, #fff); }
+.rfqedit input { flex: 1; min-width: 240px; }
+/* RFQs over time (9/29): one line, the running total */
+.rfqline { background: var(--white); border: 1px solid var(--ink); padding: 18px 20px 14px; margin: 6px 0 20px; }
+.rfqh { font-family: var(--label); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; }
+.rfqhero { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 8px; }
+.rfqhero .big { font-size: 44px; font-weight: 700; line-height: 1; color: var(--ink); }
+.rfqweeks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; }
+.rfqplot { position: relative; }
+.rfqsvg { width: 100%; height: auto; display: block; overflow: visible; }
+.rfqsvg .grid { stroke: var(--ink-line); stroke-width: 1; stroke-dasharray: 2 4; }
+.rfqsvg .base { stroke: var(--ink); stroke-width: 1; }
+.rfqsvg .tick { font-size: 11px; fill: var(--muted); font-family: inherit; }
+.rfqsvg .line { fill: none; stroke: var(--green); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.rfqsvg .dot { fill: var(--green); stroke: var(--white); stroke-width: 2; }
+.rfqsvg .endlabel { font-size: 13px; font-weight: 700; fill: var(--ink); }
+.rfqsvg .hair { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 3 3; }
+.rfqsvg .focus { fill: var(--green); stroke: var(--white); stroke-width: 2; }
+.rfqsvg .hit { fill: transparent; cursor: crosshair; outline: none; }
+.rfqsvg .hit:focus-visible { stroke: var(--ink); stroke-width: 1; }
+.rfqtip { position: absolute; pointer-events: none; min-width: 170px; max-width: 220px; background: var(--white); border: 1px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; z-index: 3; }
+.rfqtip[hidden] { display: none; }
+.rfqtip .tipday { font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.rfqtable { margin-top: 10px; font-size: 13.5px; }
+.rfqtable summary { cursor: pointer; color: var(--muted); }
+.rfqtable table { border-collapse: collapse; margin-top: 8px; width: 100%; }
+.rfqtable th, .rfqtable td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--ink-line); }
+@media (max-width: 600px) { .rfqline { padding: 14px 12px; } .rfqhero .big { font-size: 36px; } }
+.rfqtip p { white-space: normal; overflow: visible; text-overflow: clip; }
+/* Touch tally in an opened account (9/29) */
+.touches { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 2px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--ink-line); }
+.tstat { display: flex; align-items: baseline; gap: 5px; font-size: 13.5px; color: var(--muted); }
+.tstat b { font-size: 20px; color: var(--ink); }
+.tstat.good b { color: var(--green); }
+.tdates { flex-basis: 100%; font-size: 13px; }
+/* Memes in the automatic bumps (9/30) */
+.macct { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.memethumb { width: 40px; height: 40px; object-fit: cover; border: 1px solid var(--ink-line); flex: none; }
+.bumpprev { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.bumpmail { background: var(--white); border: 1px solid var(--ink-line); padding: 14px 16px; max-width: 520px; display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; }
+.bumpmail p { margin: 0; }
+.memeimg { width: 100%; max-width: 480px; height: auto; display: block; }
+.bumpprev .row { display: flex; gap: 12px; align-items: center; }
+.memegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; max-width: 760px; }
+.memeopt { position: relative; padding: 0; border: 2px solid transparent; background: var(--white); cursor: pointer; aspect-ratio: 1; overflow: hidden; }
+.memeopt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.memeopt.on { border-color: var(--green); }
+.memeopt.seen { opacity: .35; cursor: not-allowed; }
+.memeopt span { position: absolute; left: 4px; bottom: 4px; background: var(--ink); color: #fff; font-size: 11px; padding: 1px 5px; }
+.testnote { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border: 1px solid #c98a00; border-left-width: 4px; background: rgba(201, 138, 0, .1); padding: 10px 14px; margin: 8px 0 12px; font-size: 14px; }
+.testnote p { margin: 0; max-width: 760px; }

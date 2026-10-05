@@ -7,7 +7,7 @@ export const DEMO_USER_ID = "user_demoWaltBoxwell000001";
 
 export const statuses: CloseStatus[] = [
   "Potential", "Bad Fit", "Qualified", "Customer", "Not Interested", "Disqualified", "Quoted",
-  "Vendor Onboarding", "Sent Line Card", "Called", "RFQ Received", "Vendor",
+  "Vendor Onboarding", "Sent Line Card", "Called", "RFQ Received", "Vendor", "Good lead",
 ].map((label, i) => ({ id: `stat_demo${i}`, label }));
 
 export const customFields = [

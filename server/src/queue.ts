@@ -7,7 +7,7 @@ import { hasBenchmark } from "./benchmark.js";
 import { transcriptText, type CloseCall, type CloseClient } from "./close.js";
 import { config } from "./config.js";
 import { loadLeadContext } from "./context.js";
-import { businessDaysAt, formatLocal, isBackwardsMove, isoWithOffset, localParts, nextWeekdayAt, samePerson, zonedTime } from "./rules.js";
+import { businessDaysAt, formatLocal, isBackwardsMove, isOutStatus, isoWithOffset, localParts, nextWeekdayAt, samePerson, zonedTime } from "./rules.js";
 import { store } from "./store.js";
 
 const shortDate = (d: Date, tz: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric", day: "numeric" }).format(d);
@@ -122,10 +122,14 @@ const OUTCOME_LABEL: Record<QuickOutcome, string> = {
 
 const recentTaps = new Map<string, number>();
 
-export async function quickOutcome(d: Deps, leadId: string, req: { outcome: QuickOutcome; note?: string | null; call_id?: string | null; rating?: string | null }) {
+export async function quickOutcome(d: Deps, leadId: string, req: {
+  outcome: QuickOutcome; note?: string | null; call_id?: string | null; rating?: string | null;
+  change?: { task_id?: string | null; queued_id?: string | null; prev_status?: string | null; set_status?: string | null } | null;
+}) {
+  const change = req.change ?? null;
   const tapKey = `${d.rep.closeUserId}:${leadId}:${req.call_id ?? "none"}`;
   const last = recentTaps.get(tapKey);
-  if (last && Date.now() - last < 10 * 60 * 1000) throw new QueueError("You already saved an outcome for this call.");
+  if (!change && last && Date.now() - last < 10 * 60 * 1000) throw new QueueError("You already saved an outcome for this call.");
   recentTaps.set(tapKey, Date.now());
 
   const now = d.now?.() ?? new Date();
@@ -144,16 +148,22 @@ export async function quickOutcome(d: Deps, leadId: string, req: { outcome: Quic
   // When to call back, per §6 of the Email & Product Knowledge Playbook. After a real
   // conversation the date comes from the transcript, so that task is built in the queue.
   const localHour = localParts(now, tz).hour;
+  // Didn't reach the buyer: call back in the other half of the day (morning call → 2:00 PM, afternoon → 9:30 AM).
+  // Walt 9/29: early touches close together, a different time of day each try.
+  const flip = (n: number) => businessDaysAt(tz, now, n, localHour < 12 ? 14 : 9, localHour < 12 ? 0 : 30);
   const due =
-    req.outcome === "no_answer" ? businessDaysAt(tz, now, 1, localHour < 12 ? 14 : 9, localHour < 12 ? 0 : 30) // opposite half of the day
-      : req.outcome === "voicemail" ? businessDaysAt(tz, now, 2, 10, 0)
+    req.outcome === "no_answer" ? flip(1)
+      : req.outcome === "voicemail" ? flip(2)
         : req.outcome === "reached_buyer" ? businessDaysAt(tz, now, 2, 10, 0) // placeholder until the transcript sets it
-          : businessDaysAt(tz, now, 1, 10, 0); // got a name
+          : flip(2); // got a name: the buyer in 2 business days, other half of the day (never two days in a row, 9/30)
   // Every tap saves a callback right away; for calls with a conversation the
   // background build rewrites it from the transcript (who, when, why).
   const tapTask = true;
   // One task per lead per call: a callback already scheduled for later wins.
-  const later = ctx.tasks.find((t) => !t.is_complete && new Date(t.date).getTime() > now.getTime() + 3600 * 1000);
+  const later = ctx.tasks.find((t) => !t.is_complete && t.id !== change?.task_id && new Date(t.date).getTime() > now.getTime() + 3600 * 1000);
+  // The callback that was due (the one you're making now, or overdue): it moves to the new time instead of a second
+  // task being added, so the lead leaves "Callbacks due today" (Walt 9/30).
+  const dueNow = change?.task_id ? null : ctx.tasks.filter((t) => !t.is_complete && new Date(t.date).getTime() <= now.getTime() + 3600 * 1000).sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
   const who = callee.name ?? "purchasing";
   const title = {
     reached_buyer: `Follow up with ${who}`,
@@ -178,7 +188,14 @@ export async function quickOutcome(d: Deps, leadId: string, req: { outcome: Quic
       pitch: "Ask for a list or open RFQ, any format.", details: [context, note].filter(Boolean).join(" "),
     };
     try {
-      const r = await d.close.createTask(leadId, taskText(task, ctx, req.rating ?? null), task.due_at, d.rep.closeUserId);
+      // A changed tap moves the callback the first tap made, instead of adding a second one.
+      // A changed tap rewrites its own task; a due callback keeps its wording ("Confirm J. Waite got the line card")
+      // and only moves to the new time.
+      const r = change?.task_id
+        ? (await d.close.updateTask(change.task_id, { date: task.due_at, text: taskText(task, ctx, req.rating ?? null) }), { id: change.task_id })
+        : dueNow
+          ? (await d.close.updateTask(dueNow.id, { date: task.due_at }), { id: dueNow.id })
+          : await d.close.createTask(leadId, taskText(task, ctx, req.rating ?? null), task.due_at, d.rep.closeUserId);
       savedTaskAt = task.due_at;
       taskId = r.id;
       saved.push(`${title} ${formatLocal(due, tz, true)}`);
@@ -199,6 +216,35 @@ export async function quickOutcome(d: Deps, leadId: string, req: { outcome: Quic
       results.push({ kind: "status", label: `Status → ${status.label}`, ok: true });
     } catch (err) {
       results.push({ kind: "status", label: `Status → ${status.label}`, ok: false, error: (err as Error).message });
+    }
+  }
+
+  // The first tap set a status this one wouldn't (Reached buyer → Qualified, then it was really no answer): put it back.
+  if (change?.set_status && change.prev_status && savedStatus !== change.set_status && change.prev_status !== change.set_status) {
+    const fresh = (await d.close.lead(leadId).catch(() => null))?.status_label;
+    const back = ctx.statuses.find((s) => s.label === change.prev_status);
+    if (fresh === change.set_status && back) {
+      try {
+        await d.close.updateLeadStatus(leadId, back.id);
+        saved.unshift(`status back to ${back.label}`);
+        results.push({ kind: "status", label: `Status back to ${back.label}`, ok: true });
+      } catch (err) {
+        results.push({ kind: "status", label: `Status back to ${back.label}`, ok: false, error: (err as Error).message });
+      }
+    }
+  }
+
+  // A changed tap relabels the review the first tap started, so the transcript is read with the right outcome.
+  if (change?.queued_id) {
+    const prev = await store.getReview<QueueItem>(change.queued_id).catch(() => null);
+    if (prev && prev.repId === d.rep.closeUserId && prev.leadId === leadId) {
+      Object.assign(prev, { outcome: req.outcome, outcomeLabel: OUTCOME_LABEL[req.outcome], note: note ?? prev.note, saved, savedStatus: savedStatus ?? prev.savedStatus, taskId: taskId ?? prev.taskId, savedTaskAt: savedTaskAt ?? prev.savedTaskAt });
+      plog(prev, `outcome changed to ${req.outcome}`);
+      await save(prev);
+      return {
+        saved, results, queued: prev.id, label: OUTCOME_LABEL[req.outcome], prevStatus: f.statusLabel, setStatus: savedStatus,
+        task: taskId && savedTaskAt ? { id: taskId, due_at: savedTaskAt, when: formatLocal(due, tz, true), options: rescheduleOptions(tz, now) } : null,
+      };
     }
   }
 
@@ -227,9 +273,38 @@ export async function quickOutcome(d: Deps, leadId: string, req: { outcome: Quic
     }
   }
   return {
-    saved, results, queued: queued?.id ?? null, label: OUTCOME_LABEL[req.outcome],
+    saved, results, queued: queued?.id ?? null, label: OUTCOME_LABEL[req.outcome], prevStatus: f.statusLabel, setStatus: savedStatus,
     task: taskId && savedTaskAt ? { id: taskId, due_at: savedTaskAt, when: formatLocal(due, tz, true), options: rescheduleOptions(tz, now) } : null,
   };
+}
+
+/**
+ * Shot down (Walt 10/5) without an outcome tap: the call is still read, so the note (why they said no) and any
+ * new contacts are saved to Close. No callback, status or email comes of it: the build skips those for a lead
+ * marked Not Interested. A "no" from a person counts as a reach.
+ */
+export async function queueShotDown(d: Deps, leadId: string, req: { call_id?: string | null; note?: string | null }) {
+  if (!req.call_id) return null;
+  // An outcome tap already queued this call: that review carries it.
+  if ((await store.reviewsForCall<QueueItem>(req.call_id).catch(() => [])).some((x) => x.leadId === leadId)) return null;
+  const now = d.now?.() ?? new Date();
+  const [call, lead] = await Promise.all([d.close.call(req.call_id).catch(() => null), d.close.lead(leadId).catch(() => null)]);
+  const note = req.note?.trim() || null;
+  const it: QueueItem = {
+    id: randomUUID(), repId: d.rep.closeUserId, leadId, company: lead?.display_name ?? "", callId: req.call_id,
+    outcome: "reached_buyer", note, rating: null, createdAt: now.toISOString(), state: "building",
+    saved: ["status Not Interested"], savedTaskAt: null, savedStatus: "Not Interested", outcomeLabel: "Shot down", summary: null, callWith: null, duration: null,
+    taskId: null, smartTask: null, applied: null, proposals: null, coaching: null, warnings: [],
+  };
+  plog(it, `call-ended: shot down, ${call ? `${call.duration}s ${call.disposition ?? call.status}` : "no call found"}`);
+  if (call && call.duration < MIN_TALK_SECONDS && !note) {
+    Object.assign(it, dialLog(call.duration));
+    await save(it);
+    return it.id;
+  }
+  await save(it);
+  background(advance(d, it.id), "build");
+  return it.id;
 }
 
 // ---------- changing the one-tap task's time ----------
@@ -442,6 +517,15 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     if (p.email && core.benchmark && hasBenchmark(p.email.body)) tagNote(p, RFQ_ASKED_TAG, core.summary);
     // Don't propose what the one tap already saved.
     if (it.savedStatus) p.status = null;
+    // Shot down while this was building (Walt 10/5): they said no, so no callback, status change or email.
+    // The note and any contacts from the call are still saved.
+    const statusNow = (await d.close.lead(it.leadId).catch(() => null))?.status_label ?? null;
+    if (isOutStatus(statusNow) && (p.tasks.length || p.status || p.email)) {
+      p.tasks = [];
+      p.status = null;
+      p.email = null;
+      it.warnings.push(`Skipped the callback, status and email: the lead is marked ${statusNow} in Close.`);
+    }
     it.noTranscript = !call?.recording_transcript?.utterances?.length;
     // The transcript (or, when Close didn't make one, what the rep typed) decides the callback.
     if (it.taskId && placeholder && p.tasks.length && (!it.noTranscript || it.note)) {

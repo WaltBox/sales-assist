@@ -1,11 +1,12 @@
 import { lineCardAttachments, type Deps } from "./assistant.js";
-import { stripDashes } from "./benchmark.js";
+import { formatParagraphs, stripDashes } from "./benchmark.js";
 import { transcriptText, type CloseClient, type LeadEmail } from "./close.js";
 import { config } from "./config.js";
 import { loadLeadContext, renderContext, type LeadContext } from "./context.js";
-import { isoWithOffset, localParts, nextWeekdayAt, zonedTime } from "./rules.js";
+import { businessDaysBetween, isoWithOffset, localParts, nextWeekdayAt, zonedTime } from "./rules.js";
 import { FollowUpSchema, type FollowUp } from "./schemas.js";
 import { logRejection, retryNote, ruleChecks, type Failure } from "./validate.js";
+import { bumpHtml, type Meme } from "./memes.js";
 
 // "Write a follow-up" (Walt 9/25): one tap drafts a short bump in Close.
 // It replies in the lead's existing thread when there is one (only a lead with
@@ -15,7 +16,7 @@ export class FollowUpError extends Error {}
 
 export type FollowUpResult =
   | { status: "warn"; warning: string }
-  | { status: "drafted"; draftId: string; to: string; subject: string; body: string; threaded: boolean; attachedLineCard: boolean; warnings: string[]; scheduledFor: string | null };
+  | { status: "drafted"; draftId: string; to: string; subject: string; body: string; threaded: boolean; attachedLineCard: boolean; warnings: string[]; scheduledFor: string | null; meme?: string | null };
 
 /**
  * When an automatic bump goes out: a weekday morning, 9 to 11 their time. Before 9 → 9 today; in the
@@ -39,16 +40,7 @@ const when = (e: LeadEmail) => e.date_sent ?? e.date_created ?? "";
 const nameFromEmail = (addr: string) => { const n = addr.split("@")[0].split(/[._-]/)[0]; return n ? n[0].toUpperCase() + n.slice(1).toLowerCase() : addr; };
 const emailOf = (s: string | null | undefined) => (s ?? "").match(/<([^>]+)>/)?.[1] ?? (s ?? "").trim();
 
-/** Weekdays between two instants in the rep's time zone (0 = same business day). */
-export function businessDaysBetween(from: Date, to: Date, tz: string): number {
-  const day = (d: Date) => { const p = localParts(d, tz); return Date.UTC(p.year, p.month - 1, p.day); };
-  let n = 0;
-  for (let t = day(from) + 864e5; t <= day(to); t += 864e5) {
-    const wd = new Date(t).getUTCDay();
-    if (wd !== 0 && wd !== 6) n += 1;
-  }
-  return n;
-}
+export { businessDaysBetween };
 
 const SENTENCES = (body: string, rep: string) => {
   const lines = body.trim().split(/\n\s*\n/);
@@ -58,7 +50,7 @@ const SENTENCES = (body: string, rep: string) => {
 };
 
 function withSignature(body: string, rep: string) {
-  const b = stripDashes(body).trim().replace(/\n{3,}/g, "\n\n");
+  const b = formatParagraphs(stripDashes(body).trim().replace(/\n{3,}/g, "\n\n"), rep);
   return b.endsWith(rep) ? b : `${b}\n\n${rep}`;
 }
 
@@ -70,11 +62,18 @@ function threadText(emails: LeadEmail[]) {
 }
 
 /** Who the follow-up goes to: the other side of the latest email, else the last called contact, else the buyer on file. */
-function recipient(ctx: LeadContext, latest: LeadEmail | undefined, repEmail: string) {
+function recipient(ctx: LeadContext, latest: LeadEmail | undefined, repEmail: string, thread: LeadEmail[] = []) {
   const byEmail = (addr: string) => ctx.contacts.find((c) => c.emails.some((x) => x.email.toLowerCase() === addr.toLowerCase()));
+  // The name they write under beats the contact's name in Close (10/1: "Sam Ives" in Close, but jives@ signs as Jennifer Ives).
+  const theirName = (addr: string) => {
+    const m = thread.find((e) => e.direction === "incoming" && emailOf(e.sender)?.toLowerCase() === addr.toLowerCase())?.sender?.match(/^\s*"?([^"<]+?)"?\s*</);
+    return m && /[a-z]/i.test(m[1]) && !m[1].includes("@") ? m[1].trim() : null;
+  };
   if (latest) {
-    const addr = latest.direction === "incoming" ? emailOf(latest.sender) : (latest.to ?? []).map(emailOf).find((a) => a && a.toLowerCase() !== repEmail.toLowerCase());
-    if (addr) { const c = byEmail(addr); return { email: addr, name: c?.name ?? null, contactId: c?.id ?? latest.contact_id ?? null }; }
+    // Never a Westgate address (you, Jacob, team@): the buyer on that email.
+    const addr = [latest.direction === "incoming" ? emailOf(latest.sender) : null, ...(latest.to ?? []).map(emailOf)]
+      .find((a) => a && a.toLowerCase() !== repEmail.toLowerCase() && !/@westgatesupply\.com$/i.test(a));
+    if (addr) { const c = byEmail(addr); return { email: addr, name: theirName(addr) ?? c?.name ?? null, contactId: c?.id ?? latest.contact_id ?? null }; }
   }
   const called = ctx.calls.map((c) => ctx.contacts.find((x) => x.id === c.contact_id)).find((c) => c?.emails.length);
   const fallback = called ?? ctx.contacts.find((c) => c.emails.length && /purchas|buyer|procure/i.test(c.title ?? "")) ?? ctx.contacts.find((c) => c.emails.length);
@@ -92,13 +91,49 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
   return `The rep's most recent call on this lead was ${when} (their time), ${c.duration} seconds: ${connected ? "they talked" : "it didn't connect (a missed try)"}.${transcript && connected ? ` Transcript:\n${transcript.slice(0, 1500)}` : ""}`;
 }
 
-export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number } } = {}): Promise<FollowUpResult> {
+// The automatic bump (Walt 9/30): no AI, just back to the top of the inbox and one question, plus a meme.
+// A few wordings, so a second bump to the same company doesn't read word for word like the first.
+const BUMP_LINES = [
+  "Just bumping this back to the top of your inbox. Any RFQs coming up I can price for you?",
+  "Bumping this back to the top of your inbox. Got any RFQs coming up I can quote?",
+  "Popping this back to the top of your inbox. Anything coming up I can price for you?",
+];
+/**
+ * The name to greet with, or null for "Hi there!" (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
+ * → Clifford); an initial ("J. Waite") or a mailbox word ("frontdesk", "hello", "info") isn't a name.
+ */
+export function greetName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const nick = name.match(/\(([A-Z][a-z]{1,20})\)/);
+  if (nick) return nick[1];
+  const w = name.trim().split(/\s+/)[0] ?? "";
+  if (/^([A-Z]\.?){1,3}$/i.test(w) && w.replace(/\./g, "").length <= 2) return null;
+  if (/^(info|hello|hi|frontdesk|front|desk|team|office|main|sales|purchasing|admin|contact|reception|receptionist|accounts?|ap|orders?|service|support|estimating|estimator|dispatch|general|mail|inquiries|quotes?|bids?)$/i.test(w.replace(/[^a-z]/gi, ""))) return null;
+  if (!/^[A-Za-z][A-Za-z'-]+$/.test(w)) return null;
+  return w[0].toUpperCase() + w.slice(1);
+}
+
+const VARIANTS: Record<string, string> = {
+  // Friday send (Walt 10/2): pricing back Monday morning is the hook, so Monday has to deliver.
+  friday: "Happy Friday! Bumping this back to the top before the weekend. If there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
+};
+export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
+  const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
+  return `Hi ${first ?? "there"}!\n\n${line}\n\n${repName}`;
+}
+
+export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; nth: number; variant?: string | null }; onlyTo?: string } = {}): Promise<FollowUpResult> {
   const now = d.now?.() ?? new Date();
   const [ctx, all] = await Promise.all([loadLeadContext(d.close as CloseClient, leadId, now), d.close.leadEmails(leadId)]);
   if (ctx.facts.vendor || ctx.facts.competitorHits.length) throw new FollowUpError("This lead is a vendor or competitor. No follow-up.");
 
   const emails = all.filter((e) => REAL.has(e.status)).sort((a, b) => when(b).localeCompare(when(a)));
-  const latest = emails[0];
+  const involves = (e: LeadEmail, addr: string) => [emailOf(e.sender), ...(e.to ?? []).map(emailOf)].some((a) => a?.toLowerCase() === addr.toLowerCase());
+  // The newest email with the buyer in it, not an internal one (10/1: the website's RFQ-form notification from
+  // team@westgatesupply.com was the newest on the test lead, and a bump went to team@).
+  const ours = (a: string | null | undefined) => !a || /@westgatesupply\.com$/i.test(a);
+  const external = (e: LeadEmail) => [emailOf(e.sender), ...(e.to ?? []).map(emailOf)].some((a) => !ours(a));
+  const latest = opts.onlyTo ? emails.find((e) => involves(e, opts.onlyTo!)) : emails.find(external);
   const lastOut = emails.find((e) => e.direction === "outgoing");
 
   // Guardrail: emailed under 3 business days ago with no reply or call since.
@@ -113,13 +148,16 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
     }
   }
 
-  const to = recipient(ctx, latest, d.rep.email);
+  // Test sends go to one address only, the test lead's contact (10/1: one went to team@, from the thread instead).
+  const onlyContact = opts.onlyTo ? ctx.contacts.find((c) => c.emails.some((e) => e.email.toLowerCase() === opts.onlyTo!.toLowerCase())) : undefined;
+  const to = opts.onlyTo ? { email: opts.onlyTo, name: onlyContact?.name ?? null, contactId: onlyContact?.id ?? null } : recipient(ctx, latest, d.rep.email, emails);
   if (!to) throw new FollowUpError("There's no email address on this lead to follow up with.");
+  if (/@westgatesupply\.com$/i.test(to.email)) throw new FollowUpError(`Stopped: the follow-up was addressed to ${to.email}, a Westgate address.`);
   const threaded = Boolean(latest);
   const baseSubject = (latest?.subject ?? "").replace(/^(re:\s*)+/i, "");
   const subject = threaded ? `Re: ${baseSubject || "Westgate Supply"}` : "Westgate Supply – line card";
   const displayName = to.name ?? nameFromEmail(to.email);
-  const first = displayName.split(/\s+/)[0] || null;
+  const first = greetName(to.name) ?? greetName(nameFromEmail(to.email));
   const lastCall = ctx.calls.find((c) => c.user_id === d.rep.closeUserId);
 
   const task = [
@@ -139,7 +177,12 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   let failures: Failure[] = [];
   let draft: FollowUp | null = null;
   let body = "";
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // Automatic bump in the thread: the template, no AI.
+  if (opts.template && threaded) {
+    body = bumpBodyFor(first, d.rep.name, opts.template.nth, opts.template.variant);
+    draft = { body } as FollowUp;
+  }
+  for (let attempt = 1; attempt <= 2 && !(opts.template && threaded); attempt++) {
     const { data } = await d.llm({
       schema: FollowUpSchema, effort: config.effortFast, model: config.emailModel, context,
       task: failures.length ? `${task}\n\n${retryNote(failures)}` : task,
@@ -161,11 +204,16 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
     attachments = await lineCardAttachments(d).catch(() => []);
     if (!attachments.length) warnings.push("LINE CARD NOT ATTACHED: add it in Close before sending.");
   }
-  const scheduledFor = opts.schedule ? sendSlot(ctx.facts.prospectTz ?? d.rep.timeZone, now, opts.schedule.stagger) : null;
+  // "now": out in a couple of minutes plus the stagger, whatever the hour (an approved same-day send, 10/2).
+  const tz = ctx.facts.prospectTz ?? d.rep.timeZone;
+  const scheduledFor = !opts.schedule ? null
+    : opts.schedule.now ? isoWithOffset(new Date(now.getTime() + (2 + opts.schedule.stagger) * 60 * 1000), tz)
+    : sendSlot(tz, now, opts.schedule.stagger);
   const created = await d.close.createDraftEmail(leadId, {
     contactId: to.contactId, to: [to.email], subject, body, attachments,
     sender: d.rep.sender ?? `"${d.rep.name.replaceAll('"', "")}" <${d.rep.email}>`, emailAccountId: d.rep.emailAccountId ?? null,
     inReplyToId: latest?.id ?? null, threadId: latest?.thread_id ?? null, scheduleAt: scheduledFor,
+    html: opts.template && threaded && opts.template.meme ? bumpHtml(body, d.rep.name, opts.template.meme) : null,
   });
-  return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor };
+  return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor, meme: opts.template && threaded ? opts.template.meme?.name ?? null : null };
 }

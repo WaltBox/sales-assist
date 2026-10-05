@@ -37,7 +37,9 @@ export class FakeClose implements Close {
   }
   /** Other demo leads' names (the line card board). */
   names = new Map<string, string>();
-  async lead(id?: string) { return { ...structuredClone(this.lead_), ...(id ? { id } : {}), ...(id && this.names.has(id) ? { display_name: this.names.get(id)! } : {}) }; }
+  /** A lead's status once something changed it (Shot down, the funnel sync), so it reads back like Close. */
+  leadStatus = new Map<string, string>();
+  async lead(id?: string) { return { ...structuredClone(this.lead_), ...(id ? { id } : {}), ...(id && this.names.has(id) ? { display_name: this.names.get(id)! } : {}), ...(id && this.leadStatus.has(id) ? { status_label: this.leadStatus.get(id)! } : {}) }; }
   async callOutcomes() { return new Map<string, string>(); }
   async leadName(id: string) { return this.names.get(id) ?? this.lead_.display_name; }
   async leadStatuses() { return statuses; }
@@ -87,7 +89,10 @@ export class FakeClose implements Close {
   }
   /** Tasks on other demo leads (the accounts board). */
   extraTasks: Array<CloseTask & { lead_id: string; assigned_to: string }> = [];
+  /** Tests make a fetch fail (Close timing out) for these ids. */
+  emailFetchFails = new Set<string>();
   async email(id: string) {
+    if (this.emailFetchFails.has(id)) throw new Error("The operation was aborted due to timeout");
     const w = this.writes.find((x) => x.op === "email" && x.id === id);
     if (!w) throw new Error("not found");
     const b = w.body as { leadId: string; to: string[]; subject: string; body: string; scheduleAt?: string | null };
@@ -106,6 +111,10 @@ export class FakeClose implements Close {
     this.writes.push({ op: "unschedule", body: { id } });
     return { id, status: "draft" };
   }
+  async deleteEmail(id: string) {
+    this.statusOf.set(id, "deleted");
+    this.writes.push({ op: "delete", body: { id } });
+  }
   async task(id: string) {
     const t = this.tasks_.get(id);
     if (!t) throw new Error("not found");
@@ -118,13 +127,25 @@ export class FakeClose implements Close {
   sentWithOpens: LeadEmail[] = [];
   async leadEmails(leadId?: string) { return this.sentWithOpens.length ? this.sentWithOpens : (this.sentEmails.filter((e) => e.lead_id === leadId) as unknown as LeadEmail[]); }
   async phoneNumbers() { return [{ number: "+17372582165", user_id: DEMO_USER_ID, label: null }, { number: "+17372349440", user_id: "user_someoneelse", label: "Berni" }]; }
+  statusChanges: Array<{ lead_id: string; date_created: string; old_status_label: string | null; new_status_label: string }> = [];
+  async statusChangesSince(since: string) { return this.statusChanges.filter((s) => s.date_created >= since); }
+  async findLeads(_query: string) { return [] as Array<{ id: string; display_name: string }>; }
+  async completeTask(taskId: string) {
+    const t = this.tasks_.get(taskId) ?? this.extraTasks.find((x) => x.id === taskId);
+    if (t) t.is_complete = true;
+    return this.record("task-complete", { taskId });
+  }
   async updateTask(taskId: string, patch: { date: string; text?: string }) {
     const t = this.tasks_.get(taskId);
     if (t) Object.assign(t, { date: patch.date }, patch.text ? { text: patch.text } : {});
     return this.record("task-update", { taskId, ...patch });
   }
   async createDraftEmail(leadId: string, e: unknown) { return this.record("email", { leadId, ...(e as object) }); }
-  async updateLeadStatus(leadId: string, statusId: string) { return this.record("status", { leadId, statusId }); }
+  async updateLeadStatus(leadId: string, statusId: string) {
+    const s = statuses.find((x) => x.id === statusId);
+    if (s) this.leadStatus.set(leadId, s.label);
+    return this.record("status", { leadId, statusId });
+  }
   /** Sent and received emails for the stats (drafts are never sent here, so tests add these directly). */
   sentEmails: Array<Record<string, unknown>> = [];
   /** Notes from earlier days, for the stats. */
@@ -260,7 +281,8 @@ export function demoLineCards(fake: FakeClose, now = new Date()) {
   const outlook = "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0)";
   const card = [{ filename: "Westgate_Supply_Line_Card.pdf" }];
   const leads: Array<[string, string, string, number, Array<{ opened_at: string; opened_by: string; user_agent: string }>, number | null]> = [
-    ["lead_demoHarborFab000001", "Harbor Fabrication", "Dana Ruiz <dana@harborfab.test>", 3, [], null],
+    // 4 days, not 3: unopened cards become a rescue call after 2 business days (10/5), and 4 calendar days always hold 2.
+    ["lead_demoHarborFab000001", "Harbor Fabrication", "Dana Ruiz <dana@harborfab.test>", 4, [], null],
     ["lead_demoMesaPipe0000001", "Mesa Pipe & Supply", "Luis Ortega <luis@mesapipe.test>", 4, [{ opened_at: at(4, 1), opened_by: "luis@mesapipe.test", user_agent: scanner }], null],
     ["lead_demoCrestMech000001", "Crest Mechanical", "Amy Chen <amy@crestmech.test>", 9, [{ opened_at: at(8), opened_by: "amy@crestmech.test", user_agent: outlook }, { opened_at: at(6), opened_by: "amy@crestmech.test", user_agent: outlook }, { opened_at: at(5), opened_by: "amy@crestmech.test", user_agent: outlook }], null],
     ["lead_demoNorthline000001", "Northline Controls", "Pat Kim <pat@northline.test>", 5, [{ opened_at: at(4), opened_by: "pat@northline.test", user_agent: outlook }], 3],
