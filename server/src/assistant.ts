@@ -367,6 +367,34 @@ async function summarizeList(d: Deps, smartViewId: string, ids: string[], at: nu
   };
 }
 
+/**
+ * Briefs for the day's call list, written ahead of time (Walt 10/6: "reading the lead is taking too long"). The
+ * board knows who's getting called today (callbacks due, rescue calls, replies to answer, hot accounts); each
+ * brief takes 15–25 seconds to write, so they're built in the background as soon as the board is, a couple at a
+ * time, and opening one of those leads is instant. A lead already written is skipped.
+ */
+const BOARD_WARM_MAX = 60;
+export async function warmLeads(d: Deps, leadIds: string[]): Promise<{ queued: number }> {
+  const ids = [...new Set(leadIds)].slice(0, BOARD_WARM_MAX);
+  const have = await Promise.all(ids.map((id) => hasBrief(d, id)));
+  const todo = ids.filter((_, i) => !have[i]);
+  if (!todo.length) return { queued: 0 };
+  const q = queues.get(d.rep.closeUserId) ?? { todo: [], running: 0 };
+  queues.set(d.rep.closeUserId, q);
+  // Behind whatever the rep's current list already has in line, never ahead of it.
+  q.todo = [...q.todo, ...todo.filter((id) => !q.todo.includes(id))];
+  while (q.running < WARM_CONCURRENCY && q.todo.length) {
+    q.running++;
+    background((async () => {
+      for (let id = q.todo.shift(); id; id = q.todo.shift()) {
+        if (await hasBrief(d, id)) continue;
+        await leadBrief(d, id).catch((err) => console.error(`warm ${id}:`, (err as Error).message));
+      }
+    })().finally(() => { q.running--; }), "warm board");
+  }
+  return { queued: todo.length };
+}
+
 /** Called whenever a lead is opened: keep the next few on the rep's current list ready. */
 export async function warmAfterLead(d: Deps, leadId: string): Promise<ListStatus | null> {
   const sv = lastList.get(d.rep.closeUserId);

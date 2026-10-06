@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import {
-  afterCall, afterCallExtras, applyProposals, callState, DuplicateApplyError, leadBrief, leadChat, listStatus, repLines, repStats, saveSaid, warmAfterLead, warmAhead, type Close, type Deps, type Llm,
+  afterCall, afterCallExtras, applyProposals, callState, DuplicateApplyError, leadBrief, leadChat, listStatus, repLines, repStats, saveSaid, warmAfterLead, warmAhead, warmLeads, type Close, type Deps, type Llm,
 } from "./assistant.js";
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
@@ -20,7 +20,7 @@ import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSessi
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
 import { deleteMeme, listMemes, memeCounts, MemeError, memesSeen, memeStats, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
@@ -236,6 +236,8 @@ export function createApp(appDeps: AppDeps) {
     z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "today"),
     z.enum(["dials", "reached", "lineCards", "replied", "rfqs", "rfqReceived"]).parse(req.query.m))));
   app.get("/api/stats/period", authed, route(async (req, d) => periodStats(d, z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "today"), { fresh: req.query.fresh === "1" })));
+  // Who's getting called today, in the order the board shows them: callbacks due, replies to answer, hot, rescue calls.
+  const callListIds = (accounts: Account[]) => accounts.filter((a) => ["call_due", "reply", "rescue"].includes(a.next.kind) || a.section === "hot").map((a) => a.leadId);
   // One status per account we've sent the line card to: what happened and what's next (read from Close).
   app.get("/api/accounts", authed, route(async (req, d) => {
     const board = await accountsBoard(d, { days: Math.min(Number(req.query.days) || 45, 120), fresh: req.query.fresh === "1" });
@@ -243,6 +245,8 @@ export function createApp(appDeps: AppDeps) {
     if (board.accounts.some((a) => a.next.rescue && !a.rescueDraft)) background(ensureRescueDrafts(d), "rescue drafts");
     // Accounts whose site hasn't been read yet get read in the background, a few per refresh (RFQ potential, 10/5).
     if (!config.demo && board.accounts.some((a) => !a.potential)) background(refreshProfiles(d, board.accounts, { max: 12 }).then(() => bustBoard(d)), "rfq potential");
+    // Today's calls get their briefs written now, so the call card opens instantly (10/6).
+    if (!config.demo) background(warmLeads(d, callListIds(board.accounts)), "warm today's calls");
     return board;
   }));
   // RFQ potential: read every account's site now (or one account's again), and the rep's own answer after a call.
@@ -323,7 +327,12 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/leads/:leadId/purchasing", authed, route(async (req, d) => {
     const id = leadId(req);
     const potential = potentialFor((await loadProfiles(d.rep.closeUserId))[id]);
-    return { heard: potential?.profile.heard ?? null, ask: potential?.ask ?? askNext(null), tier: potential?.tier ?? "unknown" };
+    const pr = potential?.profile;
+    return {
+      heard: pr?.heard ?? null, ask: potential?.ask ?? askNext(null), tier: potential?.tier ?? "unknown",
+      // What their site says they run, for the call card's at-a-glance line (Walt 10/6).
+      site: pr && pr.type !== "unknown" ? { type: pr.type, makes: pr.makes, specs: pr.specs.slice(0, 4), certs: pr.certs.slice(0, 3) } : null,
+    };
   }));
   app.post("/api/leads/:leadId/purchasing", authed, route(async (req, d) => {
     const id = leadId(req);
@@ -473,6 +482,8 @@ export function createApp(appDeps: AppDeps) {
         // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
         if (!config.demo) await accountsBoard(d).then((b) => refreshProfiles(d, b.accounts, { max: 6 })).then((n) => { if (n) bustBoard(d); })
           .catch((err) => console.error(`rfq potential ${rep.email}:`, (err as Error).message));
+        // Today's call list gets its briefs written ahead of the first call (10/6).
+        if (!config.demo) await accountsBoard(d).then((b) => warmLeads(d, callListIds(b.accounts))).catch((err) => console.error(`warm ${rep.email}:`, (err as Error).message));
       }
     }
     const waiting = await waitingFor(null);

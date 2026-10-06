@@ -557,3 +557,10 @@ textarea { resize: vertical; min-height: 70px; }
 .purch-f .quote { font-size: 12px; line-height: 1.35; }
 .asknext .say { color: var(--red); }
 .hometown .fact { font-size: 13.5px; margin-top: 6px; line-height: 1.4; font-style: italic; }
+
+/* At a glance (10/6): who you're calling and what they use, the first thing on the card. */
+.glance { background: var(--white); border: 1.5px solid var(--ink); box-shadow: var(--shadow); padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
+.glance .g-row { display: grid; grid-template-columns: 62px 1fr; gap: 8px; align-items: baseline; font-size: 14px; line-height: 1.35; }
+.glance .g-row .label { padding-top: 2px; }
+.glance .g-who strong { font-size: 17px; }
+.oncall .glance { margin: 0; }

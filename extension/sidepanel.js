@@ -1364,6 +1364,7 @@ function renderPre() {
     ]));
   }
 
+  page.append(glanceBlock(st));
   // Details as small raised chips (not another box). The opener is the star.
   const plan = h.callPlan || null;
   const when = b.rating === "D" ? "don't call" : plan && plan.action === "hold" ? `hold till ${shortDate(plan.until)}` : clock && !clock.open ? "call later" : "call now";
@@ -1521,7 +1522,7 @@ function renderOnCall() {
     el("div", { class: "body" }, [
       st.rescue ? rescueBlock(st) : lineCardAsk(st),
       rfqButton(st),
-      el("div", {}, [el("p", { class: "label", text: "Ask for" }), el("p", { class: "askname", text: ask.name }), ask.role ? el("p", { class: "askrole", text: ask.role }) : null]),
+      glanceBlock(st),
       fu ? el("div", {}, [
         el("p", { class: "label", text: "Say" }), el("p", { class: "say" }, fu.say),
         fu.ifNot ? el("p", { class: "ifnot" }, [el("span", { class: "label", text: "If it didn't come through " }), fu.ifNot]) : null,
@@ -1860,6 +1861,30 @@ function renderItem() {
   out.push(page);
   if (it.state !== "saved") out.push(chatBar(iv.chat, iv.chatBusy, 'Change anything: "make the follow-up Thursday at 9"'));
   return out;
+}
+
+// ---------- at a glance (Walt 10/6): who you're calling and what they use, before anything else ----------
+function glanceBlock(st) {
+  const b = st.brief, h = st.header || {}, pc = st.purch, heard = (pc && pc.heard) || {}, site = pc && pc.site;
+  if (!b) return null;
+  const who = b.ask_for && b.ask_for.name ? b.ask_for.name : "Purchasing";
+  const role = [b.ask_for && b.ask_for.role, heard.works_through ? `buys through ${heard.works_through.value}` : null, heard.buyer_count ? `${heard.buyer_count.value} buyers` : null].filter(Boolean).join(" · ");
+  const pitch = activePitch(st);
+  const uses = [];
+  if (pitch.buys && pitch.buys.length) uses.push(pitch.buys.slice(0, 5).join(", "));
+  if (site && site.specs.length) uses.push(site.specs.join(", "));
+  if (site && site.certs.length) uses.push(site.certs.join(", "));
+  const makes = site && site.makes ? site.makes : b.company_type || null;
+  return el("section", { class: "glance" }, [
+    el("div", { class: "g-row" }, [
+      el("span", { class: "label", text: "Calling" }),
+      el("span", { class: "g-who" }, [el("strong", { text: who }), role ? el("span", { class: "muted", text: ` · ${role}` }) : null]),
+    ]),
+    makes ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "They do" }), el("span", { text: makes })]) : null,
+    uses.length ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "They use" }), el("span", {}, uses.flatMap((u, i) => (i ? [el("span", { class: "muted", text: " · " }), u] : [u])))]) : null,
+    heard.incumbent ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "Buy from" }), el("strong", { text: heard.incumbent.value })]) : null,
+    heard.rfq_volume ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "RFQs" }), el("span", { text: `${heard.rfq_volume.value}${heard.rfq_timing ? `, ${heard.rfq_timing.value}` : ""}${heard.vendor_policy ? ` · ${heard.vendor_policy.value}` : ""}` })]) : null,
+  ]);
 }
 
 // ---------- purchasing cycle (Walt 10/5) ----------
