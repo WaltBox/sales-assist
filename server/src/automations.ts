@@ -476,7 +476,26 @@ export async function automationsView(d: Deps) {
 export type SentEmail = {
   id: string; leadId: string; company: string; to: string; subject: string; status: Automation["status"];
   at: string | null; variant: string | null; meme: string | null; opened: boolean; replied: boolean; rfq: boolean;
+  /**
+   * How likely it is they've seen it (Walt 10/6), when there's no tracked open: open tracking is a pixel, and a lot
+   * of buyers' mail apps block it. "opened" is tracked or proven (a reply). "likely": they've said they get our
+   * emails, or you've talked since it went. "unlikely": their mail app does report opens (it has before) and there's
+   * none on this one. "unsure": no open has ever shown for them, so the pixel may just be blocked.
+   */
+  seen: { level: "opened" | "likely" | "unsure" | "unlikely"; chance: number; why: string };
 };
+function seenGuess(a: Account | undefined, sent: boolean, at: string | null, opened: boolean, replied: boolean, rfq: boolean, now: Date): SentEmail["seen"] {
+  if (!sent || !at) return { level: "unsure", chance: 0, why: "Not sent yet." };
+  if (rfq || replied) return { level: "opened", chance: 100, why: replied ? "They replied to it." : "They sent an RFQ after it." };
+  if (opened) return { level: "opened", chance: 100, why: `Opened${a?.opens.app ? ` in ${a.opens.app}` : ""} (tracked).` };
+  if (!a) return { level: "unsure", chance: 40, why: "No open tracked." };
+  const talkedAfter = !!a.touches.lastTalk && new Date(a.touches.lastTalk).getTime() > new Date(at).getTime();
+  if (a.seen === "confirmed" || talkedAfter) return { level: "likely", chance: 70, why: talkedAfter ? "You talked after it went; no open tracked (their mail app may hide opens)." : "They've said they get your emails; no open tracked on this one." };
+  const hours = (now.getTime() - new Date(at).getTime()) / 3_600_000;
+  if (a.opens.person > 0) return { level: hours < 24 ? "unsure" : "unlikely", chance: hours < 24 ? 45 : 15, why: `Their mail app reports opens (${a.opens.person} on earlier emails) and there's none on this one${hours < 24 ? " yet" : ""}.` };
+  if (a.opens.filter > 0 && !a.opens.maybe) return { level: "unsure", chance: 35, why: "Only their spam filter has ever touched our emails: it may be landing in junk, or their app hides opens." };
+  return { level: "unsure", chance: 40, why: "No open has ever shown for this buyer, so the tracking pixel is probably blocked. A call is the only way to know." };
+}
 export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
   const now = d.now?.() ?? new Date();
   const [rows, board] = await Promise.all([
@@ -488,11 +507,12 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
     const a = byLead.get(r.leadId);
     const at = r.status === "sent" ? r.statusAt ?? r.createdAt : r.scheduledFor ?? r.createdAt;
     const after = (iso: string | null | undefined) => !!iso && !!at && new Date(iso).getTime() > new Date(at).getTime();
+    const opened = !!a && r.status === "sent" && after(a.opens.last);
+    const replied = !!a && r.status === "sent" && a.events.some((e) => e.kind === "reply" && after(e.at));
+    const rfq = !!a && !!a.rfq && r.status === "sent" && after(a.rfq.at);
     return {
       id: r.id, leadId: r.leadId, company: r.company, to: r.to, subject: r.subject, status: r.status, at, variant: r.variant ?? null, meme: r.meme ?? null,
-      opened: !!a && r.status === "sent" && after(a.opens.last),
-      replied: !!a && r.status === "sent" && a.events.some((e) => e.kind === "reply" && after(e.at)),
-      rfq: !!a && !!a.rfq && r.status === "sent" && after(a.rfq.at),
+      opened, replied, rfq, seen: seenGuess(a, r.status === "sent", at, opened, replied, rfq, now),
     };
   }).sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
 }

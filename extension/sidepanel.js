@@ -104,7 +104,8 @@ async function syncLead() {
   if (sv && sv !== listView) { listView = sv; if (!PREVIEW) chrome.storage.local.set({ listView: sv }); warmList(null); }
   const id = PREVIEW ? new URLSearchParams(location.search).get("lead") : leadFromUrl(url);
   if (S && S.leadId === id) return;
-  if (!id) { S = null; if (view !== "queue" && view !== "item") view = "lead"; render(); return; }
+  // Not on a lead (another site, the Close list, a new tab): keep showing what's there; it only changes when a lead opens.
+  if (!id) { if (!S) render(); return; }
   const known = leads.get(id);
   S = known || newLead(id);
   leads.set(id, S);
@@ -1705,7 +1706,8 @@ function renderEmails() {
     el("span", { class: "emain" }, [el("span", { class: "eco", text: e.company }), el("span", { class: "eto", text: e.to })]),
     el("span", { class: "eflags" }, [
       e.status === "scheduled" ? el("span", { class: "chip3 soft", text: "Queued" }) : null,
-      e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" }) : e.opened ? el("span", { class: "chip3", text: "Opened" }) : e.status === "sent" ? el("span", { class: "chip3 soft", text: "Sent" }) : null,
+      e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" }) : e.opened ? el("span", { class: "chip3 good", text: "Opened" })
+        : e.status === "sent" && e.seen ? el("span", { class: `chip3 seen-${e.seen.level}`, title: e.seen.why, text: { likely: `Likely opened · ${e.seen.chance}%`, unsure: `Can't tell · ${e.seen.chance}%`, unlikely: `Probably not · ${e.seen.chance}%`, opened: "Opened" }[e.seen.level] }) : null,
     ]),
   ]);
   const page = el("main", { class: "page" }, [
@@ -1719,7 +1721,7 @@ function renderEmails() {
     !emails.loading && !shown.length ? el("p", { class: "empty", text: emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
     sent.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
     queued.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Going out · ${queued.length}` }), ...queued.map(row)]) : null,
-    el("p", { class: "muted", style: "font-size:12px", text: "Tap a row to open the lead in your Close tab. Opened and Replied are read from Close and update every few minutes." }),
+    el("p", { class: "muted", style: "font-size:12px", text: "Tap a row to open the lead in your Close tab. Opened and Replied come from Close. The percentages are a guess for emails with no tracked open: a lot of mail apps block the open pixel, so \"can't tell\" is honest, not bad news. Hover a chip for the reason." }),
   ]);
   out.push(page);
   return out;
