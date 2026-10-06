@@ -1687,7 +1687,7 @@ function alertsBlock(alerts) {
 }
 
 // ---------- the Emails tab (Walt 10/6): automatic emails sent and queued, who opened, who replied ----------
-let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today", updatedAt: null, timer: null };
+let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today", show: "all", updatedAt: null, timer: null };
 async function loadEmails() {
   if (emails.loading) return;
   emails.loading = true; emails.error = null; render();
@@ -1709,8 +1709,15 @@ function renderEmails() {
   const today = new Date().toDateString();
   const isToday = (e) => e.at && new Date(e.at).toDateString() === today;
   const shown = emails.filter === "today" ? rows.filter(isToday) : rows;
-  const queued = shown.filter((e) => e.status === "scheduled").sort((a, b) => (a.at || "").localeCompare(b.at || ""));
-  const sent = shown.filter((e) => e.status === "sent");
+  const queuedAll = shown.filter((e) => e.status === "scheduled").sort((a, b) => (a.at || "").localeCompare(b.at || ""));
+  const sentAll = shown.filter((e) => e.status === "sent");
+  // What the counts in the header filter to when tapped (10/6: "I want to navigate this").
+  const only = {
+    all: () => true, sent: (e) => e.status === "sent", queued: (e) => e.status === "scheduled",
+    replied: (e) => e.replied || e.rfq, opened: (e) => e.opened || e.replied || e.rfq, reached: (e) => e.calledToday && e.calledToday.reached, tried: (e) => e.calledToday && !e.calledToday.reached,
+  }[emails.show] || (() => true);
+  const queued = queuedAll.filter(only), sent = sentAll.filter(only);
+  const count = (k, label, n) => n ? el("button", { class: `ecount${emails.show === k ? " on" : ""}`, text: `${n} ${label}`, onclick: () => { emails.show = emails.show === k ? "all" : k; render(); } }) : null;
   const when = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   const day = (iso) => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
   const row = (e) => el("button", { class: `erow ${e.status}`, title: "Open in Close", onclick: () => openLead(e.leadId) }, [
@@ -1726,13 +1733,18 @@ function renderEmails() {
   const page = el("main", { class: "page" }, [
     el("div", { class: "qhead" }, [
       el("h1", { text: "Automatic emails" }),
-      el("span", { class: "muted", text: [sent.length ? `${sent.length} sent` : null, queued.length ? `${queued.length} queued` : null, sent.filter((e) => e.replied).length ? `${sent.filter((e) => e.replied).length} replied` : null].filter(Boolean).join(" · ") || (emails.loading ? "Loading…" : "") }),
+      el("span", { class: "ecounts" }, [
+        count("sent", "sent", sentAll.length), count("queued", "queued", queuedAll.length), count("opened", "opened", sentAll.filter((e) => e.opened || e.replied || e.rfq).length),
+        count("replied", "replied", sentAll.filter((e) => e.replied || e.rfq).length), count("reached", "reached today", shown.filter((e) => e.calledToday && e.calledToday.reached).length), count("tried", "tried today", shown.filter((e) => e.calledToday && !e.calledToday.reached).length),
+        !sentAll.length && !queuedAll.length && emails.loading ? el("span", { class: "muted", text: "Loading…" }) : null,
+      ]),
       el("button", { class: "link", text: emails.loading ? "Updating…" : emails.updatedAt ? `Updated ${emails.updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refresh` : "Refresh", onclick: () => loadEmails() }),
     ]),
     S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
     el("div", { class: "chips-row" }, [["today", "Today"], ["week", "Last 7 days"]].map(([k, label]) => el("button", { class: `chip${emails.filter === k ? " on" : ""}`, text: label, onclick: () => { emails.filter = k; render(); } }))),
     emails.error ? el("div", { class: "flag", text: emails.error }) : null,
-    !emails.loading && !shown.length ? el("p", { class: "empty", text: emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
+    emails.show !== "all" ? el("p", { class: "muted", style: "font-size:12px", text: `Showing ${emails.show === "reached" ? "accounts you reached today" : emails.show === "tried" ? "accounts you called today and didn't get" : `${emails.show} only`}. Tap the count again for everything.` }) : null,
+    !emails.loading && !sent.length && !queued.length ? el("p", { class: "empty", text: emails.show !== "all" ? "Nothing matches." : emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
     sent.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
     queued.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Going out · ${queued.length}` }), ...queued.map(row)]) : null,
     el("p", { class: "muted", style: "font-size:12px", text: "Tap a row to open the lead in your Close tab. Opened and Replied come from Close. The percentages are a guess for emails with no tracked open: a lot of mail apps block the open pixel, so \"can't tell\" is honest, not bad news. Hover a chip for the reason." }),
