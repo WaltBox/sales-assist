@@ -233,7 +233,7 @@ function canned(schema: unknown, task: string): unknown {
     return {
       situation: "line_card_no_reply",
       last_touch: "tried you by phone this morning",
-      body: `Hi ${name}!\n\nJust bumping this back to the top of your inbox. Tried you by phone this morning too. Reply here with your RFQ or list and I'll price it.\n\nWalt Boxwell`,
+      body: `Hi ${name},\n\nWanted to check in on this one. Tried you by phone this morning too. Reply here with your RFQ or list and I'll price it.\n\nWalt Boxwell`,
     };
   }
   if (schema === BriefSchema) {

@@ -114,7 +114,7 @@ test("rescue: the email is drafted in Close ahead of the call, a reply in the li
   assert.equal(draft.scheduleAt ?? null, null, "a draft, not scheduled");
   assert.equal(r.subject, "Re: Westgate Supply – line card");
   assert.equal(r.attachedLineCard, false, "no attachment: the card is in the email right under it");
-  assert.equal(r.body, "Hi Rob!\n\nJust bumping this back to the top of your inbox. The line card is in my email below.\n\nMind replying \"got it\" so I know it came through?\n\nWalt Boxwell");
+  assert.equal(r.body, "Hi Rob,\n\nWanted to make sure this reached you. The line card is in my email below.\n\nMind replying \"got it\" so I know it came through?\n\nWalt Boxwell");
   assert.doesNotMatch(r.body, /[—–]/);
 
   // "Found it" goes into Close as a note the accounts page reads back.
@@ -140,7 +140,7 @@ test("rescue drafts are made for every unopened account, once each", async () =>
   const harbor = board.accounts.find((a) => a.company === "Harbor Fabrication")!;
   const { draft } = await rescueFor(d, harbor.leadId);
   assert.ok(draft);
-  assert.match(draft!.body, /^Hi Dana!/);
+  assert.match(draft!.body, /^Hi Dana,/);
   await assert.rejects(sendRescue(d, "lead_someOtherLead000001", draft!.id), /Can't find/);
   await assert.rejects(sendRescue({ ...d, rep: { ...d.rep, closeUserId: "user_someoneElse" } }, harbor.leadId, draft!.id), /Can't find/);
   assert.deepEqual(await sendRescue(d, harbor.leadId, draft!.id), { sent: true, to: "Dana Ruiz <dana@harborfab.test>" });
@@ -310,7 +310,7 @@ test("a rescue draft greets a real first name only, and carries a meme the compa
   const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: "user_rescue_meme", timeZone: tz, sender: "Walt <walt@westgatesupply.com>", emailAccountId: "emailacct_demo" } };
   const forklift = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const r = await prepareRescue(d, DEMO_LEAD_ID, { meme: forklift });
-  assert.ok(r.body.startsWith("Hi there!"), `an initial is not a name: ${r.body.split("\n")[0]}`);
+  assert.ok(r.body.startsWith("Hi there,"), `an initial is not a name: ${r.body.split("\n")[0]}`);
   const draft = close.writes.find((w) => w.op === "email")!.body as { html: string | null };
   assert.ok(r.meme, "a meme was picked");
   assert.match(draft.html ?? "", new RegExp(r.meme!.replace(".", "\\.")), "the meme is inline in the draft");

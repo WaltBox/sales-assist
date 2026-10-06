@@ -99,13 +99,19 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
 
 // The automatic bump (Walt 9/30): no AI, just back to the top of the inbox and one question, plus a meme.
 // A few wordings, so a second bump to the same company doesn't read word for word like the first.
+// The automatic bumps, in the order an account gets them (Walt 10/6: "make it feel like I typed it"). Short, in
+// Walt's voice, each one a different plain ask for the RFQ. No email-speak ("bumping", "circling back", "top of
+// your inbox"), no hedging, no promises about speed.
 const BUMP_LINES = [
-  "Just bumping this back to the top of your inbox. Any RFQs coming up I can price for you?",
-  "Bumping this back to the top of your inbox. Got any RFQs coming up I can quote?",
-  "Popping this back to the top of your inbox. Anything coming up I can price for you?",
+  "Wanted to check in on this one. Anything crossing your desk this week I can put a price on? A rough list is fine, I'll take it from there.",
+  "Following up here. If you've got an RFQ going out this week, I'd like a shot at it. Send it my way and I'll get you numbers.",
+  "Still interested in your work. What's coming up on the material side? Pipe, valves, fittings, flanges, bolting: send me the list and I'll price it.",
+  "Checking in again. I'd like to be on the list the next time you send an RFQ out. What do you have coming up?",
+  "Quick one: anything you're pricing this week? Send it over and I'll get on it.",
+  "One more from me. If there's a job on the board you need pipe, fittings or bolting for, I'd like to price it. Send what you have.",
 ];
 /**
- * The name to greet with, or null for "Hi there!" (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
+ * The name to greet with, or null for "Hi there," (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
  * → Clifford); an initial ("J. Waite") or a mailbox word ("frontdesk", "hello", "info") isn't a name.
  */
 export function greetName(name: string | null | undefined): string | null {
@@ -121,13 +127,13 @@ export function greetName(name: string | null | undefined): string | null {
 
 const VARIANTS: Record<string, string> = {
   // Friday send (Walt 10/2): pricing back Monday morning is the hook, so Monday has to deliver.
-  friday: "Happy Friday! Bumping this back to the top before the weekend. If there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
-  // For an account that's never shown an open (Walt 10/6): same plain ask as everyone else, no talk of junk folders.
-  landed: "Bumping this back to the top. If there's an RFQ on your desk, send it over and I'll price it.",
+  friday: "Happy Friday. Before the weekend: if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
+  // For an account that's never shown an open (Walt 10/6): the same voice, a plain ask, no talk of junk folders.
+  landed: "Wanted to make sure this reached you. Anything coming up I can put a price on? A rough list is fine, I'll take it from there.",
 };
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
   const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
-  return `Hi ${first ?? "there"}!\n\n${line}\n\n${repName}`;
+  return `Hi ${first ?? "there"},\n\n${line}\n\n${repName}`;
 }
 
 export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; nth: number; variant?: string | null }; onlyTo?: string } = {}): Promise<FollowUpResult> {
@@ -174,10 +180,10 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
     threaded
       ? "It is a REPLY in the existing thread: the original email is right below it, so it's a bump, not a re-pitch. Do NOT restate products, the value prop, or the detailed ask. Its only job is to resurface the original email."
       : "There are no earlier emails, so this is the first email: a short note that the line card is attached, one line on what we'd supply them, and the ask to reply with anything to price.",
-    "2 to 4 short sentences, max; longer reads as desperate. Walt's voice (9/26): open with \"Hi [first name]!\" and \"Just bumping this back to the top of your inbox.\" (or a close variation), then, only if it's true and adds something, one short line on the last real touch ('Tried you by phone this morning too.'), then one direct ask ('Reply here with your RFQ or list and I'll price it.'). No hedging: never 'no strings', 'no pressure', 'no rush', 'I'll get pricing back fast', or 'if something comes up'. End with the rep's full name on its own line; no separate thanks line.",
+    "2 to 4 short sentences, max; longer reads as desperate. Walt's voice (10/6): reads like he typed it, not a template. Open with \"Hi [first name],\" then a plain check-in in his words ('Wanted to check in on this one.' / 'Following up here.'), never 'bumping', 'circling back' or 'top of your inbox'; then, only if it's true and adds something, one short line on the last real touch ('Tried you by phone this morning too.'), then one direct ask ('Reply here with your RFQ or list and I'll price it.'). No hedging: never 'no strings', 'no pressure', 'no rush', 'I'll get pricing back fast', or 'if something comes up'. End with the rep's full name on its own line; no separate thanks line.",
     "Tone by situation, still short: line card sent with no reply → 'bumping this back to the top of your inbox, reply here with your RFQ or list'. They promised an RFQ → 'bumping this to the top in case the RFQ is ready, just reply here with it'. Reached a gatekeeper and the buyer was out → 'checking back, is [name] around this week?'. Quote already sent → 'any thoughts on the numbers I sent?'. Buyer said nothing right now → one short line, and no past-RFQ ask if they already declined it.",
     "Never invent a reply the prospect didn't send and never claim a relationship that isn't there. No em or en dashes.",
-    `Reference for length and tone:\nHi Zachary!\n\nJust bumping this back to the top of your inbox. Tried you by phone this morning too. Reply here with your RFQ or list and I'll price it.\n\n${d.rep.name}`,
+    `Reference for length and tone:\nHi Zachary,\n\nWanted to check in on this one. Tried you by phone this morning too. Reply here with your RFQ or list and I'll price it.\n\n${d.rep.name}`,
     lastCall ? lastCallLine(lastCall, ctx.facts.prospectTz ?? d.rep.timeZone, now) : "There are no recent calls on this lead.",
     emails.length ? `The email thread, newest first:\n${threadText(emails)}` : "",
   ].filter(Boolean).join("\n\n");

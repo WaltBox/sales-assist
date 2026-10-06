@@ -98,8 +98,8 @@ export async function lineCardBounce(d: Deps, leadId: string, to: string, since:
 /** The bump: they already have the line card, this just puts the thread back on top. */
 export function bumpBody(first: string | null, rep: string) {
   return stripDashes([
-    `Hi ${first ?? "there"}!`,
-    "Just bumping this back to the top of your inbox. The line card is in my email below.",
+    `Hi ${first ?? "there"},`,
+    "Wanted to make sure this reached you. The line card is in my email below.",
     "Mind replying \"got it\" so I know it came through?",
     rep,
   ].join("\n\n"));

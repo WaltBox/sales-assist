@@ -148,7 +148,7 @@ test("send line card now: ready on the call screen, sent once to the address you
   assert.equal(again.subject, "Re: Great talking with you – Westgate Supply line card");
   assert.equal(again.reply!.id, "acti_firstCard");
   assert.deepEqual(again.alreadySent, { at: "2026-09-26T01:34:00Z", opened: false }, "only their spam filter touched it");
-  assert.match(again.body, /^Hi Rob!\n\nJust bumping this back to the top of your inbox\. The line card is in my email below\./);
+  assert.match(again.body, /^Hi Rob,\n\nWanted to make sure this reached you\. The line card is in my email below\./);
   assert.equal(again.attach, false);
   const forklift = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const sentAgain = await sendLineCard(d2, DEMO_LEAD_ID, { to: "rob.roy@gmail.com", meme: forklift });

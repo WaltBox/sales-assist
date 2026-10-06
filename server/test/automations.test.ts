@@ -110,7 +110,7 @@ test("coming up: who gets an automatic email and when, if nothing changes; Hold 
   const harbor = f.find((x) => x.company === "Harbor Fabrication");
   assert.ok(harbor, "not-opened accounts are in the sequence too (10/5)");
   assert.equal(harbor!.label, "Bump (not confirmed)");
-  assert.match(harbor!.preview ?? "", /Bumping this back to the top\. If there's an RFQ/);
+  assert.match(harbor!.preview ?? "", /Wanted to make sure this reached you/);
   assert.doesNotMatch(harbor!.preview ?? "", /junk/);
 
   await holdAccount(d, crest!.leadId, true);
@@ -139,12 +139,16 @@ test("an account that sends an RFQ is out of automatic emails for good (VGas, 9/
 test("the automatic bump: back to the top + any RFQs, a meme inline (never one they've had), no AI (9/30)", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const { bumpHtml, memeFor } = await import("../src/memes.js");
-  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy!\n\nJust bumping this back to the top of your inbox. Any RFQs coming up I can price for you?\n\nWalt Boxwell");
+  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy,\n\nWanted to check in on this one. Anything crossing your desk this week I can put a price on? A rough list is fine, I'll take it from there.\n\nWalt Boxwell");
+  // Six different asks for six bumps, none in email-speak.
+  const six = Array.from({ length: 6 }, (_, i) => bumpBodyFor("Tammy", "Walt Boxwell", i));
+  assert.equal(new Set(six).size, 6);
+  for (const b of six) assert.doesNotMatch(b, /bump|circl|top of your inbox|no strings|stack up|quotes back fast/i);
   assert.notEqual(bumpBodyFor("Tammy", "Walt Boxwell", 1), bumpBodyFor("Tammy", "Walt Boxwell", 0), "a second bump isn't word for word the first");
-  assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there!/);
+  assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there,/);
   const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const html = bumpHtml(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Walt Boxwell", meme);
-  assert.match(html, /^<p>Hi Tammy!<\/p><p>Just bumping.*<\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p>Walt Boxwell<\/p>$/, "inline, between the ask and the name");
+  assert.match(html, /^<p>Hi Tammy,<\/p><p>Wanted to check in.*<\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p>Walt Boxwell<\/p>$/, "inline, between the ask and the name");
   // Never the same meme twice: a pick they've already had is replaced by one they haven't.
   const memes = [meme, { name: "bolts.png", url: "u2" }];
   const d = { rep: { closeUserId: "user_m" } } as never;
@@ -296,7 +300,7 @@ test("shot down, or marked Not Interested in Close after it was planned: the bum
 test("the Friday copy (10/2): pricing back Monday, plain ask, no hedging", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const body = bumpBodyFor("Dana", "Walt Boxwell", 0, "friday");
-  assert.equal(body, "Hi Dana!\n\nHappy Friday! Bumping this back to the top before the weekend. If there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.\n\nWalt Boxwell");
+  assert.equal(body, "Hi Dana,\n\nHappy Friday. Before the weekend: if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.\n\nWalt Boxwell");
   assert.doesNotMatch(body, /no strings|no pressure|stack up|quotes back fast/i);
   assert.equal(bumpBodyFor("Dana", "Walt Boxwell", 0, null), bumpBodyFor("Dana", "Walt Boxwell", 0), "no variant: the usual rotation");
 });
@@ -318,7 +322,7 @@ test("send now (10/2): out in minutes, staggered, with the copy, a meme, and the
   const at = new Date(row.scheduledFor!).getTime() - new Date("2026-10-02T17:00:00Z").getTime();
   assert.ok(at >= 2 * 60_000 && at <= 3 * 60_000, `goes in about two minutes, not 9am tomorrow: ${row.scheduledFor}`);
   const email = close.writes.filter((w) => w.op === "email").pop()!.body as { body: string; html: string | null; scheduleAt: string };
-  assert.match(email.body, /Happy Friday!/);
+  assert.match(email.body, /Happy Friday\./);
   assert.match(email.html ?? "", /forklift\.jpg/);
   assert.ok(close.writes.some((w) => w.op === "delete" && (w.body as { id: string }).id === "acti_rescue_crest"), "the rescue draft is deleted: never two emails");
   assert.deepEqual(await store.getSetting(d.rep.closeUserId, "rescueDrafts"), {});
@@ -376,7 +380,7 @@ test("unconfirmed accounts (10/5): in the sequence with the 'did it land' line, 
   if (mesa.bumpDue) {
     assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
     assert.equal(m!.variant, "landed");
-    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /Bumping this back to the top\. If there's an RFQ/.test(e.body));
+    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /Wanted to make sure this reached you/.test(e.body));
     assert.ok(email, "the bump is the plain ask");
   }
 });
