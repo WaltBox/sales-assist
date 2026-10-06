@@ -209,6 +209,103 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .seen.hot i { background: var(--red); }
 .seen.s-bounced { color: var(--red); font-weight: 600; }
 .seen.s-bounced i { background: transparent; border: 2px solid var(--red); box-sizing: border-box; }
+/* Warmth chip beside the contact: a dot and a word, hover for the points. */
+.warmth { display: inline-flex; align-items: center; gap: 5px; margin-right: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); cursor: help; }
+.warmth i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: currentColor; }
+.warmth.w-hot { color: var(--red); }
+.warmth.w-warm { color: #c2611a; }
+.warmth.w-cool { color: var(--navy); }
+.warmth.w-cold { color: var(--muted); opacity: 0.8; }
+.warmth.big { font-size: 13px; margin: 0; }
+.navc.hotc { background: var(--red); color: #fff; }
+
+/* Heat map: one tile per account, the colour deepens with the score. */
+.heat .heatsum { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 16px; }
+.heatk { display: inline-flex; align-items: baseline; gap: 8px; padding: 8px 14px; border: 1.5px solid var(--ink-line); background: var(--white); font: inherit; cursor: pointer; }
+.heatk b { font-size: 20px; }
+.heatk span { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.heatk.w-hot { color: var(--red); } .heatk.w-warm { color: #c2611a; } .heatk.w-cool { color: var(--navy); } .heatk.w-cold { color: var(--muted); }
+/* The lifted look, same as buttons: an extruded block whose corners meet the box (no notch). */
+.heatk, .cardk, .tile { position: relative; isolation: isolate; --d: 3px; --b: 1.5px; }
+.heatk.on::before, .cardk.on::before, .tile.on::before, .tile:hover::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none; top: calc(-1 * var(--b)); left: calc(-1 * var(--b));
+  width: calc(100% + 2 * var(--b) + var(--d)); height: calc(100% + 2 * var(--b) + var(--d)); background: var(--ext);
+  clip-path: polygon(calc(100% - var(--d)) 0, 100% var(--d), 100% 100%, var(--d) 100%, 0 calc(100% - var(--d)), calc(100% - var(--d)) calc(100% - var(--d)));
+}
+.heatk.on { border-color: currentColor; --ext: currentColor; }
+.heatcard { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -6px 0 12px; }
+.cardk { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1.5px solid var(--ink-line); background: var(--white); font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+.cardk b { font-size: 14px; }
+.cardk.on { border-color: var(--ink); --d: 2px; }
+.cardk i, .card i { width: 8px; height: 8px; border-radius: 50%; flex: none; box-sizing: border-box; }
+.c-opened i { background: var(--green); }
+.c-landed i { background: transparent; border: 1.5px dashed currentColor; }
+.c-bounced i { background: transparent; border: 2px solid var(--red); }
+.tile .card { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; opacity: 0.9; }
+.tile .card i { width: 7px; height: 7px; }
+.tile .c-opened i { background: #fff; } .tile .c-bounced i { border-color: #fff; }
+.dr-card { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.dr-card .card { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; }
+.dr-card.c-bounced .card { color: var(--red); } .dr-card.c-opened .card { color: var(--green); }
+/* RFQ potential: tier chips and tile sizes. Steady tiles are the big ones. */
+.cardk.p-steady b, .tierchip.p-steady { color: var(--red); }
+.cardk.p-project b, .tierchip.p-project { color: var(--amber); }
+.tierchip { font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding: 2px 8px; border: 1.5px solid currentColor; color: var(--muted); }
+.tile .tier { font-family: var(--label); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; opacity: 0.85; padding: 1px 5px; border: 1px solid rgba(255,255,255,.6); }
+.tile.t-steady { grid-column: span 2; min-height: 96px; }
+.tile.t-steady .co { font-size: 14.5px; -webkit-line-clamp: 3; }
+.tile.t-project { min-height: 80px; }
+.tile.t-unknown { background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,.14) 6px 8px); }
+.dr-pot { margin-top: 10px; padding: 10px 12px; border: 1.5px solid var(--ink-line); }
+.dr-pot.p-steady { border-color: var(--red); }
+.dr-pot-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dr-pot-head .gist { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.dr-pot-why { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.dr-pot .askrow { margin-top: 8px; }
+.hp-why.pot li { background: var(--paper); }
+.dr-pot .unknown { margin: 4px 0 0; color: var(--amber); }
+.evid { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.evid .src { color: var(--muted); font-size: 11.5px; }
+.askrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.heatband { margin: 0 0 20px; }
+.heatlbl { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; }
+.heatlbl .why { margin-left: 4px; }
+.heatband.w-hot .heatlbl .label { color: var(--red); } .heatband.w-warm .heatlbl .label { color: #c2611a; } .heatband.w-cool .heatlbl .label { color: var(--navy); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: 6px; }
+.tile { --c: 220, 0, 37; position: relative; display: flex; flex-direction: column; gap: 4px; min-height: 64px; padding: 8px 9px; text-align: left; border: 1.5px solid transparent; font: inherit; cursor: pointer;
+  background: rgba(var(--c), calc(var(--heat) * 0.9)); color: var(--white); }
+.tile.w-warm { --c: 194, 97, 26; }
+.tile.w-cool { --c: 0, 25, 57; }
+.tile.w-cold { --c: 83, 82, 79; }
+.tile .co { font-size: 12.5px; font-weight: 600; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tile .foot { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
+.tile .sc { font-size: 13px; font-weight: 700; }
+.tile .ago { margin-left: auto; font-size: 11px; opacity: 0.85; }
+.tile:hover, .tile.on { border-color: var(--ink); }
+/* The drawer: slides in from the right, the map shifts over so the tile you picked stays visible. */
+/* It sits over the right edge of the map rather than pushing it; tiles underneath stay clickable once it closes, and the picked tile scrolls into view. */
+.heat.drawer-open { padding-right: 200px; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 520px; max-width: 94vw; overflow-y: auto; padding: 22px 26px 26px; background: var(--white); border-left: 2px solid var(--ink); box-shadow: -6px 0 0 rgba(17, 17, 20, .08); z-index: 30; display: flex; flex-direction: column; gap: 8px; }
+.dr-top { display: flex; justify-content: space-between; align-items: center; }
+.dr-co { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1.1; text-transform: uppercase; color: var(--ink); text-decoration: none; }
+.dr-co:hover { text-decoration: underline; }
+.dr-who { white-space: normal; }
+.dr-tel { font-size: 15px; }
+.dr-story { margin-top: 10px; padding: 10px 12px; background: var(--paper); }
+.dr-story p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
+.dr-story .dr-do { margin-top: 8px; font-weight: 600; }
+.dr-h { margin-top: 10px; color: var(--muted); }
+.dr-ev { display: flex; flex-direction: column; gap: 6px; }
+.dr-ev .ev { font-size: 13px; }
+.dr-nav { margin-top: auto; padding-top: 16px; display: flex; gap: 8px; justify-content: space-between; }
+.dr-nav .btn { flex: 1; text-align: center; text-decoration: none; }
+.hp-why { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.hp-why li { padding: 3px 9px; background: var(--paper); font-size: 12.5px; }
+.hp-why li.bad { background: #f7d9de; color: var(--red); }
+.hp-why li.fade { background: transparent; border: 1px dashed var(--ink-line); color: var(--muted); }
+@media (max-width: 1100px) { .heat.drawer-open { padding-right: 0; } }
+@media (max-width: 900px) { .drawer { width: 100vw; max-width: none; } }
+@media (max-width: 720px) { .tiles { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } .tile { min-height: 58px; } .tile.t-steady { min-height: 84px; } }
 
 /* automatic emails */
 .gr.mgr { grid-template-columns: 120px minmax(170px, 1.3fr) minmax(150px, 1fr) minmax(220px, 2fr) 100px 80px; }
@@ -353,3 +450,25 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .memeopt span { position: absolute; left: 4px; bottom: 4px; background: var(--ink); color: #fff; font-size: 11px; padding: 1px 5px; }
 .testnote { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border: 1px solid #c98a00; border-left-width: 4px; background: rgba(201, 138, 0, .1); padding: 10px 14px; margin: 8px 0 12px; font-size: 14px; }
 .testnote p { margin: 0; max-width: 760px; }
+
+/* The meme library on the Automatic emails page: a grid of cards, drop files anywhere on it. */
+.library { margin-top: 28px; padding: 14px 16px; border: 1.5px dashed var(--ink-line); }
+.library.over { border-color: var(--red); background: rgba(220, 0, 37, .04); }
+.library h2 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 18px; }
+.library .libmsg { color: var(--navy); }
+.memegrid.lib { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-width: none; gap: 12px; margin-top: 10px; }
+.memecard { background: var(--white); border: 1.5px solid var(--ink-line); display: flex; flex-direction: column; }
+.memecard img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.memecard .name { font: inherit; font-size: 13px; font-weight: 600; text-align: left; padding: 6px 8px 2px; background: none; border: 0; cursor: text; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memecard .name:hover { text-decoration: underline; }
+.memecard .rename { margin: 4px 6px 0; padding: 4px 6px; font: inherit; font-size: 13px; border: 1.5px solid var(--red); }
+.memecard .meta { display: flex; justify-content: space-between; align-items: baseline; padding: 2px 8px 8px; font-size: 11.5px; }
+.staging { margin: 10px 0 16px; padding: 12px 14px; background: var(--white); border: 1.5px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.staging .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.staging h3 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 15px; }
+.staging .row { display: flex; gap: 8px; }
+.memecard.dupe { border-color: var(--red); }
+.memecard .rename { width: calc(100% - 12px); }
+.memecard .mstats { display: flex; gap: 10px; padding: 0 8px 8px; font-size: 11.5px; color: var(--muted); }
+.memecard .mstats b { font-size: 12.5px; color: var(--ink); }
+.memecard .mstats .good b { color: var(--green); }

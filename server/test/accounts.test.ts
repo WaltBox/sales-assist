@@ -8,6 +8,8 @@ import { DEMO_LEAD_ID, DEMO_USER_ID, roddaCall } from "../src/fixtures.js";
 
 const NOW = new Date("2026-09-26T18:00:00Z");
 const tz = "America/Los_Angeles";
+// The demo line cards are dated "N days ago" from here: a Wednesday, 10am Pacific, so the suite reads the same at any hour.
+const WED = new Date("2026-10-07T17:00:00Z");
 const base = { cardSentAt: "2026-09-23T16:00:00Z", lastOut: "2026-09-23T16:00:00Z", lastIn: null, rfqPromised: false, tasks: [], now: NOW, tz };
 
 test("accounts: the next step reads the calls and tasks, not just the emails", () => {
@@ -125,8 +127,8 @@ test("rescue drafts are made for every unopened account, once each", async () =>
   const { ensureRescueDrafts, accountsBoard } = await import("../src/accounts.js");
   const { demoLineCards } = await import("../src/demo.js");
   const close = new FakeClose({ calls: [roddaCall()] });
-  demoLineCards(close); // Harbor and Mesa never opened it (Valley's went out yesterday: not two days in a row, 9/30)
-  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
+  demoLineCards(close, WED); // Harbor and Mesa never opened it (Valley's went out yesterday: not two days in a row, 9/30)
+  const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
   assert.equal((await ensureRescueDrafts(d)).made, 2);
   assert.equal((await ensureRescueDrafts(d)).made, 0, "not drafted twice");
   const board = await accountsBoard(d, { fresh: true });
@@ -151,8 +153,8 @@ test("ticking \"They got it\" on the call saves a [Got it] note, so the account 
   const { accountsBoard } = await import("../src/accounts.js");
   const { demoLineCards } = await import("../src/demo.js");
   const close = new FakeClose({ calls: [roddaCall()] });
-  demoLineCards(close); // Harbor never opened it
-  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
+  demoLineCards(close, WED); // Harbor never opened it
+  const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
   const before = (await accountsBoard(d, { fresh: true })).accounts.find((a) => a.company === "Harbor Fabrication")!;
   assert.equal(before.seen, "not_opened");
   const r = await markRescue(d, "lead_demoHarborFab000001", true, "Dana", "call");
@@ -255,8 +257,8 @@ test("\"RFQ came in\": an [RFQ received] note puts the account on the RFQs page 
   const { markRfqReceived, accountsBoard } = await import("../src/accounts.js");
   const { demoLineCards } = await import("../src/demo.js");
   const close = new FakeClose({ calls: [roddaCall()] });
-  demoLineCards(close);
-  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
+  demoLineCards(close, WED);
+  const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
   close.extraTasks.push({ id: "task_chase", lead_id: "lead_demoHarborFab000001", assigned_to: DEMO_USER_ID, text: "Call Dana for the RFQ", date: new Date().toISOString(), is_complete: false });
   const r = await markRfqReceived(d, "lead_demoHarborFab000001", "Materials list, sent to Jacob");
   assert.equal(r.note, "[RFQ received] Materials list, sent to Jacob");
@@ -320,11 +322,11 @@ test("rescue drafts are never duplicated: a timed-out check keeps the old one, a
   const { ensureRescueDrafts } = await import("../src/accounts.js");
   const { demoLineCards } = await import("../src/demo.js");
   const close = new FakeClose({ calls: [roddaCall()] });
-  demoLineCards(close);
+  demoLineCards(close, WED);
   const userId = "user_rescue_dupes";
   for (const e of close.sentEmails) e.user_id = userId; // demoLineCards writes as the demo user
   for (const t of close.extraTasks) t.assigned_to = userId;
-  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: userId, timeZone: tz } };
+  const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: userId, timeZone: tz } };
   assert.equal((await ensureRescueDrafts(d)).made, 2);
   const drafts = (await store.getSetting<Record<string, string>>(userId, "rescueDrafts"))!;
   const ids = Object.values(drafts);
@@ -356,11 +358,12 @@ test("gaps between emails count business days, by date, and follow the account's
   assert.equal(at("2026-10-09T14:03:00Z", 5).kind, "bump");
   assert.equal(at("2026-10-12T14:03:00Z", 7).kind, "waiting");
   assert.equal(at("2026-10-13T14:03:00Z", 7).kind, "bump");
-  // No cadence yet: a business week. It's due at the 7am run even though the email went out at 9:20
-  // (counting 24-hour blocks, it read "6.9 days" and slipped to Monday).
-  assert.equal(at("2026-10-05T14:03:00Z").label, "Dana has it · bump Oct 9");
-  assert.match(at("2026-10-05T14:03:00Z").detail, /5 business days after your last email/);
-  assert.equal(at("2026-10-09T14:03:00Z").kind, "bump");
+  // No cadence of its own: the standard, two business days (10/5). Friday's email is due Tuesday, at the 7am run,
+  // even though it went out at 9:20 (counting 24-hour blocks it would slip a day).
+  assert.equal(at("2026-10-05T14:03:00Z").label, "Dana has it · bump Oct 6");
+  assert.match(at("2026-10-05T14:03:00Z").detail, /2 business days after your last email/);
+  assert.equal(at("2026-10-05T14:03:00Z").kind, "waiting");
+  assert.equal(at("2026-10-06T14:03:00Z").kind, "bump");
   // They replied and you answered: same gaps.
   assert.equal(nextStep({ ...seenIt, seen: "replied", now: new Date("2026-10-07T14:03:00Z"), gap: 3 }).kind, "bump");
   assert.equal(nextStep({ ...seenIt, seen: "replied", now: new Date("2026-10-06T14:03:00Z"), gap: 3 }).label, "Dana replied · bump Oct 7");
@@ -383,11 +386,11 @@ test("shot down (Walt 10/5): Not Interested in Close with a note, callbacks clea
   const { accountsBoard, markNotInterested, undoNotInterested, NOT_INTERESTED_TAG } = await import("../src/accounts.js");
   const { demoLineCards } = await import("../src/demo.js");
   const close = new FakeClose({ calls: [roddaCall()] });
-  demoLineCards(close);
+  demoLineCards(close, WED);
   const userId = "user_shot_down";
   for (const e of close.sentEmails) e.user_id = userId;
   for (const t of close.extraTasks) t.assigned_to = userId;
-  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: userId, timeZone: tz } };
+  const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: userId, timeZone: tz } };
   const mesa = (await accountsBoard(d, { fresh: true })).accounts.find((a) => a.company === "Mesa Pipe & Supply")!; // has a callback open
   await new Promise((r) => setTimeout(r, 30)); // let the board's background status sync finish first
 
@@ -415,4 +418,32 @@ test("stop statuses: only the rep's \"no\" statuses take an account out", async 
   const { isOutStatus } = await import("../src/rules.js");
   for (const s of ["Not Interested", "not interested ", "Bad Fit", "Disqualified"]) assert.ok(isOutStatus(s), s);
   for (const s of ["Sent Line Card", "Qualified", "Customer", "Quoted", null, undefined, ""]) assert.ok(!isOutStatus(s), String(s));
+});
+
+test("bumpDue (10/5): the two-day cadence runs even with a callback on the books; not for the unopened, the replied-to, or an RFQ", async () => {
+  const { buildAccount } = await import("../src/accounts.js");
+  const { roddaLead } = await import("../src/fixtures.js");
+  const now = new Date("2026-10-06T14:03:00Z"); // Tue 7:03am Pacific
+  const d: Deps = { close: new FakeClose(), llm: demoLlm, now: () => now, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
+  const lead = roddaLead({ contacts: [{ id: "cont_renee", name: "Renee Alvarez", title: "Purchasing", emails: [{ email: "renee@roddaelectric.com", type: "office" }], phones: [] }] });
+  const to = "renee@roddaelectric.com";
+  const card = (over: Partial<{ opens: unknown[] }> = {}) => ({
+    id: "em_card", user_id: DEMO_USER_ID, lead_id: lead.id, status: "sent", direction: "outgoing", subject: "Westgate Supply – line card", date_sent: "2026-10-02T16:20:00Z", date_created: "2026-10-02T16:20:00Z",
+    to: [to], sender: "Walt <walt@westgatesupply.com>", attachments: [{ filename: "Westgate Supply Line Card.pdf", size: 1 }], thread_id: "th1", contact_id: lead.contacts[0].id,
+    opens: [{ opened_at: "2026-10-02T18:00:00Z", opened_by: to, user_agent: "Mozilla/5.0 Outlook" }], ...over,
+  });
+  const build = (emails: unknown[], tasks: Array<{ text: string; date: string }> = []) => buildAccount({
+    d, now, card: card() as never, lead, ours: (w: string | null | undefined) => !w || /westgatesupply/.test(w), emails: emails as never, notes: [], tasks, calls: [], autos: [], gap: 2,
+  } as never);
+  // Friday's email, opened, Tuesday morning: due, even with a callback set for the 15th.
+  const a = build([card()], [{ text: "Check in with Renee", date: "2026-10-15T16:30:00Z" }]);
+  assert.equal(a.next.kind, "scheduled");
+  assert.equal(a.bumpDue, true);
+  // Monday it wasn't (one business day).
+  assert.equal(buildAccount({ d, now: new Date("2026-10-05T14:03:00Z"), card: card() as never, lead, ours: () => true, emails: [card()] as never, notes: [], tasks: [], calls: [], autos: [], gap: 2 } as never).bumpDue, false);
+  // Never opened: a rescue call, not another email.
+  assert.equal(build([card({ opens: [] })]).bumpDue, false);
+  // They wrote back after the last email: answer first.
+  const reply = { id: "em_r", lead_id: lead.id, status: "inbox", direction: "incoming", subject: "RE: line card", date_created: "2026-10-05T10:00:00Z", sender: to, to: ["walt@westgatesupply.com"], attachments: [], thread_id: "th1" };
+  assert.equal(build([card(), reply]).bumpDue, false);
 });

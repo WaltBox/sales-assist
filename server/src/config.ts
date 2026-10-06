@@ -62,7 +62,8 @@ export const config = {
   lineCardTemplateId: process.env.LINE_CARD_TEMPLATE_ID ?? "tmpl_h0xbgrP8EjkmKlb5zMD8gKpHzfd8khSxYt2EpqoTeLA",
   // Bump when the brief format changes so old cached briefs are ignored. v10: openers always name 3-4 specific products.
   // v11: two short sentences, no "[crews] use for" clause (Walt 9/28).
-  briefVersion: "v11",
+  // v12: PVF first, with a flag and the old pitch as the alternative when they likely don't buy PVF (Walt 10/5).
+  briefVersion: "v12",
 };
 
 export function loadReps(): Map<string, Rep> {

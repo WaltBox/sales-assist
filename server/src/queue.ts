@@ -9,6 +9,8 @@ import { config } from "./config.js";
 import { loadLeadContext } from "./context.js";
 import { businessDaysAt, formatLocal, isBackwardsMove, isOutStatus, isoWithOffset, localParts, nextWeekdayAt, samePerson, zonedTime } from "./rules.js";
 import { store } from "./store.js";
+import { extractPurchasing, type Purchasing } from "./purchasing.js";
+import { recordPurchasing } from "./potential.js";
 
 const shortDate = (d: Date, tz: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric", day: "numeric" }).format(d);
 import type { Proposals, QuickOutcome } from "./schemas.js";
@@ -50,6 +52,8 @@ export type QueueItem = {
   alerts?: Array<{ level: "warn" | "error"; text: string }>;
   /** Under 20 seconds: no transcript to read; the dial is logged and nothing else is built. */
   dialOnly?: boolean;
+  /** What the buyer said about their purchasing cycle on this call (each with their words), for the rep to confirm. */
+  purchasing?: Purchasing | null;
 };
 
 // Every step logs its start and end, so a call that "did nothing" can be traced (Walt 9/26).
@@ -503,6 +507,12 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     const core = await step(it, "extract (note, contacts, tasks, status)", () => afterCall(d, it.leadId, req));
     const next = core.proposals.tasks[0];
     const callback = next && placeholder ? `${next.title}, ${formatLocal(new Date(next.due_at), tz, true)}` : null;
+    // The purchasing cycle (Walt 10/5): what the buyer said about RFQ volume, vendors, how to get on the list.
+    // Read alongside the email draft (independent of it); saved as heard, not confirmed, so the heat map moves now.
+    const transcript = transcriptText(call?.recording_transcript);
+    const purchasingP: Promise<Purchasing | null> = transcript && call && !["no-answer", "busy", "vm-left", "vm-answer", "blocked"].includes(call.disposition ?? "")
+      ? step(it, "purchasing cycle", () => extractPurchasing(d, it.company, transcript, call.date_created)).catch((err) => { it.warnings.push(`Couldn't read the purchasing answers: ${(err as Error).message}`); return null; })
+      : Promise.resolve(null);
     const extras = await step(it, "write email", () => afterCallExtras(d, it.leadId, { ...req, callback, benchmark: core.benchmark, benchmark_agreed: core.benchmark_agreed, next_one: core.next_one_promised, referral: core.referral }));
     const p: Proposals = { ...core.proposals, email: extras.email };
     // Sent the line card during the call ("Send line card now")? Then don't draft a second one.
@@ -545,6 +555,8 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
       p.tasks = p.tasks.filter((t) => Math.abs(new Date(t.due_at).getTime() - t0) > 3 * 3600 * 1000);
     }
     reconcileAddresses(p, it.warnings);
+    it.purchasing = await purchasingP;
+    if (it.purchasing && Object.keys(it.purchasing).length) await recordPurchasing(d, it.leadId, it.purchasing).catch(() => undefined);
     it.proposals = p;
     it.coaching = extras.coaching;
     it.summary = core.summary;

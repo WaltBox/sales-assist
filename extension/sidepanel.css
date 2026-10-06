@@ -121,6 +121,13 @@ mark { background: none; color: var(--red); font-weight: 700; padding: 0; }
 .tags li { font-size: 12.5px; padding: 3px 9px; background: var(--white); border: 1px solid var(--ink-line); }
 .heads { background: var(--white); border: 1px solid var(--ink); border-left: 4px solid var(--red); padding: 10px 12px; box-shadow: var(--shadow-sm); }
 .heads .label { color: var(--red); }
+/* PVF first (10/5): the "likely doesn't work with PVF" flag, with the pitch for their own trade ready to switch to. */
+.pvfflag { background: var(--white); border: 1px solid var(--ink); border-left: 4px solid var(--amber); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.pvfflag .label { color: var(--amber); }
+.pvfflag .label.pvfsub { color: var(--muted); margin-top: 4px; }
+.pvfflag .pvfwhy { font-size: 13.5px; }
+.pvfflag .pvfalt { font-size: 15px; line-height: 1.5; }
+.pvfflag .tags { margin-top: 0; }
 .heads li { position: relative; padding-left: 12px; margin-top: 4px; font-size: 13.5px; }
 .heads li::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; background: var(--red); }
 .flag { background: var(--white); border: 1px solid var(--red); color: var(--red); padding: 8px 12px; font-size: 13.5px; }
@@ -541,3 +548,12 @@ textarea { resize: vertical; min-height: 70px; }
 :is(.oncall, .afterlc) .lcmemeopt.seen { opacity: .35; cursor: not-allowed; }
 :is(.oncall, .afterlc) .lcmemeopt span { position: absolute; left: 3px; bottom: 3px; background: var(--ink); color: #fff; font-size: 10px; padding: 1px 4px; }
 :is(.oncall, .afterlc) .lcmemeprev { width: 100%; max-width: 240px; height: auto; display: block; margin-top: 8px; }
+
+/* Purchasing cycle (10/5): the answers heard on calls, editable, with the buyer's words under each. */
+.purch .purch-known { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.purch-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.purch-f { display: flex; flex-direction: column; gap: 3px; }
+.purch-f input { padding: 7px 10px; font-size: 13.5px; }
+.purch-f .quote { font-size: 12px; line-height: 1.35; }
+.asknext .say { color: var(--red); }
+.hometown .fact { font-size: 13.5px; margin-top: 6px; line-height: 1.4; font-style: italic; }

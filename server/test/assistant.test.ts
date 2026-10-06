@@ -519,7 +519,47 @@ test("a brief whose opener names no products is rewritten once", async () => {
   }) as Llm;
   const r = await leadBrief(deps(new FakeClose({ calls: [roddaCall()] }), llm), DEMO_LEAD_ID, { refresh: true });
   assert.equal(calls, 2);
-  assert.match(r.brief.opener, /threaded rod, anchors and bolting/);
+  assert.match(r.brief.opener, /pipe, valves, fittings and flanges/);
+});
+
+test("PVF first (Walt 10/5): the card leads with PVF, flags a company that likely doesn't buy it, and keeps the old pitch ready", async () => {
+  const { namesPvf, enforceBriefRules } = await import("../src/assistant.js");
+  assert.equal(namesPvf("We supply pipe, valves, fittings and flanges for process piping work."), true);
+  assert.equal(namesPvf("We supply flanges, gaskets and stud bolts for skid packages."), true);
+  assert.equal(namesPvf("We supply threaded rod, anchors, beam clamps and pipe supports for electrical work."), false, "pipe supports are hardware");
+  assert.equal(namesPvf("We supply beam, plate and A325 bolts for structural work."), false);
+
+  // An electrical contractor: PVF pitch on top, flagged, with the pitch for their trade as the alternative.
+  const r = await leadBrief(deps(new FakeClose({ calls: [roddaCall()] })), DEMO_LEAD_ID, { refresh: true });
+  assert.match(r.brief.opener, /pipe, valves, fittings and flanges/);
+  assert.deepEqual(r.brief.buys.slice(0, 3), ["Pipe", "Valves", "Fittings"]);
+  assert.equal(r.brief.pvf_fit, "likely_not");
+  assert.match(r.brief.pvf_reason, /Electrical contractor/);
+  assert.match(r.brief.alt_opener!, /threaded rod, anchors and bolting/);
+  assert.ok(r.brief.alt_buys.includes("Threaded rod"));
+
+  // The opener already used on this lead, from before PVF: it doesn't override the PVF pitch, it becomes the alternative.
+  const before = new FakeClose({ calls: [roddaCall()] });
+  const oldWords = "Hi Renee, this is Walt with Westgate Supply. We supply threaded rod, anchors and beam clamps for commercial electrical work.";
+  before.notes = (async () => [{ id: "acti_said_old", note: `[Said on the call] ${oldWords}`, date_created: "2026-09-23T21:30:00Z" }]) as never;
+  const b2 = (await leadBrief(deps(before), DEMO_LEAD_ID, { refresh: true })).brief;
+  assert.match(b2.opener, /pipe, valves, fittings and flanges/);
+  assert.equal(b2.alt_opener, oldWords);
+  // Once the PVF opener has been said, it stays: same words every call.
+  const after = new FakeClose({ calls: [roddaCall()] });
+  const pvfWords = "Hi Renee, this is Walt with Westgate Supply. We supply pipe, valves and fittings for your plant work.";
+  after.notes = (async () => [{ id: "acti_said_new", note: `[Said on the call] ${pvfWords}`, date_created: "2026-10-05T21:30:00Z" }]) as never;
+  assert.equal((await leadBrief(deps(after), DEMO_LEAD_ID, { refresh: true })).brief.opener, pvfWords);
+
+  // A clear PVF buyer has no alternative, and a card cached before this change reads as a PVF buyer.
+  const ctx = { facts: { vendor: false } } as never;
+  const yes = enforceBriefRules({ ...r.brief, pvf_fit: "yes" }, ctx);
+  assert.equal(yes.alt_opener, null);
+  assert.deepEqual(yes.alt_buys, []);
+  const { pvf_fit: _f, pvf_reason: _r, alt_opener: _o, alt_buys: _b, ...old } = r.brief;
+  const cached = enforceBriefRules(old as never, ctx);
+  assert.equal(cached.pvf_fit, "yes");
+  assert.equal(cached.alt_opener, null);
 });
 
 test("the call card counts the rep's own finished calls to this lead, all time", async () => {

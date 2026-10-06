@@ -14,14 +14,24 @@ export const BriefSchema = z.object({
     name: z.string().describe("First name (or full name) of the purchasing person to ask for; 'Purchasing' if unknown"),
     role: z.string().nullable().describe("Under 10 words, e.g. 'covering purchasing for Rob Roy (back Oct 12)'"),
   }),
-  opener: z.string().describe("2 short spoken sentences: who we are, then 3–4 specific products from `buys` in one run and what work they're for (\"Hi, this is Walt with Westgate Supply. We supply pipe, fittings, hardware and fasteners for commercial plumbing work.\"). No \"[crews] use for\" clauses. Follow-ups too: pick up from the last conversation and still name the products."),
+  opener: z.string().describe("The PVF pitch. 2 short spoken sentences: who we are, then 3–4 specific PVF products from `buys` in one run and what work they're for (\"Hi, this is Walt with Westgate Supply. We supply pipe, valves, fittings and flanges for commercial plumbing work.\"). When pvf_fit isn't yes, leave off the \"for [their work]\" tie rather than force it. No \"[crews] use for\" clauses. Follow-ups too: pick up from the last conversation and still name the products."),
   ask: z.string().describe("1–2 spoken sentences: the ask for a list or RFQ, any format"),
   objection: z.string().describe("The most likely pushback, a few words, e.g. 'We already have a supplier'"),
   objection_response: z.string().describe("1–2 spoken sentences"),
-  buys: z.array(z.string()).describe("3–7 things they'd buy from Westgate, 2–4 words each, most likely first. Only products inside the 12 product lines in §2 of the Email & Product Knowledge Playbook (e.g. U-bolts, beam clamps, threaded rod, stud bolts, flanges, gaskets, pipe fittings, plate). Never strut or strut channel, tools, electrical, or anything the lines don't list."),
+  buys: z.array(z.string()).describe("3–7 things they'd buy from Westgate, 2–4 words each, PVF first: the pipe, valves, fittings, flanges, gaskets, stud bolts and pipe supports that fit their work. Valves are allowed; otherwise only products inside the 12 product lines in §2 of the Email & Product Knowledge Playbook. Never strut or strut channel, tools, electrical, or anything the lines don't list."),
+  pvf_fit: z.enum(["yes", "likely_not", "no"]).describe("Do they work with piping (pipe, valves, fittings)? yes: they build, install, run or maintain piping. likely_not: piping is a small or uncertain part of their work. no: nothing touches piping."),
+  pvf_reason: z.string().describe("Why that pvf_fit, under 12 words, e.g. 'Electrical contractor: conduit and supports, no process piping.'"),
+  alt_opener: z.string().nullable().describe("Only when pvf_fit is likely_not or no: the pitch for their own trade, 2 short spoken sentences, who we are then 3–4 products from alt_buys in one run and what work they're for (\"Hi, this is Walt with Westgate Supply. We supply threaded rod, anchors, beam clamps and HDG hardware for commercial electrical work.\"). null when pvf_fit is yes."),
+  alt_buys: z.array(z.string()).describe("Only when pvf_fit is likely_not or no: 3–7 products for their own trade from the persona table, 2–4 words each, inside the 12 product lines. Empty when pvf_fit is yes."),
   heads_ups: z.array(z.string()).describe("0–3 short lines the rep would miss in Close; never time of day"),
   what_they_do: z.string().describe("2 short sentences, specific, from their website"),
   capture: z.array(z.string()).describe("2–3 short things to get before hanging up, e.g. \"Renee's direct email\""),
+  // A made-up childhood memory at a real local event (Walt 10/5): told for fun, disclosed as made up on the call.
+  hometown: z.object({
+    event: z.string().describe("A real, well-known recurring event in or near their city: a festival, fair, parade, race, rodeo, air show, or the home team's game (e.g. 'Three Rivers Festival, Fort Wayne', 'Brentwood CornFest', 'Houston Livestock Show and Rodeo'). Must actually exist. If nothing specific is known for that town, use the county fair or the nearest big city's event and say which."),
+    opener: z.string().describe("One spoken sentence that says up front the story is invented and asks if they want to hear it, e.g. 'Quick one before we start: I've got a made-up childhood memory about Fort Wayne, want it?' Must say it's made up."),
+    story: z.string().describe("3 short spoken sentences, first person, the rep as a kid (age 6 to 10) at that real event: ordinary, believable details a local would nod at (the heat, the line for the funnel cake, what they could see from a parent's shoulders), one small vivid moment, no magic, no celebrities, nothing that could be checked and found false about the event itself. e.g. 'My dad took me to the Three Rivers Festival when I was seven and we sat on the bank for the raft race. Somebody's raft came apart right in front of us and the whole crowd cheered them on anyway. I thought that was the greatest thing I had ever seen.'"),
+  }).nullable().describe("null when the location isn't known."),
 });
 export type Brief = z.infer<typeof BriefSchema>;
 

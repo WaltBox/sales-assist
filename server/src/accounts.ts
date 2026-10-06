@@ -7,6 +7,8 @@ import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { realAttachments, theirFiles } from "./stats.js";
+import { warmthFor, type Warmth } from "./warmth.js";
+import { loadProfiles, potentialFor, siteFromEmail, type Potential, type Profile } from "./potential.js";
 
 // The accounts page (Walt 9/26): one row per account we've sent the line card
 // to: where it stands, everything that's happened since, and what to do next.
@@ -21,7 +23,7 @@ const DAY = 24 * 3600 * 1000;
  * days (a Friday email isn't followed up on Monday as if three days had passed). A business week by default;
  * an account in the follow-up test uses its own cadence (3, 5 or 7 business days) instead.
  */
-export const BUMP_AFTER_BUSINESS_DAYS = 5;
+export const BUMP_AFTER_BUSINESS_DAYS = 2; // Walt 10/5: every two business days is the standard now
 /** Not opened by a person after this many business days: rescue it (call, send it again while they're on the phone). */
 export const RESCUE_AFTER_DAYS = 2; // never the day right after a touch (Walt 9/30)
 /** Business days after a quote goes out, or after the last email to someone who promised an RFQ, before asking again. */
@@ -173,6 +175,18 @@ export type Account = {
   staleTaskIds?: string[];
   /** Every touch so far (Walt 9/29: "how many times I've called, how many times we've talked"). */
   touches: { dials: number; talked: number; voicemails: number; noAnswer: number; emailsOut: number; emailsIn: number; firstTouch: string | null; lastTalk: string | null };
+  /** How warm they are before an RFQ (Walt 10/5): scored from opens, replies, repeat talks, an RFQ promise; fades when quiet. */
+  warmth: Warmth;
+  /**
+   * Due for an automatic email (Walt 10/5, "every two business days is the standard"): they have the line card
+   * (opened, replied, confirmed, or maybe), no RFQ in, nothing of theirs waiting on an answer, and it's been the
+   * cadence since the last email. A callback on the books doesn't stop it: the call and the email are different touches.
+   */
+  bumpDue: boolean;
+  /** Their site, from Close or the buyer's email domain. */
+  website: string | null;
+  /** How much PVF buying they do at all (Walt 10/5), read from their site; null until it's been read. */
+  potential: Potential | null;
   events: Event[];
 };
 
@@ -258,6 +272,10 @@ type Email = LeadEmail & { lead_id: string; user_id?: string; attachments?: Arra
 const leadCache = new Map<string, { at: number; lead: CloseLead | null }>();
 const boardCache = new Map<string, { at: number; value: Board }>();
 type Board = { accounts: Account[]; counts: Record<NextKind, number> };
+/** Forget the rep's board so the next read rebuilds it (after a profile read, a rep's answer). */
+export function bustBoard(d: Deps) {
+  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+}
 
 const addr = (s: string | null | undefined) => (s ?? "").match(/<([^>]+)>/)?.[1] ?? (s ?? "").trim();
 const personName = (s: string | null | undefined) => (s ?? "").match(/^\s*"?([^"<]+?)"?\s*</)?.[1] ?? null;
@@ -300,7 +318,7 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
   const ours = (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();
-  const [all, notes, tasks, calls, autos, drafts, autoOn, arms] = await Promise.all([
+  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles] = await Promise.all([
     d.close.listSince<Email>("email", {
       since: new Date(since.getTime() - 14 * DAY).toISOString(), max: 5000,
       fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,opens,to,sender,attachments,thread_id,contact_id",
@@ -313,6 +331,7 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
     store.getSetting<boolean>(d.rep.closeUserId, "autoBumps").then((v) => v === true).catch(() => false),
     // The follow-up test (10/2): the account's own gap between automatic emails, once it's been dealt one.
     store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
+    loadProfiles(d.rep.closeUserId),
   ]);
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
   const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId && at(e) >= since.toISOString()
@@ -347,6 +366,7 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
     rescueDraft: drafts[leadId] ?? null,
     autoOn,
     gap: arms[leadId] ?? null,
+    profile: profiles[leadId] ?? null,
     bounceBodies,
   }));
   // Not Interested, Bad Fit, Disqualified in Close (by hand, or Shot down in the side panel): off the board and
@@ -380,6 +400,8 @@ export function buildAccount(x: {
   autoOn?: boolean;
   /** Business days between this account's automatic emails (its cadence in the follow-up test), if it has one. */
   gap?: number | null;
+  /** What their website says they do (RFQ potential), if it's been read. */
+  profile?: Profile | null;
 }): Account {
   const { d, now, card, lead } = x;
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
@@ -539,8 +561,12 @@ export function buildAccount(x: {
     status: lead?.status_label ?? null,
     touches: tally,
     staleTaskIds: staleTasks.map((t) => t.id).filter((id): id is string => !!id),
-  } as Omit<Account, "section">;
-  return { ...acct, section: sectionOf(acct) };
+    bumpDue: !rfq && !bounce && !["not_opened", "bounced"].includes(seen) && !(lastIn && lastIn >= lastOut) && !!toAddr
+      && businessDaysBetween(new Date(lastOut), now, tz) >= (x.gap && x.gap > 0 ? x.gap : BUMP_AFTER_BUSINESS_DAYS),
+    website: lead?.url || siteFromEmail(toAddr),
+    potential: potentialFor(x.profile),
+  } as Omit<Account, "section" | "warmth">;
+  return { ...acct, warmth: warmthFor(acct, now), section: sectionOf(acct) };
 }
 
 /** What to do next, with the calls in mind: a scheduled check-in means hold, not bump. */

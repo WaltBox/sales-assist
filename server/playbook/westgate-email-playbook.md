@@ -64,6 +64,8 @@ Hot-dip galvanized, zinc plating, yellow zinc dichromate, mechanical galvanizing
 
 Pick the 4–7 items that match what *this* lead builds. Be specific to their work; never dump the whole line card into an email.
 
+**PVF first (founder, 10/5).** Lead with pipe, valves and fittings, then the flanges, gaskets, stud bolts and pipe supports that fit their work, for every lead that builds, installs, runs or maintains piping. Name valves with pipe and fittings; they aren't on the printed line card, so never state valve types, brands or specs ("send the list over and we'll price it"). For a lead that clearly doesn't work with piping (an electrical contractor, a structural steel shop), use the table below for their trade as before. What they told us on a call always wins over both.
+
 | Lead type | Lead with | Also mention |
 |---|---|---|
 | **Structural steel fabricator** (beams, buildings, platforms) | Beam, channel, angle, HSS, plate with mill certs; A325/A490 bolts, heavy hex nuts, F436 washers, anchor bolts, threaded rod, HDG hardware | Grating, handrail pipe, nameplates |
@@ -75,7 +77,7 @@ Pick the 4–7 items that match what *this* lead builds. Be specific to their wo
 | **Mining / heavy equipment** | AR400 plate, Gr 8 / 10.9 / 12.9 bolting, 4140 bar, U-bolts | Belleville washers, custom machining |
 | **Subsea / offshore / energy operator supplier** | Duplex / super duplex / Inconel fasteners, cadmium & Xylan coatings to operator spec, A320 L7 low-temp | Titanium, Monel, RTJ gaskets |
 
-If the lead's industry isn't in the table, infer from their website and describe the closest 4–7 items. If unsure what they buy, say "steel, bolting, gaskets, flanges, fittings" and invite the full BOM.
+If the lead's industry isn't in the table, infer from their website and describe the closest 4–7 items. If unsure what they buy, say "pipe, valves, fittings, flanges and the bolting that goes with them" and invite the full BOM.
 
 ---
 

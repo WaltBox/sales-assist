@@ -12,16 +12,16 @@ import { clearPick, listMemes, memeFor, memesSeen, type Meme } from "./memes.js"
 // Shortly before each send, the server checks again: if they replied, sent a file, or bounced,
 // the email is pulled back to a draft.
 
-export const DAILY_CAP = 15;
+export const DAILY_CAP = 150; // Walt 10/5: the whole wave goes, not 15 a day
 /**
- * The follow-up test (Walt 10/2): each account is dealt a cadence at random with its first automatic email and
- * keeps it. It's the number of business days (Walt 10/5) until that account's next one; the board reads it.
+ * The cadence, in business days between an account's automatic emails. It was a 3/5/7 test (Walt 10/2); since
+ * 10/5 it's two for everyone (the stored arms from the test were cleared). Kept as a list so a new test is one edit.
  */
-export const CADENCE_ARMS = [3, 5, 7] as const;
+export const CADENCE_ARMS = [2] as const;
 /** How far back the rails look for an earlier automatic email: longer than the longest cadence. */
 const RAIL_LOOKBACK_DAYS = 15;
 /** After this many automatic bumps an account stops getting them: it comes back as a call. */
-export const MAX_BUMPS = 3;
+export const MAX_BUMPS = 6; // Walt 10/5: at two days apart, six is about three weeks
 
 /** The account's cadence arm, dealt once at random and kept. */
 export async function armFor(d: Deps, leadId: string, arms?: Record<string, number>): Promise<number> {
@@ -166,7 +166,8 @@ async function planDay(d: Deps, now: Date) {
   const held = await heldAccounts(d);
   // Anyone who's sent an RFQ is past the line card stage: out of automatic emails for good (Walt 9/28).
   const arms = (await store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").catch(() => null)) ?? {};
-  const { keep: due, dropped } = dedupeDue(board.accounts.filter((a) => a.next.kind === "bump" && !a.rfq && !held.has(a.leadId)), recent, { now, tz: d.rep.timeZone, arms });
+  // Due: the board says bump, or the cadence says so even though a callback is on the books (Walt 10/5).
+  const { keep: due, dropped } = dedupeDue(board.accounts.filter((a) => (a.next.kind === "bump" || a.bumpDue) && !a.rfq && !held.has(a.leadId)), recent, { now, tz: d.rep.timeZone, arms });
   const planned: Automation[] = [];
   const skipped: Array<{ company: string; why: string }> = [...dropped];
   // Memes (9/30): one per bump, never one the company has already had.
@@ -184,7 +185,13 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` });
       continue;
     }
-    const base = { repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const, label: a.next.label, reason: a.next.detail, createdAt: now.toISOString(), checkedAt: null };
+    const onCadence = a.next.kind !== "bump";
+    const base = {
+      repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
+      label: onCadence ? `Get a first RFQ from ${a.contact.name?.split(/\s+/)[0] || a.company}` : a.next.label,
+      reason: onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
+      createdAt: now.toISOString(), checkedAt: null,
+    };
     try {
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
       const r = await writeFollowUp(d, a.leadId, { schedule: { stagger: i * 6 }, template: { meme, nth } });

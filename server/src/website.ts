@@ -88,6 +88,50 @@ async function fetchHtml(start: URL, signal: AbortSignal): Promise<string | null
   return null;
 }
 
+// ---------- the pages that say what a company does (RFQ potential, 10/5) ----------
+
+const PAGE_WORDS = /about|capabilit|service|product|what-we-do|industries|fabricat|quality|certif/i;
+const SKIP_WORDS = /contact|career|job|news|blog|login|privacy|terms|cart|\.(pdf|jpg|png|zip)$/i;
+const PAGE_CHARS = 4000;
+
+/** Links on the homepage worth reading for what they do: same site, about/capabilities/products, at most `max`. */
+export function pickPages(html: string, base: URL, max = 3): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+    let u: URL;
+    try { u = new URL(m[1].split(/[#?]/)[0], base); } catch { continue; }
+    if (u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+    const path = u.pathname.replace(/\/+$/, "");
+    if (!path || !PAGE_WORDS.test(path) || SKIP_WORDS.test(path)) continue;
+    const href = `${u.origin}${path}`;
+    if (!out.includes(href)) out.push(href);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** The homepage plus a few pages that describe the company, as text. [] when the site won't load. */
+export async function fetchSitePages(rawUrl: string | null | undefined): Promise<Array<{ url: string; text: string }>> {
+  if (!rawUrl) return [];
+  let url: URL;
+  try { url = new URL(rawUrl.includes("://") ? rawUrl : `https://${rawUrl}`); } catch { return []; }
+  const pages: Array<{ url: string; text: string }> = [];
+  try {
+    const signal = AbortSignal.timeout(BUDGET_MS * 3);
+    const home = await fetchHtml(url, signal);
+    if (!home) return [];
+    pages.push({ url: url.href, text: htmlToText(home).slice(0, PAGE_CHARS) });
+    const more = await Promise.all(pickPages(home, url).map(async (href) => {
+      const html = await fetchHtml(new URL(href), signal).catch(() => null);
+      return html ? { url: href, text: htmlToText(html).slice(0, PAGE_CHARS) } : null;
+    }));
+    for (const pg of more) if (pg && pg.text.length > 200) pages.push(pg);
+  } catch {
+    // a slow site gives us what we got
+  }
+  return pages;
+}
+
 /** Addresses on their homepage and contact page, their own domain first. Never throws; [] when the site won't load. */
 export async function siteEmails(rawUrl: string | null | undefined): Promise<string[]> {
   if (!rawUrl) return [];

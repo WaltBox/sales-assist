@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { accountsBoard } from "../src/accounts.js";
 import type { Deps } from "../src/assistant.js";
-import { automationsView, dedupeDue, dropRescueDraft, MAX_BUMPS, morningRun, planBumps, sendBumpsNow, setAutomations, skipAutomation, stopScheduledFor, syncAutomations } from "../src/automations.js";
+import { automationsView, CADENCE_ARMS, dedupeDue, dropRescueDraft, MAX_BUMPS, morningRun, planBumps, sendBumpsNow, setAutomations, skipAutomation, stopScheduledFor, syncAutomations } from "../src/automations.js";
 import { demoLineCards, demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID, DEMO_USER_ID, roddaCall } from "../src/fixtures.js";
 import { sendSlot } from "../src/followup.js";
@@ -190,8 +190,8 @@ test("safety rails (10/2): one bump per account and per address, and never a sec
   assert.deepEqual(dropped.map((x) => x.why), [
     "Listed twice today; one bump is enough.",
     "Listed twice today; one bump is enough.", // same inbox on a second account, same day
-    "Already got an automatic email in the last 5 business days.",
-    "buyer@shared.test already got an automatic email on another account in the last 5 business days.",
+    "Already got an automatic email in the last 2 business days.",
+    "buyer@shared.test already got an automatic email on another account in the last 2 business days.",
   ]);
 });
 
@@ -210,12 +210,13 @@ test("safety rails (10/5): the gap is the account's own cadence in business days
   const arms = { lead_three: 3, lead_five: 5, lead_queued: 3 };
   // Monday: one business day later. Nobody.
   assert.deepEqual(dedupeDue(due, recent, { now: new Date("2026-10-05T14:03:00Z"), tz, arms }).keep, []);
-  // Wednesday, the 7am run: the 3-day account goes. The old 7-calendar-day rule dropped it.
+  // Tuesday: the standard two business days (10/5). The account with no cadence of its own goes.
+  assert.deepEqual(dedupeDue(due, recent, { now: new Date("2026-10-06T14:03:00Z"), tz, arms }).keep.map((a) => a.leadId), ["lead_none"]);
+  // Wednesday, the 7am run: the 3-day account goes too. The old 7-calendar-day rule dropped it.
   const wed = dedupeDue(due, recent, { now: new Date("2026-10-07T14:03:00Z"), tz, arms });
-  assert.deepEqual(wed.keep.map((a) => a.leadId), ["lead_three"]);
+  assert.deepEqual(wed.keep.map((a) => a.leadId), ["lead_three", "lead_none"]);
   assert.deepEqual(wed.dropped.map((x) => x.why), [
     "Already got an automatic email in the last 5 business days.",
-    "Already got an automatic email in the last 5 business days.", // no cadence yet: a business week
     "Already has an automatic email scheduled.",
   ]);
   // Friday at 7am: a business week after a 9:20am send. By date, not 24-hour blocks.
@@ -300,7 +301,7 @@ test("send now (10/2): out in minutes, staggered, with the copy, a meme, and the
   const [row] = r.planned;
   assert.equal(row.variant, "friday");
   assert.equal(row.meme, "forklift.jpg");
-  assert.ok([3, 5, 7].includes(row.arm!), `dealt a cadence arm: ${row.arm}`);
+  assert.ok((CADENCE_ARMS as readonly number[]).includes(row.arm!), `dealt a cadence arm: ${row.arm}`);
   const at = new Date(row.scheduledFor!).getTime() - new Date("2026-10-02T17:00:00Z").getTime();
   assert.ok(at >= 2 * 60_000 && at <= 3 * 60_000, `goes in about two minutes, not 9am tomorrow: ${row.scheduledFor}`);
   const email = close.writes.filter((w) => w.op === "email").pop()!.body as { body: string; html: string | null; scheduleAt: string };
@@ -313,11 +314,11 @@ test("send now (10/2): out in minutes, staggered, with the copy, a meme, and the
   assert.equal((await store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms"))![crest.leadId], row.arm);
 });
 
-test("the cap (10/2): after three automatic bumps an account comes back as a call, not a fourth email", async () => {
+test("the cap (10/2): after the last allowed automatic bump an account comes back as a call, not another email", async () => {
   const { d } = setup("user_cap");
   const crest = (await accountsBoard(d, { fresh: true })).accounts.find((a) => a.company === "Crest Mechanical")!;
   for (let i = 0; i < MAX_BUMPS; i++) {
-    await store.putAutomation({ id: `acti_prev_${i}`, repId: d.rep.closeUserId, leadId: crest.leadId, company: crest.company, to: crest.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (30 - i * 7) * 86400e3).toISOString(), status: "sent", statusAt: null, note: null, checkedAt: null });
+    await store.putAutomation({ id: `acti_prev_${i}`, repId: d.rep.closeUserId, leadId: crest.leadId, company: crest.company, to: crest.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (30 - i * 4) * 86400e3).toISOString(), status: "sent", statusAt: null, note: null, checkedAt: null });
   }
   const r = await sendBumpsNow(d, { leadIds: [crest.leadId], variant: "friday", memes: [] });
   assert.equal(r.planned.length, 0);

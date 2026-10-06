@@ -132,10 +132,13 @@ async function loadBrief(st, refresh = false) {
   if (!st.brief) st.phase = "loading";
   render();
   try {
-    const [r, rescue] = await Promise.all([
+    const [r, rescue, purch] = await Promise.all([
       api(`/api/leads/${st.leadId}/brief${refresh ? "?refresh=1" : ""}`),
       api(`/api/leads/${st.leadId}/rescue`).catch(() => ({ draft: null })),
+      api(`/api/leads/${st.leadId}/purchasing`).catch(() => null),
     ]);
+    // The purchasing cycle as heard so far, and the one question to ask next (Walt 10/5).
+    if (purch) st.purch = { ...purch, edit: null, busy: false, saved: false };
     // Their line card was never opened: the rescue email is drafted, ready to send once they pick up.
     if (!st.rescue || !st.rescue.sent) st.rescue = rescue.draft ? { draft: rescue.draft } : null;
     st.header = r.header;
@@ -834,7 +837,7 @@ async function loadLineCard(st) {
   const b = st.brief || {};
   st.lc = { ...(st.lc || {}), loading: true };
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
+    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys });
     const first = r.name && !/main|office|purchasing/i.test(r.name) ? r.name : "";
     st.lc = { ...st.lc, loading: false, preview: r, to: st.lc.to || r.to, name: st.lc.name ?? first };
   } catch (e) {
@@ -849,7 +852,7 @@ async function sendLineCardNow(st) {
   st.lc.error = null;
   render();
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: b.buys || [] });
+    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys });
     st.lc.sent = r;
     watchBounce(st, r);
   } catch (e) {
@@ -1398,17 +1401,27 @@ function renderPre() {
     page.append(el("section", { class: "plain afterfollow" }, [el("p", { class: "label", text: "Or a custom follow-up" }), followUpBlock(st.leadId, true)]));
   }
 
+  const pitch = activePitch(st);
   page.append(el("section", { class: "hero" }, [
-    el("p", { class: "label", text: "Opener" }),
-    el("p", { class: "opener" }, highlightSupplies(b.opener, b.buys)),
+    el("p", { class: "label", text: hasAltPitch(b) ? (pitch.alt ? "Opener · their trade" : "Opener · PVF") : "Opener" }),
+    el("p", { class: "opener" }, highlightSupplies(pitch.opener, pitch.buys)),
   ]));
+  const flag = pvfFlag(st);
+  if (flag) page.append(flag);
+  if (b.hometown) page.append(el("section", { class: "plain script hometown" }, [
+    el("div", { class: "block" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]),
+  ]));
+  if (st.purch && st.purch.ask) page.append(el("section", { class: "plain script asknext" }, [
+    el("div", { class: "block" }, [el("p", { class: "label", text: "Ask next · purchasing cycle" }), el("p", { class: "say", text: st.purch.ask.question })]),
+  ]));
+  if (st.purch) page.append(purchasingCard(st));
 
   if (b.ask || b.objection) page.append(el("section", { class: "plain script" }, [
     b.ask ? el("div", { class: "block" }, [el("p", { class: "label", text: "The ask" }), el("p", { class: "say", text: b.ask })]) : null,
     b.objection ? el("div", { class: "block" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { class: "say", text: b.objection_response })]) : null,
   ]));
 
-  if (b.buys && b.buys.length) page.append(el("section", { class: "plain tagsec" }, [el("p", { class: "label", text: "What they'd buy from us" }), el("ul", { class: "tags" }, b.buys.map((x) => el("li", { text: x })))]));
+  if (pitch.buys.length) page.append(el("section", { class: "plain tagsec" }, [el("p", { class: "label", text: "What they'd buy from us" }), el("ul", { class: "tags" }, pitch.buys.map((x) => el("li", { text: x })))]));
   if (b.heads_ups && b.heads_ups.length) page.append(el("section", { class: "heads" }, [el("p", { class: "label", text: "Heads-ups" }), el("ul", {}, b.heads_ups.map((x) => el("li", { text: x })))]));
   if (b.what_they_do) page.append(el("section", { class: "plain what" }, [el("p", { class: "label", text: "What they do" }), el("p", { text: b.what_they_do })]));
   page.append(el("div", { class: "linkrow" }, [
@@ -1445,6 +1458,33 @@ function followUpScript(st) {
   };
 }
 
+// PVF first (Walt 10/5): the card leads with the PVF pitch (pipe, valves, fittings). When the company likely doesn't
+// buy PVF the card says so, and the pitch for their own trade (the one from before) is one tap away. The pitch in
+// use drives the Say box, the product tags and what the line card email names.
+const hasAltPitch = (b) => !!(b && b.alt_opener && b.pvf_fit && b.pvf_fit !== "yes");
+function activePitch(st) {
+  const b = st.brief || {};
+  return hasAltPitch(b) && st.pitch === "alt" ? { opener: b.alt_opener, buys: b.alt_buys || [], alt: true } : { opener: b.opener, buys: b.buys || [], alt: false };
+}
+function pvfFlag(st) {
+  const b = st.brief || {};
+  if (!hasAltPitch(b)) return null;
+  const alt = st.pitch === "alt";
+  const other = alt ? { opener: b.opener, buys: b.buys || [] } : { opener: b.alt_opener, buys: b.alt_buys || [] };
+  return el("section", { class: "pvfflag" }, [
+    el("p", { class: "label", text: b.pvf_fit === "no" ? "Doesn't work with PVF" : "Likely doesn't work with PVF" }),
+    b.pvf_reason ? el("p", { class: "pvfwhy", text: b.pvf_reason }) : null,
+    el("p", { class: "label pvfsub", text: alt ? "The PVF pitch" : "If they don't run pipe, pitch this" }),
+    el("p", { class: "pvfalt" }, highlightSupplies(pitchOnly(other.opener), other.buys)),
+    other.buys.length ? el("ul", { class: "tags" }, other.buys.map((x) => el("li", { text: x }))) : null,
+    el("button", { class: "btn small", text: alt ? "Back to the PVF pitch" : "Use this pitch", onclick: () => {
+      st.pitch = alt ? "pvf" : "alt";
+      if (st.lc && !st.lc.sent) loadLineCard(st); // the line card email names the products from the pitch in use
+      render();
+    } }),
+  ]);
+}
+
 /** Just the "what we supply" part of the opener, for the reference box: no greeting, no "we talked yesterday". */
 function pitchOnly(opener) {
   const sentences = opener.split(/(?<=[.!?])\s+/);
@@ -1464,8 +1504,9 @@ function renderOnCall() {
   const ask = b.ask_for || { name: "Purchasing", role: null };
   const elapsed = st.callStartedAt ? (Date.now() - new Date(st.callStartedAt).getTime()) / 1000 : 0;
   const fu = followUpScript(st);
+  const pitch = activePitch(st);
   // What the Say box shows goes to Close as a note, once per call (Walt 10/1).
-  const said = fu ? fu.say : b.opener;
+  const said = fu ? fu.say : pitch.opener;
   if (said && st.callId && st.saidFor !== st.callId) {
     st.saidFor = st.callId;
     api(`/api/leads/${st.leadId}/said`, { text: said, call_id: st.callId }).catch(() => { st.saidFor = null; });
@@ -1492,9 +1533,13 @@ function renderOnCall() {
           el("span", { text: c }),
         ])),
       ]) : null,
-      b.opener ? el("div", { class: fu ? "ifask" : "" }, [el("p", { class: "label", text: fu ? "If they ask what we supply" : "Say" }), el("p", { class: fu ? "say2x" : "say" }, highlightSupplies(fu ? pitchOnly(b.opener) : b.opener, b.buys))]) : null,
-      b.buys && b.buys.length ? el("div", { class: "namethese" }, [el("p", { class: "label", text: "Name these" }), el("ul", { class: "tags" }, b.buys.map((x) => el("li", { text: x })))]) : null,
+      pitch.opener ? el("div", { class: fu ? "ifask" : "" }, [el("p", { class: "label", text: fu ? "If they ask what we supply" : "Say" }), el("p", { class: fu ? "say2x" : "say" }, highlightSupplies(fu ? pitchOnly(pitch.opener) : pitch.opener, pitch.buys))]) : null,
+      pitch.buys.length ? el("div", { class: "namethese" }, [el("p", { class: "label", text: "Name these" }), el("ul", { class: "tags" }, pitch.buys.map((x) => el("li", { text: x })))]) : null,
+      b.hometown ? el("div", { class: "hometown" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]) : null,
+      pvfFlag(st),
       b.ask ? el("div", {}, [el("p", { class: "label", text: "Ask" }), el("p", { class: "ask", text: b.ask })]) : null,
+      // The purchasing cycle (Walt 10/5): the one question this account still needs answered.
+      st.purch && st.purch.ask ? el("div", { class: "asknext" }, [el("p", { class: "label", text: "Ask next · purchasing cycle" }), el("p", { class: "ask", text: st.purch.ask.question })]) : null,
       b.objection ? el("div", { class: "box" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { text: b.objection_response })]) : null,
       b.capture && b.capture.length ? el("div", { class: "checks" }, [
         el("p", { class: "label", text: "Before you hang up" }),
@@ -1800,6 +1845,7 @@ function renderItem() {
     ]) : null,
     it.state === "saved" ? null : el("div", { class: "qhead" }, [el("p", { class: "label", text: "Proposed for Close" }), el("span", { class: "muted", text: `${countProps(p)} items` })]),
     it.state === "saved" ? null : reviewList(p, iv.off, iv.open, fromStatus),
+    purchasingReview(it, iv),
     it.coaching && (it.coaching.nice || it.coaching.next) ? el("section", { class: "coach" }, [
       el("p", { class: "label", text: "Coaching" }),
       el("p", {}, [it.coaching.nice ? el("strong", { text: "Nice: " }) : null, it.coaching.nice || "", it.coaching.next ? el("strong", { text: " Next time: " }) : null, it.coaching.next || ""]),
@@ -1814,6 +1860,86 @@ function renderItem() {
   out.push(page);
   if (it.state !== "saved") out.push(chatBar(iv.chat, iv.chatBusy, 'Change anything: "make the follow-up Thursday at 9"'));
   return out;
+}
+
+// ---------- purchasing cycle (Walt 10/5) ----------
+// What the buyer said about how they buy: RFQ volume, when, vendor list, how to get on it, who they buy through.
+// Read from the transcript after each connected call, confirmed or fixed here, written to Close as a [Purchasing] note.
+const PURCH_FIELDS = [
+  ["rfq_volume", "RFQs per week", "~15/week, 2-3/month"], ["rfq_timing", "When they send them", "Mondays, when a job is awarded"],
+  ["buying_mode", "Buying mode", "project / ongoing / both"], ["vendor_policy", "Vendors", "open bid / preferred list / single source / contract elsewhere"],
+  ["how_to_get_on_list", "How to get on the list", "vendor form, W-9 + cert"], ["works_through", "They buy through", "owner direct / GC / sub / PM"],
+  ["buyer_count", "Buyers on the team", "2"], ["incumbent", "Who they buy from now", "McJunkin"], ["cycle_notes", "Their cycle, in their words", ""],
+];
+const PURCH_TIER = { steady: "Steady", project: "Project", occasional: "Occasional", unknown: "Unknown" };
+
+/** The editable list: each field as an input, the buyer's words under it when we have them. */
+function purchasingFields(heard, edit, quotes) {
+  return el("div", { class: "purch-fields" }, PURCH_FIELDS.map(([k, label, hint]) => {
+    const h = heard && heard[k];
+    const q = (quotes && quotes[k]) || (h && h.quote);
+    return el("label", { class: "purch-f" }, [
+      el("span", { class: "label" }, [label, h && !h.confirmed ? el("em", { class: "muted", text: " · heard, not confirmed" }) : null]),
+      el("input", { value: edit[k] != null ? edit[k] : (h ? h.value : ""), placeholder: hint, oninput: (e) => { edit[k] = e.target.value; } }),
+      q ? el("span", { class: "muted quote", text: `“${q}”` }) : null,
+    ]);
+  }));
+}
+
+async function savePurchasing(leadId, edit, quotes, after) {
+  const answers = {};
+  for (const [k] of PURCH_FIELDS) if (edit[k] != null) answers[k] = edit[k];
+  const r = await api(`/api/leads/${leadId}/purchasing`, { answers, quotes: quotes || {} });
+  if (S && S.leadId === leadId && S.purch) S.purch = { ...S.purch, heard: r.heard, ask: r.ask, tier: r.tier, edit: null, busy: false, saved: true };
+  if (after) after(r);
+}
+
+function purchasingCard(st) {
+  const pc = st.purch;
+  const heard = pc.heard || {};
+  const known = PURCH_FIELDS.filter(([k]) => heard[k]);
+  const open = !!pc.edit;
+  return el("section", { class: "card purch" }, [
+    el("div", { class: "row", style: "align-items:baseline;gap:8px" }, [
+      el("p", { class: "label grow", text: `Purchasing cycle · ${PURCH_TIER[pc.tier] || "Unknown"}` }),
+      el("button", { class: "link", text: open ? "Cancel" : known.length ? "Edit" : "Add what you know", onclick: () => { pc.edit = open ? null : {}; pc.saved = false; render(); } }),
+    ]),
+    !open && known.length ? el("ul", { class: "purch-known" }, known.map(([k, label]) => el("li", {}, [
+      el("strong", { text: `${label}: ` }), heard[k].value, heard[k].confirmed ? null : el("em", { class: "muted", text: " · heard, not confirmed" }),
+    ]))) : null,
+    !open && !known.length ? el("p", { class: "muted", style: "margin-top:6px", text: "Nothing yet. It fills in from your call transcripts; the question above is the one to ask." }) : null,
+    open ? purchasingFields(heard, pc.edit, null) : null,
+    open ? el("div", { class: "row", style: "margin-top:8px" }, [
+      el("button", { class: "btn primary small", disabled: pc.busy, text: pc.busy ? "Saving…" : "Save to Close", onclick: async () => {
+        pc.busy = true; render();
+        try { await savePurchasing(st.leadId, pc.edit, null); } catch (e) { pc.busy = false; st.error = e.message; render(); }
+      } }),
+    ]) : null,
+    pc.saved && !open ? el("p", { class: "muted", style: "margin-top:6px", text: "Saved as a [Purchasing] note in Close." }) : null,
+  ]);
+}
+
+/** On the post-call card: what the transcript said about their purchasing, for a one-tap confirm or a fix. */
+function purchasingReview(it, iv) {
+  const got = it.purchasing && Object.keys(it.purchasing).length ? it.purchasing : null;
+  if (!got || iv.purchDone) return got && iv.purchDone ? el("section", { class: "card purch" }, [el("p", { class: "label", text: "Purchasing cycle" }), el("p", { class: "muted", style: "margin-top:6px", text: "Confirmed and saved as a [Purchasing] note in Close." })]) : null;
+  if (!iv.purchEdit) iv.purchEdit = {};
+  const quotes = {};
+  for (const k of Object.keys(got)) quotes[k] = got[k].quote;
+  return el("section", { class: "card purch" }, [
+    el("p", { class: "label", text: "Purchasing cycle · from the call" }),
+    el("p", { class: "muted", style: "margin-top:4px;font-size:12.5px", text: "What they said about how they buy. Fix anything that's off, then confirm; it goes on the lead in Close." }),
+    purchasingFields(got, iv.purchEdit, quotes),
+    el("div", { class: "row", style: "margin-top:8px" }, [
+      el("button", { class: "btn primary small", disabled: iv.purchBusy, text: iv.purchBusy ? "Saving…" : "Confirm", onclick: async () => {
+        iv.purchBusy = true; render();
+        const edit = {};
+        for (const [k] of PURCH_FIELDS) edit[k] = iv.purchEdit[k] != null ? iv.purchEdit[k] : (got[k] ? got[k].value : "");
+        try { await savePurchasing(it.leadId, edit, quotes); iv.purchDone = true; } catch (e) { iv.error = e.message; }
+        iv.purchBusy = false; render();
+      } }),
+    ]),
+  ]);
 }
 
 function renderDraft() {

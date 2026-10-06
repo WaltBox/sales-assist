@@ -14,13 +14,20 @@ const state = {
   mailTab: "upcoming", mailOpen: {}, mailBusy: false,
   page: pageFromHash(),
   rfqEdit: {}, // leadId -> { stage, note, busy, error }
+  heatPick: null, // leadId whose breakdown is open on the heat map
+  heatOnly: null, // a bucket to show alone on the heat map, or null for all
+  heatCard: null, // line-card filter on the heat map: "opened" | "landed" | "bounced" | null
+  heatPot: null, // RFQ-potential filter on the heat map: "steady" | "project" | "occasional" | "unknown" | null
+  potBusy: false, // reading sites / saving an answer
+  potOpen: {}, // leadId -> the "why" behind the potential is open in the drawer
+  lib: null, // the meme library: { memes, busy, msg, rename: { name, value } }
   period: (() => { try { return localStorage.getItem("westgate.period") || "today"; } catch { return "today"; } })(),
   periods: {}, // period -> stats (loaded when picked)
   drill: null, // the stat whose rows are showing, e.g. "dials"
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : "accounts"; }
+function pageFromHash() { return location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -80,7 +87,8 @@ function render() {
   const err = state.error ? el("p", { class: "empty", text: `Couldn't load everything: ${state.error}` }) : null;
   $app.replaceChildren(topBar(), el("main", {}, state.page === "emails" ? [err, emailsSection()]
     : state.page === "rfqs" ? [err, rfqsPage()]
-      : [hello(), err, accountsSection()]));
+      : state.page === "heat" ? [err, heatPage()]
+        : [hello(), err, accountsSection()]));
 }
 
 // Sign in with your @westgatesupply.com email. First time: create a password
@@ -153,11 +161,12 @@ function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
   return el("header", { class: "top" }, el("div", { class: "in" }, [
     el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), "Westgate", el("span", { class: "sub", text: "Assistant" })]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["rfqs", "RFQs"], ["emails", "Automatic emails"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", onclick: () => go(k),
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
       k === "rfqs" && state.board ? el("span", { class: "navc mono", text: state.board.accounts.filter((a) => a.rfq).length }) : null,
+      k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => !a.rfq && a.warmth && a.warmth.bucket === "hot").length }) : null,
     ]))),
     el("div", { class: "who" }, [
       line ? el("button", {
@@ -426,6 +435,248 @@ function rfqNote(all) {
   return n ? el("p", { class: "rfqnote" }, [`${n} account${n === 1 ? " has" : "s have"} sent an RFQ and ${n === 1 ? "is" : "are"} off this list. `, el("a", { href: "#rfqs", text: "See where they stand →", onclick: (e) => { e.preventDefault(); go("rfqs"); } })]) : null;
 }
 
+// ---------- heat map ----------
+// Every account without an RFQ as a tile, hottest first, coloured by how close they are to sending one.
+// Click a tile for the points behind it. The score comes from Close (opens, replies, repeat talks, promises) and fades when quiet.
+const HEAT = {
+  hot: ["Hot", "Opened, wrote back, picked up again. Call these first."],
+  warm: ["Warm", "Real conversations or repeat opens. One more touch could turn into an RFQ."],
+  cool: ["Cool", "One talk and a name. The email cadence is doing the work here."],
+  cold: ["Cold", "Nothing beyond the intro call, bounced, or gone quiet for weeks."],
+};
+
+// Where the line card stands: a person opened it, it landed but nobody's opened it, or it never arrived.
+const CARD = {
+  opened: ["Opened", "A person opened the line card."],
+  landed: ["Not opened", "Delivered, but no person has opened it yet (a spam filter may have)."],
+  bounced: ["Bounced", "It never arrived: bounced or blocked. They haven't received the line card."],
+};
+function cardState(a) { return a.seen === "bounced" ? "bounced" : (a.seen === "opened" || a.seen === "replied" || a.seen === "confirmed") ? "opened" : "landed"; }
+function cardText(a) {
+  const o = a.opens, st = cardState(a);
+  return st === "bounced" ? `Bounced: they never got it`
+    : st === "opened" ? `Opened ${o.person}×${o.app ? ` in ${o.app}` : ""}${o.last ? `, last ${shortDate(o.last)}` : a.seen === "replied" ? " (they replied)" : a.seen === "confirmed" ? " (they said so on a call)" : ""}`
+      : o.filter ? `Landed, not opened (only a spam filter touched it)` : o.maybe ? `Landed, maybe opened` : `Landed, not opened yet`;
+}
+
+// RFQ potential: how much PVF buying they do at all, read from their site. Steady accounts are worth more calls at any warmth.
+const POT = {
+  steady: ["Steady", "Quotes job by job and shops every RFQ: fab shops and contractors doing pressure or alloy work."],
+  project: ["Project", "Buys on contract day to day, floods RFQs during projects and turnarounds: plants, utilities, EPCs."],
+  occasional: ["Occasional", "Nothing on their site says they buy much PVF."],
+  unknown: ["Unknown", "Their site hasn't been read yet, or doesn't say. Ask on the call."],
+};
+const POT_RANK = { steady: 0, project: 1, occasional: 2, unknown: 3 };
+const potTier = (a) => (a.potential && a.potential.tier) || "unknown";
+
+function heatRows() {
+  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
+  // Hottest first; inside a warmth band, the accounts worth the most come first.
+  const rows = all.slice().sort((a, b) => b.warmth.bucket === a.warmth.bucket
+    ? (POT_RANK[potTier(a)] - POT_RANK[potTier(b)] || b.warmth.score - a.warmth.score || a.company.localeCompare(b.company))
+    : b.warmth.score - a.warmth.score);
+  return rows.filter((a) => (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot));
+}
+
+async function readSites(leadIds) {
+  state.potBusy = true; render();
+  try { await api("/api/potential/refresh", leadIds ? { lead_ids: leadIds } : {}); await load(true); }
+  catch (e) { state.error = e.message; }
+  state.potBusy = false; render();
+}
+
+async function sayPotential(a, said) {
+  state.potBusy = true; render();
+  try {
+    const { potential } = await api(`/api/potential/${a.leadId}`, { said });
+    a.potential = potential;
+  } catch (e) { state.error = e.message; }
+  state.potBusy = false; render();
+}
+
+function heatPage() {
+  const rows = heatRows();
+  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
+  const by = { hot: [], warm: [], cool: [], cold: [] };
+  for (const a of rows) by[a.warmth.bucket].push(a);
+  const pick = state.heatPick && rows.find((a) => a.leadId === state.heatPick);
+  const buckets = state.heatOnly ? [state.heatOnly] : ["hot", "warm", "cool", "cold"];
+  // Tile shade: within a bucket, the score sets how deep the colour goes.
+  const shade = (a) => Math.max(0.35, Math.min(1, (a.warmth.score + 3) / 15));
+  return el("section", { class: `heat${pick ? " drawer-open" : ""}` }, [
+    el("div", { class: "head pagehead" }, [
+      el("h1", { class: "ptitle", text: "Heat map" }),
+      el("span", { class: "muted small3", text: `${all.filter((a) => cardState(a) !== "bounced").length} got the line card and haven't sent an RFQ yet` }),
+    ]),
+    el("div", { class: "heatsum" }, ["hot", "warm", "cool", "cold"].map((k) => el("button", {
+      class: `heatk w-${k}${state.heatOnly === k ? " on" : ""}`, title: HEAT[k][1],
+      onclick: () => { state.heatOnly = state.heatOnly === k ? null : k; state.heatPick = null; render(); },
+    }, [el("b", { class: "mono", text: all.filter((a) => a.warmth.bucket === k).length }), el("span", { text: HEAT[k][0] })]))),
+    el("div", { class: "heatcard" }, [
+      el("span", { class: "label", text: "Line card" }),
+      ...["opened", "landed", "bounced"].map((k) => el("button", {
+        class: `cardk c-${k}${state.heatCard === k ? " on" : ""}`, title: CARD[k][1],
+        onclick: () => { state.heatCard = state.heatCard === k ? null : k; state.heatPick = null; render(); },
+      }, [el("i", { "aria-hidden": "true" }), el("b", { class: "mono", text: all.filter((a) => cardState(a) === k).length }), CARD[k][0]])),
+    ]),
+    el("div", { class: "heatcard" }, [
+      el("span", { class: "label", text: "RFQ potential" }),
+      ...["steady", "project", "occasional", "unknown"].map((k) => el("button", {
+        class: `cardk p-${k}${state.heatPot === k ? " on" : ""}`, title: POT[k][1],
+        onclick: () => { state.heatPot = state.heatPot === k ? null : k; state.heatPick = null; render(); },
+      }, [el("b", { class: "mono", text: all.filter((a) => potTier(a) === k).length }), POT[k][0]])),
+      all.some((a) => !a.potential) ? el("button", { class: "linkbtn", disabled: state.potBusy, text: state.potBusy ? "Reading their sites…" : `Read ${all.filter((a) => !a.potential).length} sites now`, onclick: () => readSites(null) }) : null,
+    ]),
+    !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" }) : null,
+    el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up." }),
+    ...buckets.map((k) => el("div", { class: `heatband w-${k}` }, [
+      el("div", { class: "heatlbl" }, [el("span", { class: "label", text: HEAT[k][0] }), el("span", { class: "mono muted", text: by[k].length }), el("span", { class: "muted small3 why", text: HEAT[k][1] })]),
+      by[k].length ? el("div", { class: "tiles" }, by[k].map((a) => el("button", {
+        class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}`,
+        style: `--heat:${shade(a).toFixed(2)}`,
+        title: `${a.company} · ${a.warmth.score} · ${POT[potTier(a)][0]}\nLine card sent ${shortDate(a.cardSentAt)}: ${cardText(a)}`,
+        onclick: () => { state.heatPick = a.leadId; render(); },
+      }, [
+        el("span", { class: "co", text: a.company }),
+        el("span", { class: `card c-${cardState(a)}` }, [el("i", { "aria-hidden": "true" }), `sent ${shortDate(a.cardSentAt)}`]),
+        el("span", { class: "foot" }, [
+          el("span", { class: "sc mono", text: a.warmth.score }),
+          potTier(a) !== "unknown" ? el("span", { class: "tier", text: POT[potTier(a)][0] }) : null,
+          a.warmth.lastSignal ? el("span", { class: "ago", text: `${daysAgo(a.warmth.lastSignal)}d` }) : null,
+        ]),
+      ]))) : el("p", { class: "empty small3", text: "Nobody here." }),
+    ])),
+    pick ? heatDrawer(pick, rows) : null,
+  ]);
+}
+
+// Where it stands, in plain words: what we sent, what they did, what you did, what they said, how long it's been quiet, what's next.
+function storyFor(a) {
+  const c = a.contact, who = (c.name || "").split(/\s+/)[0] || "they";
+  const ev = a.events.slice().sort((x, y) => x.at.localeCompare(y.at));
+  const out = [];
+  const st = cardState(a);
+  out.push(`Line card went to ${c.name || c.email || "them"} on ${shortDate(a.cardSentAt)}${st === "bounced" ? ", and it bounced: they never got it" : st === "landed" ? ", not opened by a person yet" : a.opens.person ? `, opened ${a.opens.person}×${a.opens.app ? ` in ${a.opens.app}` : ""}` : ""}.`);
+  const replies = ev.filter((e) => e.kind === "reply");
+  if (replies.length) out.push(`${who} wrote back ${replies.length === 1 ? `on ${shortDate(replies[replies.length - 1].at)}` : `${replies.length}×, last ${shortDate(replies[replies.length - 1].at)}`}.`);
+  const t = a.touches;
+  if (t) {
+    const talks = t.talked ? `talked ${t.talked}× (last ${t.lastTalk ? shortDate(t.lastTalk) : "–"})` : null;
+    const tries = !t.talked && t.dials ? `called ${t.dials}×, nobody picked up` : t.dials > t.talked ? `${t.dials} calls in all` : null;
+    const mails = t.emailsOut > 1 ? `${t.emailsOut} emails sent` : null;
+    const bits = [talks, tries, mails].filter(Boolean);
+    if (bits.length) out.push(`You've ${bits.join(", ")}.`);
+  }
+  if (a.rfqPromised) out.push(`${who} promised an RFQ.`);
+  const heard = a.potential && a.potential.profile.heard;
+  if (heard && Object.keys(heard).length) {
+    const h = [];
+    if (heard.rfq_volume) h.push(`${heard.rfq_volume.value} RFQs`);
+    if (heard.vendor_policy) h.push(heard.vendor_policy.value);
+    if (heard.incumbent) h.push(`buys from ${heard.incumbent.value}`);
+    if (h.length) out.push(`On the phone: ${h.join(", ")}.`);
+  }
+  // Our own tagged notes ([RFQ potential], [Purchasing]) aren't news; the rep's call notes are.
+  const note = ev.filter((e) => e.kind === "note" && !/^\[(RFQ potential|Purchasing|RFQ status)\]/.test(e.text)).pop();
+  if (note) out.push(`Last note (${shortDate(note.at)}): ${note.text.replace(/^\d+\/\d+:\s*/, "").slice(0, 140)}${note.text.length > 140 ? "…" : ""}`);
+  if (a.rfq) out.push(`RFQ in on ${shortDate(a.rfq.at)}${a.rfq.quotedAt ? `, quoted ${shortDate(a.rfq.quotedAt)}` : ", not quoted yet"}.`);
+  const quiet = a.warmth.lastSignal ? daysAgo(a.warmth.lastSignal) : daysAgo(a.cardSentAt);
+  if (quiet >= 5) out.push(`Nothing from them in ${quiet} days.`);
+  return out;
+}
+
+// The drawer on the right: one lead at a time, Previous / Next walk the map in order (← → on the keyboard too).
+function heatDrawer(a, rows) {
+  const i = rows.findIndex((r) => r.leadId === a.leadId);
+  const w = a.warmth, c = a.contact;
+  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); } };
+  const close = () => { state.heatPick = null; render(); };
+  return el("aside", { class: `drawer w-${w.bucket}`, role: "dialog", "aria-label": a.company }, [
+    el("div", { class: "dr-top" }, [
+      el("span", { class: "mono muted", text: `${i + 1} of ${rows.length}` }),
+      el("button", { class: "linkbtn", text: "Close", onclick: close }),
+    ]),
+    el("span", { class: `warmth w-${w.bucket} big` }, [el("i", { "aria-hidden": "true" }), `${HEAT[w.bucket][0]} · ${w.score}`]),
+    el("a", { class: "dr-co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
+    el("div", { class: "sub2 dr-who", text: [c.name, c.email].filter(Boolean).join(" · ") }),
+    c.phone ? el("a", { class: "mono tel dr-tel", href: `tel:${c.phone}`, text: prettyPhone(c.phone) }) : null,
+    el("div", { class: "dr-story" }, [
+      el("div", { class: "label", text: "Where it stands" }),
+      el("p", {}, storyFor(a).join(" ")),
+      el("p", { class: "dr-do" }, [el("span", { class: `next ${a.next.kind}` }, [el("span", { class: "label", text: a.next.tag }), " ", a.next.label])]),
+    ]),
+    el("div", { class: `dr-card c-${cardState(a)}` }, [
+      el("span", { class: "label", text: "Line card" }),
+      el("span", { class: "card" }, [el("i", { "aria-hidden": "true" }), `Sent ${shortDate(a.cardSentAt)} (${daysAgo(a.cardSentAt)}d ago)`]),
+      el("span", { class: "sub2", text: cardText(a) }),
+    ]),
+    el("p", { class: "sub2", text: a.next.detail }),
+    potentialBlock(a),
+    el("div", { class: "label dr-h", text: `Why ${HEAT[w.bucket][0].toLowerCase()} · ${w.score} points` }),
+    el("ul", { class: "hp-why" }, w.why.map((t) => el("li", { class: t.startsWith("-") ? "bad" : t.startsWith("fades") ? "fade" : "", text: t }))),
+    el("p", { class: "sub2", text: w.lastSignal ? `Last sign of life ${shortDate(w.lastSignal)} (${daysAgo(w.lastSignal)}d ago)` : "No sign of life since the line card" }),
+    touchStrip(a),
+    el("div", { class: "label dr-h", text: "Recent" }),
+    el("ol", { class: "timeline dr-ev" }, a.events.slice(0, 6).map((e) => el("li", { class: `ev ${e.kind}` }, [
+      el("span", { class: "ic", "aria-hidden": "true", text: EVENT_ICON[e.kind] || "•" }),
+      el("span", { class: "when mono", text: shortDate(e.at) }),
+      el("span", { class: "what", text: e.text }),
+    ]))),
+    el("div", { class: "dr-nav" }, [
+      el("button", { class: "btn", text: "← Previous", disabled: i <= 0, onclick: () => goTo(i - 1) }),
+      el("a", { class: "btn", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: "Open in Close" }),
+      el("button", { class: "btn primary", text: "Next lead →", disabled: i >= rows.length - 1, onclick: () => goTo(i + 1) }),
+    ]),
+  ]);
+}
+// What they buy: the tier, the facts behind it (each from a page on their site), what's still unknown, and the
+// one question that settles it after a call.
+function potentialBlock(a) {
+  const p = a.potential;
+  const tier = potTier(a);
+  const said = p && p.profile.repSaid;
+  const pr = p && p.profile;
+  const ask = [["weekly", "Weekly"], ["monthly", "Monthly"], ["projects", "Projects only"], ["contract-elsewhere", "On contract elsewhere"]];
+  // One line: what they are, in a few words. Everything behind it is under "why".
+  const heard = pr && pr.heard && Object.keys(pr.heard).length ? `${Object.keys(pr.heard).length} answer${Object.keys(pr.heard).length === 1 ? "" : "s"} from calls` : null;
+  const gist = !p ? (state.potBusy ? "Reading their site…" : "Site not read yet")
+    : heard ? heard
+      : pr.type !== "unknown" ? `${pr.type.charAt(0).toUpperCase() + pr.type.slice(1)}${pr.specs.length ? ` · ${pr.specs.slice(0, 2).join(", ")}` : pr.makes ? ` · ${pr.makes.split(/[,.;]/)[0].slice(0, 40)}` : ""}`
+        : pr.problem ? "Couldn't read their site" : "Site doesn't say what they do";
+  const open = !!state.potOpen[a.leadId];
+  return el("div", { class: `dr-pot p-${tier}` }, [
+    el("div", { class: "dr-pot-head" }, [
+      el("span", { class: "label", text: "RFQ potential" }),
+      el("span", { class: `tierchip p-${tier}`, text: POT[tier][0] }),
+      el("span", { class: "gist", text: gist }),
+      p ? el("button", { class: "linkbtn small3", text: open ? "hide" : "why?", onclick: () => { state.potOpen[a.leadId] = !open; render(); } }) : null,
+    ]),
+    open && p ? el("div", { class: "dr-pot-why" }, [
+      el("ul", { class: "hp-why pot" }, p.why.map((t) => el("li", { text: t }))),
+      p.unknown ? el("p", { class: "sub2 unknown", text: p.unknown }) : null,
+      pr.evidence.length ? el("ul", { class: "evid" }, pr.evidence.map((e) => el("li", {}, [
+        e.fact, " ", el("a", { href: e.source, target: "_blank", rel: "noopener", class: "src", text: `${new URL(e.source).pathname.replace(/\/$/, "") || "home"} · ${shortDate(e.at)}` }),
+      ]))) : null,
+      pr.website ? el("a", { class: "sub2", href: pr.website, target: "_blank", rel: "noopener", text: pr.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") }) : null,
+      !pr.checkedAt || pr.problem ? el("button", { class: "linkbtn small3", disabled: state.potBusy, text: "Read their site", onclick: () => readSites([a.leadId]) }) : null,
+    ]) : null,
+    el("div", { class: "askrow" }, [
+      el("span", { class: "sub2", text: "RFQs:" }),
+      ...ask.map(([k, label]) => el("button", { class: `btn small${said === k ? " primary" : ""}`, disabled: state.potBusy, text: label, onclick: () => sayPotential(a, said === k ? null : k) })),
+    ]),
+  ]);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (state.page !== "heat" || !state.heatPick || /INPUT|TEXTAREA/.test(document.activeElement?.tagName || "")) return;
+  const rows = heatRows(), i = rows.findIndex((r) => r.leadId === state.heatPick);
+  if (e.key === "ArrowRight" && rows[i + 1]) { state.heatPick = rows[i + 1].leadId; render(); }
+  else if (e.key === "ArrowLeft" && rows[i - 1]) { state.heatPick = rows[i - 1].leadId; render(); }
+  else if (e.key === "Escape") { state.heatPick = null; render(); }
+  else return;
+  document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" });
+});
+
 function rfqsPage() {
   const all = (state.board && state.board.accounts) || [];
   // Waiting on you first, then Westgate, then the buyer, then done; oldest first inside each.
@@ -493,6 +744,14 @@ function seenPill(a) {
   return el("span", { class: `seen ${cls}${hot ? " hot" : ""}`, title }, [el("i", { "aria-hidden": "true" }), `${text}${a.seen === "opened" && o.person ? ` ${o.person}×` : ""}`]);
 }
 
+// Warmth: how close they are to sending an RFQ, scored from opens, replies, repeat talks and promises. Hover for the why.
+function warmthChip(a) {
+  const w = a.warmth;
+  if (!w || a.rfq) return null;
+  const label = { hot: "Hot", warm: "Warm", cool: "Cool", cold: "Cold" }[w.bucket];
+  return el("span", { class: `warmth w-${w.bucket}`, title: `${label} (${w.score})\n${w.why.join("\n")}` }, [el("i", { "aria-hidden": "true" }), label]);
+}
+
 function accountRow(a) {
   const open = !!state.open[a.leadId];
   const fu = state.followUps[a.leadId];
@@ -503,7 +762,7 @@ function accountRow(a) {
   const row = el("div", { class: `gr k-${a.next.kind}${open ? " open" : ""}`, onclick: toggle }, [
     el("div", { class: "acct" }, [
       el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company, onclick: (e) => e.stopPropagation() }),
-      el("span", { class: "sub2", text: c.name || c.email || "" }),
+      el("span", { class: "sub2" }, [warmthChip(a), c.name || c.email || ""]),
     ]),
     c.phone ? el("a", { class: "mono tel", href: `tel:${c.phone}`, text: prettyPhone(c.phone), onclick: (e) => e.stopPropagation() }) : el("span", { class: "muted", text: "–" }),
     el("span", {}, seenPill(a)),
@@ -638,6 +897,137 @@ async function reloadAutos() {
   render();
 }
 
+// ---------- the meme library (Walt 10/5): upload a file or a zip, rename, retire ----------
+async function loadLibrary() {
+  state.lib = { ...(state.lib || {}), busy: true };
+  try { const r = await api("/api/memes"); state.lib = { memes: r.memes, busy: false, msg: state.lib.msg || null, rename: null }; }
+  catch (e) { state.lib = { memes: [], busy: false, msg: e.message, rename: null }; }
+  render();
+}
+
+// Picked files land in a staging list first: a zip is unpacked right here, each image gets a preview, a name you
+// can change, and a Remove. Nothing reaches the bucket until "Upload these".
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp)$/i;
+const cleanStem = (n) => n.replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+const extOf = (n) => (n.match(/\.([a-z0-9]+)$/i) || [, "jpg"])[1].toLowerCase();
+
+async function stageMemeFiles(files) {
+  const lib = state.lib;
+  lib.staged = lib.staged || [];
+  lib.msg = null;
+  for (const f of files) {
+    if (/\.zip$/i.test(f.name)) {
+      let entries;
+      try { entries = fflate.unzipSync(new Uint8Array(await f.arrayBuffer())); } catch { lib.msg = `${f.name} couldn't be opened as a zip.`; continue; }
+      for (const [entry, data] of Object.entries(entries)) {
+        const base = entry.split("/").pop() || "";
+        if (!base || base.startsWith(".") || entry.includes("__MACOSX") || !IMAGE_EXT.test(base) || !data.length) continue;
+        lib.staged.push({ id: Math.random().toString(36).slice(2), stem: cleanStem(base), ext: extOf(base), blob: new Blob([data]), url: null, size: data.length });
+      }
+    } else if (IMAGE_EXT.test(f.name)) {
+      lib.staged.push({ id: Math.random().toString(36).slice(2), stem: cleanStem(f.name), ext: extOf(f.name), blob: f, url: null, size: f.size });
+    } else {
+      lib.msg = `${f.name}: not an image or a zip.`;
+    }
+  }
+  for (const st of lib.staged) if (!st.url) st.url = URL.createObjectURL(st.blob);
+  render();
+}
+
+async function uploadStaged() {
+  const lib = state.lib;
+  const files = lib.staged.filter((st) => st.stem);
+  lib.busy = true; lib.msg = `Uploading ${files.length}…`; render();
+  const added = [];
+  try {
+    for (const st of files) {
+      const name = `${st.stem}.${st.ext}`;
+      const res = await fetch(`/api/memes/upload?name=${encodeURIComponent(name)}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" }, body: st.blob });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(`${name}: ${data.error || `Error ${res.status}`}`);
+      added.push(...data.added);
+    }
+    for (const st of lib.staged) URL.revokeObjectURL(st.url);
+    lib.staged = [];
+    lib.msg = `Added ${added.length}: ${added.join(", ")}`;
+  } catch (e) { lib.msg = e.message; }
+  await loadLibrary();
+}
+
+function stagingArea(lib) {
+  const staged = lib.staged || [];
+  if (!staged.length) return null;
+  const dupes = new Set(staged.map((st) => `${st.stem}.${st.ext}`).filter((n, i, all) => all.indexOf(n) !== i));
+  const taken = new Set(lib.memes.map((m) => m.name));
+  return el("div", { class: "staging" }, [
+    el("div", { class: "head" }, [
+      el("h3", { text: `Ready to upload · ${staged.length}` }),
+      el("div", { class: "row" }, [
+        el("button", { class: "btn small", text: "Clear", onclick: () => { for (const st of staged) URL.revokeObjectURL(st.url); lib.staged = []; render(); } }),
+        el("button", { class: "btn small primary", disabled: lib.busy || !staged.length || dupes.size > 0, text: lib.busy ? "Uploading…" : `Upload ${staged.length}`, onclick: uploadStaged }),
+      ]),
+    ]),
+    el("p", { class: "muted small3", text: "Name each one (this is what you'll see when picking a meme), remove the ones you don't want, then upload." }),
+    dupes.size ? el("p", { class: "small3 libmsg", text: `Two have the same name: ${[...dupes].join(", ")}. Change one.` }) : null,
+    el("div", { class: "memegrid lib" }, staged.map((st) => el("div", { class: `memecard${dupes.has(`${st.stem}.${st.ext}`) ? " dupe" : ""}` }, [
+      el("img", { src: st.url, alt: st.stem }),
+      el("input", { class: "rename", value: st.stem, placeholder: "name", oninput: (e) => { st.stem = cleanStem(e.target.value + ".x"); }, onblur: () => render() }),
+      el("div", { class: "meta" }, [
+        el("span", { class: "mono muted", text: `${taken.has(`${st.stem}.${st.ext}`) ? "replaces · " : ""}${(st.size / 1024).toFixed(0)} KB${st.size > 5 * 1024 * 1024 ? " · too big" : ""}` }),
+        el("button", { class: "linkbtn small3", text: "Remove", onclick: () => { URL.revokeObjectURL(st.url); lib.staged = staged.filter((x) => x !== st); render(); } }),
+      ]),
+    ]))),
+  ]);
+}
+
+function memeLibrary() {
+  if (!state.lib) { state.lib = { memes: [], busy: true, msg: null, rename: null }; loadLibrary(); }
+  const lib = state.lib;
+  const pick = () => {
+    const input = el("input", { type: "file", accept: ".zip,image/*", multiple: true, style: "display:none", onchange: (e) => { if (e.target.files.length) stageMemeFiles([...e.target.files]); } });
+    document.body.append(input); input.click(); setTimeout(() => input.remove(), 60000);
+  };
+  const stem = (n) => n.replace(/\.[a-z0-9]+$/i, "");
+  const commitRename = async (m) => {
+    const to = (lib.rename.value || "").trim();
+    lib.rename = null;
+    if (!to || to === stem(m.name)) return render();
+    lib.busy = true; render();
+    try { const r = await api("/api/memes/rename", { from: m.name, to }); lib.msg = `Renamed to ${r.name}`; } catch (e) { lib.msg = e.message; }
+    await loadLibrary();
+  };
+  const retire = async (m) => {
+    if (!confirm(`Retire ${m.name}? It leaves the rotation; what's already been sent stays on record.`)) return;
+    lib.busy = true; render();
+    try { await api("/api/memes/delete", { name: m.name }); lib.msg = `Retired ${m.name}`; } catch (e) { lib.msg = e.message; }
+    await loadLibrary();
+  };
+  return el("section", { class: "library", ondragover: (e) => { e.preventDefault(); e.currentTarget.classList.add("over"); }, ondragleave: (e) => e.currentTarget.classList.remove("over"),
+    ondrop: (e) => { e.preventDefault(); e.currentTarget.classList.remove("over"); if (e.dataTransfer.files.length) stageMemeFiles([...e.dataTransfer.files]); } }, [
+    el("div", { class: "head" }, [
+      el("h2", { text: `Memes · ${lib.memes.length}` }),
+      el("button", { class: "btn small", disabled: lib.busy, text: lib.busy ? "Working…" : "Add images or a zip", onclick: pick }),
+    ]),
+    stagingArea(lib),
+    el("p", { class: "muted small3", text: "One per bump, never the same one twice to a company. Drop files here, or a zip and it unpacks. Click a name to rename it (everything that remembers the old name follows). Keep them under 5 MB." }),
+    lib.msg ? el("p", { class: "small3 libmsg", text: lib.msg }) : null,
+    !lib.memes.length && !lib.busy ? el("p", { class: "empty", text: "No memes yet. Upload a zip to start." }) : el("div", { class: "memegrid lib" }, lib.memes.map((m) => el("div", { class: "memecard" }, [
+      el("img", { src: m.url, alt: m.name, loading: "lazy" }),
+      lib.rename && lib.rename.name === m.name
+        ? el("input", { class: "rename", value: lib.rename.value, autofocus: true, oninput: (e) => { lib.rename.value = e.target.value; },
+          onkeydown: (e) => { if (e.key === "Enter") commitRename(m); if (e.key === "Escape") { lib.rename = null; render(); } }, onblur: () => commitRename(m) })
+        : el("button", { class: "name", title: "Rename", text: stem(m.name), onclick: () => { lib.rename = { name: m.name, value: stem(m.name) }; render(); } }),
+      el("div", { class: "meta" }, [
+        el("span", { class: "mono muted", text: m.sent ? `sent to ${m.sent}` : "not sent yet" }),
+        el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
+      ]),
+      m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks" }, [
+        ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq],
+      ].map(([k, v]) => el("span", { class: v ? "good" : "" }, [el("b", { class: "mono", text: `${Math.round((v / m.stats.sent) * 100)}%` }), ` ${k}`]))) : null,
+    ]))),
+  ]);
+}
+
 function emailsSection() {
   const au = state.autos;
   const toggle = async () => {
@@ -693,6 +1083,7 @@ function emailsSection() {
           el("div", { class: "gr mgr gh" }, ["When", "Account", "To", "Why", "Status", ""].map((h) => el("span", { class: "label", text: h }))),
           ...rows.flatMap(mailRow),
         ]),
+    memeLibrary(),
   ]);
 }
 

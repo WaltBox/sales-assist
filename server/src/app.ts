@@ -8,6 +8,8 @@ import {
 } from "./assistant.js";
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
+import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshProfiles } from "./potential.js";
+import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
@@ -16,9 +18,9 @@ import {
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { listMemes, MemeError, memesSeen, pickMeme } from "./memes.js";
+import { deleteMeme, listMemes, memeCounts, MemeError, memesSeen, memeStats, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { accountsBoard, advanceStatus, ensureRescueDrafts, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
@@ -49,8 +51,11 @@ export function createApp(appDeps: AppDeps) {
     app.use("/preview", express.static(path.resolve(ROOT, "..", "extension")));
   }
 
+  // fflate's browser build, for unpacking a zip of memes in the page before anything is uploaded.
+  app.get("/vendor/fflate.js", (_req, res) => res.sendFile(path.resolve(ROOT, "node_modules", "fflate", "umd", "index.js")));
   // The web app (the morning view); the side panel is the other half.
-  app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html" }));
+  // Always revalidate the web app's files: a stale app.js or app.css after a deploy is worse than one extra round trip.
+  app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html", setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") }));
 
   // What's configured (never the values): the first thing to check on a new deploy.
   app.get("/api/health", (_req, res) => {
@@ -238,7 +243,24 @@ export function createApp(appDeps: AppDeps) {
     const board = await accountsBoard(d, { days: Math.min(Number(req.query.days) || 45, 120), fresh: req.query.fresh === "1" });
     // Rescue emails missing a draft get one in the background; the next refresh shows "Draft ready in Close".
     if (board.accounts.some((a) => a.next.rescue && !a.rescueDraft)) background(ensureRescueDrafts(d), "rescue drafts");
+    // Accounts whose site hasn't been read yet get read in the background, a few per refresh (RFQ potential, 10/5).
+    if (!config.demo && board.accounts.some((a) => !a.potential)) background(refreshProfiles(d, board.accounts, { max: 12 }).then(() => bustBoard(d)), "rfq potential");
     return board;
+  }));
+  // RFQ potential: read every account's site now (or one account's again), and the rep's own answer after a call.
+  app.post("/api/potential/refresh", authed, route(async (req, d) => {
+    const board = await accountsBoard(d);
+    const ids = Array.isArray(req.body?.lead_ids) ? new Set<string>(req.body.lead_ids) : null;
+    const n = await refreshProfiles(d, ids ? board.accounts.filter((a) => ids.has(a.leadId)) : board.accounts, { max: Number(req.body?.max) || 300, force: !!ids || req.body?.force === true });
+    bustBoard(d);
+    return { read: n };
+  }));
+  app.post("/api/potential/:leadId", authed, route(async (req, d) => {
+    const said = req.body?.said ?? null;
+    if (said !== null && !["weekly", "monthly", "projects", "contract-elsewhere"].includes(said)) throw new BadRequest("said must be weekly, monthly, projects, contract-elsewhere or null");
+    const potential = await recordRepSaid(d, String(req.params.leadId), said);
+    bustBoard(d);
+    return { potential };
   }));
   // The rescue call: the email is drafted in Close ahead of time; afterwards, the rep marks whether they found it.
   // Automatic emails: what's going out today and why, what went out, what was skipped or stopped.
@@ -258,8 +280,18 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/memes", authed, route(async (req, d) => {
     const memes = await listMemes();
     const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
-    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name) })), folder: "server/memes" };
+    const counts = await memeCounts(d);
+    const stats = await accountsBoard(d).then((b) => memeStats(d, b.accounts)).catch(() => ({} as MemeStats));
+    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name] ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes" };
   }));
+  // The meme library (Walt 10/5): upload an image or a zip of them, rename (every record follows), retire.
+  app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req) => {
+    const filename = typeof req.query.name === "string" ? req.query.name : "upload.zip";
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw new BadRequest("Send the file as the request body.");
+    return { added: await uploadMemes(filename, req.body) };
+  }));
+  app.post("/api/memes/rename", authed, route(async (req, d) => ({ name: await renameMeme(d.rep.closeUserId, z.string().min(1).max(200).parse(req.body?.from), z.string().min(1).max(200).parse(req.body?.to)) })));
+  app.post("/api/memes/delete", authed, route(async (req) => { await deleteMeme(z.string().min(1).max(200).parse(req.body?.name)); return { ok: true }; }));
   app.post("/api/automations/meme", authed, route((req, d) => pickMeme(d, z.string().min(3).max(100).parse(req.body?.lead_id), req.body?.meme === null ? null : z.string().min(1).max(200).parse(req.body?.meme))));
   app.post("/api/automations/:id/skip", authed, route((req, d) => skipAutomation(d, z.string().min(3).max(100).parse(req.params.id))));
   // "Send line card now": the email is ready on the call screen; it goes out while they're on the phone.
@@ -289,6 +321,28 @@ export function createApp(appDeps: AppDeps) {
   // The call screen's "Say" text, as a note in Close, once per call (Walt 10/1).
   app.post("/api/leads/:leadId/said", authed, route((req, d) => saveSaid(d, leadId(req), z.string().min(5).max(1000).parse(req.body?.text), typeof req.body?.call_id === "string" ? req.body.call_id.slice(0, 100) : null)));
   // "RFQ came in" (another inbox, a call, a text): an [RFQ received] note in Close (Mitchell Concrete, 9/29).
+  // The purchasing cycle (Walt 10/5): what's been heard on calls, the one question to ask next, and the rep's confirmed answers.
+  app.get("/api/leads/:leadId/purchasing", authed, route(async (req, d) => {
+    const id = leadId(req);
+    const potential = potentialFor((await loadProfiles(d.rep.closeUserId))[id]);
+    return { heard: potential?.profile.heard ?? null, ask: potential?.ask ?? askNext(null), tier: potential?.tier ?? "unknown" };
+  }));
+  app.post("/api/leads/:leadId/purchasing", authed, route(async (req, d) => {
+    const id = leadId(req);
+    const given: Partial<Record<Field, string | null>> = {}, quotes: Partial<Record<Field, string | null>> = {};
+    for (const f of FIELDS) {
+      const v = req.body?.answers?.[f];
+      if (v === undefined) continue;
+      if (v !== null && typeof v !== "string") throw new BadRequest(`${f} must be a string`);
+      given[f] = v === null ? null : v.slice(0, 300);
+      const q = req.body?.quotes?.[f];
+      if (typeof q === "string") quotes[f] = q.slice(0, 300);
+    }
+    const prev = (await loadProfiles(d.rep.closeUserId))[id]?.heard ?? null;
+    const potential = await recordPurchasing(d, id, confirmAnswers(prev, given, quotes, (d.now?.() ?? new Date()).toISOString()), { note: true, replace: true });
+    bustBoard(d);
+    return { heard: potential.profile.heard, ask: potential.ask, tier: potential.tier };
+  }));
   app.post("/api/leads/:leadId/rfq-received", authed, route((req, d) => markRfqReceived(d, leadId(req), typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null)));
   // Where an RFQ stands, set by the rep ("With pricing · Berni has it"): a [RFQ status] note in Close.
   // "Shot down" from the side panel (Walt 10/5): Not Interested in Close, callbacks cleared, and out of the
@@ -418,6 +472,9 @@ export function createApp(appDeps: AppDeps) {
         await morningRun(d).catch((err) => console.error(`morning run ${rep.email}:`, (err as Error).message));
         await ensureRescueDrafts(d).catch((err) => console.error(`rescue drafts ${rep.email}:`, (err as Error).message));
         await syncAutomations(d).catch((err) => console.error(`sync ${rep.email}:`, (err as Error).message));
+        // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
+        if (!config.demo) await accountsBoard(d).then((b) => refreshProfiles(d, b.accounts, { max: 6 })).then((n) => { if (n) bustBoard(d); })
+          .catch((err) => console.error(`rfq potential ${rep.email}:`, (err as Error).message));
       }
     }
     const waiting = await waitingFor(null);

@@ -14,7 +14,8 @@
     "bench": "tsx --env-file-if-exists=.env scripts/bench.ts",
     "push-reps": "tsx --env-file-if-exists=.env scripts/push-reps.ts",
     "close-webhook": "tsx --env-file-if-exists=.env scripts/close-webhook.ts",
-    "push-store": "tsx --env-file-if-exists=.env scripts/push-store.ts"
+    "push-store": "tsx --env-file-if-exists=.env scripts/push-store.ts",
+    "potential": "tsx --env-file-if-exists=.env scripts/potential.ts"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +29,7 @@
     "@vercel/functions": "^3.9.9",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "fflate": "^0.8.3",
     "typescript": "^5.9.3",
     "zod": "^4.6.5"
   },

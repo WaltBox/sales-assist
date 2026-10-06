@@ -42,7 +42,7 @@ export type Close = Pick<CloseClient,
   "smartViewLeads" | "me" | "lead" | "leadName" | "callOutcomes" | "leadStatuses" | "leadCustomFields" | "calls" | "call" | "notes" | "openTasks" | "task" | "openTasksFor" | "email" | "sendDraft" | "unschedule" | "deleteEmail" |
   "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createDraftEmail" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
 export type Llm = typeof structured;
-export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText; siteEmails?: (url: string | null | undefined) => Promise<string[]> };
+export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText; siteEmails?: (url: string | null | undefined) => Promise<string[]>; sitePages?: (url: string | null | undefined) => Promise<Array<{ url: string; text: string }>> };
 
 const now = (d: Deps) => d.now?.() ?? new Date();
 
@@ -103,16 +103,22 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
       const task = "Write the Lead Brief (call card) for this lead, following the Lead Brief section of the playbook.";
       let { data } = await d.llm({ schema: BriefSchema, effort: config.effortFast, model: config.briefModel, context, task });
       // The opener you already used on this lead stays (Walt 10/1): same words every call, no rewrite pass for it.
-      if (ctx.saidOpener) data = { ...data, opener: ctx.saidOpener };
+      // PVF first (Walt 10/5): that only holds once the opener you used was the PVF one. An older opener that never
+      // named pipe, valves or fittings gives way to the PVF pitch.
+      const said = ctx.saidOpener && namesPvf(ctx.saidOpener) ? ctx.saidOpener : null;
+      if (said) data = { ...data, opener: said };
       // Buyers respond to hyper-specifics: an opener that names none of the products gets one rewrite.
       // So does one that's hard to say out loud ("...flat washers crews use for renovation and façade work", 9/28).
-      const vague = !ctx.saidOpener && openerProducts(data.opener, data.buys) < 2;
-      if (vague || (!ctx.saidOpener && openerTangled(data.opener))) {
+      const vague = !said && openerProducts(data.opener, data.buys) < 2;
+      if (vague || (!said && openerTangled(data.opener))) {
         const why = vague
           ? `Your last opener named none of the specific products: "${data.opener}". Rewrite the card so the opener names 3–4 of the products in buys (${data.buys.join(", ")}) in one run, tied to their work.`
           : `Your last opener is hard to follow out loud: "${data.opener}". Rewrite the card so the opener is two short sentences: "Hi, this is ${d.rep.name.split(/\s+/)[0]} with Westgate Supply." then "We supply [3–4 products] for [their work]." No "[crews] use for" clause.`;
         ({ data } = await d.llm({ schema: BriefSchema, effort: config.effortFast, model: config.briefModel, context, task: `${task}\n\n${why}` }));
       }
+      // When they likely don't buy PVF, the alternative is the pitch as it was: the words you already used on this
+      // lead if there are any, so the switch sounds like the last call.
+      if (ctx.saidOpener && !said && data.pvf_fit !== "yes") data = { ...data, alt_opener: ctx.saidOpener };
       await briefCache.set(key, data).catch((err) => console.error("brief cache write:", (err as Error).message));
       return data;
     })().finally(() => inflight.delete(key));
@@ -269,6 +275,13 @@ export function openerTangled(opener: string): boolean {
     || sentences.some((s) => /westgate supply\s*,/i.test(s) && /\bwe (supply|carry|stock)\b/i.test(s));
 }
 
+/** Does this opener pitch PVF (pipe, valves, fittings, or the flange joint that goes with them)? */
+export function namesPvf(opener: string): boolean {
+  // "Pipe supports", "pipe clamps" and "pipe hangers" are hardware, not PVF.
+  const text = opener.replace(/\bpipe (supports?|clamps?|hangers?)\b/gi, "");
+  return /\b(pvf|pipe|piping|valves?|fittings?|flanges?|gaskets?|stud bolts?)\b/i.test(text);
+}
+
 /** How many of the brief's `buys` items the opener actually names. */
 export function openerProducts(opener: string, buys: string[]): number {
   const text = opener.toLowerCase();
@@ -280,11 +293,15 @@ export function openerProducts(opener: string, buys: string[]): number {
 
 export function enforceBriefRules(brief: Brief, ctx: LeadContext): Brief {
   const rating = brief.rating.toUpperCase().match(/[ABCD]/)?.[0] ?? "C";
-  if (!ctx.facts.vendor) return { ...brief, rating };
+  // PVF first (10/5): the alternative pitch only exists when they likely don't buy PVF, and only if it's complete.
+  const fit = brief.pvf_fit ?? "yes";
+  const alt = fit !== "yes" && brief.alt_opener?.trim() ? { alt_opener: brief.alt_opener.trim(), alt_buys: brief.alt_buys ?? [] } : { alt_opener: null, alt_buys: [] };
+  if (!ctx.facts.vendor) return { ...brief, rating, pvf_fit: fit, pvf_reason: brief.pvf_reason ?? "", ...alt };
   return {
     ...brief, rating: "D", fit_summary: "Vendor in Close: Westgate buys from them. Not a sales call.",
     opener: "Don't pitch. This is one of our suppliers (Close marks them as a vendor).", ask: "No sales ask.",
     objection: "", objection_response: "", buys: [], capture: [],
+    pvf_fit: "yes", pvf_reason: "", alt_opener: null, alt_buys: [],
   };
 }
 

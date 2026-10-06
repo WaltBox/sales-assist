@@ -2,6 +2,7 @@ import type { Close, Llm } from "./assistant.js";
 import type { CloseCall, CloseLead, CloseTask, LeadEmail } from "./close.js";
 import { customFields, DEMO_USER_ID, roddaCall, roddaLead, statuses } from "./fixtures.js";
 import { AfterCallExtrasSchema, AfterCallSchema, BriefSchema, ChatSchema, FollowUpSchema, type Proposals } from "./schemas.js";
+import { PurchasingSchema } from "./purchasing.js";
 import { isoWithOffset, nextWeekdayAt, suggestCallback } from "./rules.js";
 import { EmailReviewSchema } from "./validate.js";
 
@@ -220,6 +221,12 @@ export const demoLlm: Llm = async (opts) => {
 
 function canned(schema: unknown, task: string): unknown {
   if (schema === EmailReviewSchema) return { failures: [] };
+  // The purchasing cycle, as Renee says it on the Rodda demo call.
+  if (schema === PurchasingSchema) return {
+    rfq_volume: { value: "~5/week", quote: "we send out maybe five a week" }, rfq_timing: null, buying_mode: { value: "project", quote: "it's all job by job for us" },
+    vendor_policy: { value: "open bid", quote: "we'll send it to whoever can turn it around" }, how_to_get_on_list: null, works_through: null, buyer_count: { value: "2", quote: "it's me and Dave" },
+    incumbent: null, cycle_notes: null,
+  };
   if (schema === FollowUpSchema) {
     // Greets whoever the task says to (Renee on the Rodda demo lead).
     const name = task.match(/greet them as ([A-Z][a-zA-Z'-]+)/)?.[1] ?? "Renee";
@@ -235,17 +242,23 @@ function canned(schema: unknown, task: string): unknown {
       fit_summary: "Self-performing electrical contractor. Buys threaded rod, anchors, beam clamps and HDG hardware on daily orders.",
       company_type: "Commercial electrical contractor",
       ask_for: { name: "Renee", role: "covering purchasing for Rob Roy (back Oct 12)" },
-      opener: "Hi Renee, this is Walt with Westgate Supply. We talked yesterday. We're a national supplier opening a local warehouse in your area, so threaded rod, anchors and bolting will be close by.",
+      // PVF first (10/5). Rodda is an electrical contractor, so the card flags it and keeps the pitch for their trade ready.
+      opener: "Hi Renee, this is Walt with Westgate Supply. We talked yesterday. We supply pipe, valves, fittings and flanges, and the bolting that goes with them.",
       ask: "You mentioned you'd look at today's orders. Anything on there you can shoot over? A list, a photo, a PDF, and I'll turn pricing around quick.",
       objection: "We already have a supplier",
       objection_response: "Totally fine, I'm not asking you to switch anyone. Just put us on the list for the next one. With a local warehouse opening near you, if something's hot you won't be waiting on a truck from out of state.",
-      buys: ["Threaded rod", "Anchors", "Beam clamps", "U-bolts & pipe supports", "HDG bolting", "Plate & angle"],
+      buys: ["Pipe", "Valves", "Fittings", "Flanges", "Gaskets", "Stud bolts"],
+      pvf_fit: "likely_not",
+      pvf_reason: "Electrical contractor: conduit and supports, little process piping.",
+      alt_opener: "Hi Renee, this is Walt with Westgate Supply. We talked yesterday. We're a national supplier opening a local warehouse in your area, so threaded rod, anchors and bolting will be close by.",
+      alt_buys: ["Threaded rod", "Anchors", "Beam clamps", "U-bolts & pipe supports", "HDG bolting", "Plate & angle"],
       heads_ups: [
         "Rob's email came through the transcript as \"Roda R O D Dalectric\". Confirm rob@roddaelectric.com.",
         "Renee has no direct line or email on file. Ask for both.",
       ],
       what_they_do: "Commercial and industrial electrical contractor since 1998. Distribution centers, office TI, critical facilities across California.",
       capture: ["Renee's direct email", "Her direct line", "When the next order list goes out"],
+      hometown: { event: "Brentwood CornFest", opener: "Quick one before we start: I've got a made-up childhood memory about Brentwood, want it?", story: "My mom took me to CornFest when I was eight and it was about a hundred degrees out. I ate two ears of corn on a stick and then got talked into the kiddie tractor pull and lost to a girl half my size. I still think about that tractor pull more than I should." },
     };
   }
   if (schema === AfterCallSchema) {
