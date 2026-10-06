@@ -53,8 +53,12 @@ export const config = {
   sessionSecret: process.env.SESSION_SECRET ?? null,
   // Protects the scheduled catch-up job (Vercel sends it as a bearer token).
   cronSecret: process.env.CRON_SECRET ?? null,
-  /** Where the meme links in emails point (10/6): our own server, so a load or a click is logged, then the image. */
-  publicUrl: (process.env.PUBLIC_URL ?? (process.env.VERCEL ? "https://sales-assist-fawn.vercel.app" : "http://localhost:3001")).replace(/\/$/, ""),
+  /**
+   * Where tracked meme links point (10/6): a domain of ours (go.westgatesupply.com), so a load or a click is logged
+   * before the image. Unset, emails link straight to the image bucket and nothing is tracked: a random vercel.app
+   * link in bulk mail is a spam-filter risk (Walt 10/6), so tracking waits for the real domain.
+   */
+  publicUrl: process.env.PUBLIC_URL ? process.env.PUBLIC_URL.replace(/\/$/, "") : null,
   // How long the background builder waits for Close's transcript before building from what it has.
   // Close transcribes in about a minute; a hard stop at 3 means a call never hangs (polled every 15s).
   transcriptWaitMs: Number(process.env.TRANSCRIPT_WAIT_MS ?? (process.env.DEMO === "1" ? 6000 : 3 * 60 * 1000)),

@@ -80,7 +80,12 @@ test("meme results: opens, replies and RFQs within two weeks of the bump, credit
 
 test("tracked memes (10/6): the image and the link go through our server; loads and clicks are logged against the token", async () => {
   const { bumpHtml, trackMeme, logMemeEvent, memeTrack, memeLanding, memeImageUrl, memeViewUrl } = await import("../src/memes.js");
+  const { config } = await import("../src/config.js");
   const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
+  // Off (no PUBLIC_URL): a token changes nothing; the email links straight to the bucket.
+  (config as { publicUrl: string | null }).publicUrl = null;
+  assert.ok(bumpHtml("Hi,\n\nx\n\nWalt Boxwell", "Walt Boxwell", meme, "tok123").includes(`href="${meme.url}"`), "untracked without a domain of ours");
+  (config as { publicUrl: string | null }).publicUrl = "https://go.westgatesupply.com";
   const html = bumpHtml("Hi Tammy,\n\nI wanted to check in on this.\n\nWalt Boxwell", "Walt Boxwell", meme, "tok123");
   assert.ok(html.includes(`src="${memeImageUrl("tok123", "forklift.jpg")}"`), "image through our server");
   assert.ok(html.includes(`href="${memeViewUrl("tok123", "forklift.jpg")}"`), "link through our server");

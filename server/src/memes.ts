@@ -132,6 +132,8 @@ export async function clearPick(d: Deps, leadId: string) {
 export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[] };
 const VIEWS_REP = "memeviews"; // the store's settings table, keyed by token under this fixed "rep"
 export const newToken = () => randomUUID().replace(/-/g, "");
+/** Tracking is on only when PUBLIC_URL is set (a domain of ours). */
+export const trackingOn = () => !!config.publicUrl;
 export const memeImageUrl = (token: string, name: string) => `${config.publicUrl}/m/${token}/${encodeURIComponent(name)}`;
 export const memeViewUrl = (token: string, name: string) => `${memeImageUrl(token, name)}/view`;
 
@@ -169,8 +171,9 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
   const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
   const html = paras.map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`);
   if (meme) {
-    const src = token ? memeImageUrl(token, meme.name) : meme.url;
-    const link = token ? memeViewUrl(token, meme.name) : meme.url;
+    const tracked = !!token && trackingOn();
+    const src = tracked ? memeImageUrl(token!, meme.name) : meme.url;
+    const link = tracked ? memeViewUrl(token!, meme.name) : meme.url;
     html.push(`<p><img src="${src}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
     // A lot of mail apps hide images until the reader clicks "show": the link gets them the meme anyway (Walt 10/6).
     html.push(`<p style="font-size:12px;color:#6b6b70">There's a hilarious meme in here. If it didn't come through, <a href="${link}" style="color:#6b6b70">here it is</a>.</p>`);
