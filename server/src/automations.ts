@@ -200,7 +200,7 @@ async function planDay(d: Deps, now: Date) {
     const base = {
       repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
       label: onCadence ? `Get a first RFQ from ${a.contact.name?.split(/\s+/)[0] || a.company}` : a.next.label,
-      reason: unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed): asking whether it landed. (${a.next.tag}: ${a.next.label} stays on the books.)`
+      reason: unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed). (${a.next.tag}: ${a.next.label} stays on the books.)`
         : onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
       createdAt: now.toISOString(), checkedAt: null,
     };
@@ -422,7 +422,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
     const due = new Date(Math.max(new Date(a.next.kind === "bump" || autoWaiting ? a.next.due ?? now.toISOString() : now.toISOString()).getTime(), now.getTime()));
     const sendOn = morningOf(due, d.rep.timeZone);
     if (sendOn.getTime() > horizon) continue;
-    const what = unconfirmed ? "Bump, asking if it landed" : /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
+    const what = unconfirmed ? "Bump (not confirmed)" : /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
     const reason = unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed). ${a.next.tag}: ${a.next.label} stays on the books.`
       : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;

@@ -122,8 +122,8 @@ export function greetName(name: string | null | undefined): string | null {
 const VARIANTS: Record<string, string> = {
   // Friday send (Walt 10/2): pricing back Monday morning is the hook, so Monday has to deliver.
   friday: "Happy Friday! Bumping this back to the top before the weekend. If there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
-  // For an account that's never shown an open (Walt 10/5): ask straight out whether it landed; junk folders eat a lot of these.
-  landed: "Bumping this back to the top in case it landed in junk. If there's an RFQ on your desk, send it over and I'll price it.",
+  // For an account that's never shown an open (Walt 10/6): same plain ask as everyone else, no talk of junk folders.
+  landed: "Bumping this back to the top. If there's an RFQ on your desk, send it over and I'll price it.",
 };
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
   const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];

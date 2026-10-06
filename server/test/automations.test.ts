@@ -108,9 +108,10 @@ test("coming up: who gets an automatic email and when, if nothing changes; Hold 
   assert.equal(crest!.label, "Bump in the line card thread");
   assert.match(crest!.reason, /seen it, no RFQ yet/);
   const harbor = f.find((x) => x.company === "Harbor Fabrication");
-  assert.ok(harbor, "not-opened accounts are in the sequence too (10/5), asking whether it landed");
-  assert.equal(harbor!.label, "Bump, asking if it landed");
-  assert.match(harbor!.preview ?? "", /landed in junk/);
+  assert.ok(harbor, "not-opened accounts are in the sequence too (10/5)");
+  assert.equal(harbor!.label, "Bump (not confirmed)");
+  assert.match(harbor!.preview ?? "", /Bumping this back to the top\. If there's an RFQ/);
+  assert.doesNotMatch(harbor!.preview ?? "", /junk/);
 
   await holdAccount(d, crest!.leadId, true);
   assert.equal((await forecast(d)).find((x) => x.leadId === crest!.leadId)?.held, true);
@@ -375,7 +376,7 @@ test("unconfirmed accounts (10/5): in the sequence with the 'did it land' line, 
   if (mesa.bumpDue) {
     assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
     assert.equal(m!.variant, "landed");
-    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /landed in junk/.test(e.body));
-    assert.ok(email, "the bump asks whether it landed");
+    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /Bumping this back to the top\. If there's an RFQ/.test(e.body));
+    assert.ok(email, "the bump is the plain ask");
   }
 });
