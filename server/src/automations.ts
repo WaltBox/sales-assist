@@ -341,7 +341,9 @@ export async function syncAutomations(d: Deps) {
     if (twin) {
       console.warn(`[sync] pulling back ${a.company}: twin ${twin.id} sent ${twin.statusAt ?? twin.createdAt}, goes ${goesAt.toISOString()}, gap ${gap}, days ${businessDaysBetween(new Date(twin.statusAt ?? twin.createdAt), goesAt, d.rep.timeZone)}`);
       await d.close.unschedule(a.id).catch(() => {});
-      await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: they already got an automatic email on ${(twin.statusAt ?? twin.createdAt).slice(0, 10)}. It's a draft in Close now.` });
+      // The note carries the numbers (10/6): a pull-back that looks wrong can then be read off the row, whichever copy ran it.
+      const twinAt = twin.statusAt ?? twin.createdAt;
+      await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: they already got an automatic email on ${twinAt.slice(0, 10)}. It's a draft in Close now. [twin ${twin.id} at ${twinAt}, this one at ${goesAt.toISOString()}, ${businessDaysBetween(new Date(twinAt), goesAt, d.rep.timeZone)} business days apart in ${d.rep.timeZone}, gap ${gap}]` });
       continue;
     }
     const emails = await d.close.leadEmails(a.leadId).catch(() => null);
