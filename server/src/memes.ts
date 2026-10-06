@@ -131,7 +131,11 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null) {
   const paras = body.trim().split(/\n\s*\n/);
   const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
   const html = paras.map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`);
-  if (meme) html.push(`<p><img src="${meme.url}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
+  if (meme) {
+    html.push(`<p><img src="${meme.url}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
+    // A lot of mail apps hide images until the reader clicks "show": the link gets them the meme anyway (Walt 10/6).
+    html.push(`<p style="font-size:12px;color:#6b6b70">There's a meme in here. If it didn't come through, <a href="${meme.url}" style="color:#6b6b70">here it is</a>.</p>`);
+  }
   if (sig) html.push(`<p>${esc(sig)}</p>`);
   return html.join("");
 }

@@ -148,7 +148,7 @@ test("the automatic bump: back to the top + any RFQs, a meme inline (never one t
   assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there,/);
   const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const html = bumpHtml(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Walt Boxwell", meme);
-  assert.match(html, /^<p>Hi Tammy,<\/p><p>I wanted to check in.*<\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p>Walt Boxwell<\/p>$/, "inline, between the ask and the name");
+  assert.match(html, /^<p>Hi Tammy,<\/p><p>I wanted to check in.*<\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p[^>]*>There's a meme in here\. If it didn't come through, <a href="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*>here it is<\/a>\.<\/p><p>Walt Boxwell<\/p>$/, "inline, with a link under it for mail apps that hide images, before the name");
   // Never the same meme twice: a pick they've already had is replaced by one they haven't.
   const memes = [meme, { name: "bolts.png", url: "u2" }];
   const d = { rep: { closeUserId: "user_m" } } as never;
