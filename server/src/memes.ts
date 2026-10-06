@@ -177,7 +177,7 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
     const link = tracked ? memeViewUrl(token!, meme.name) : meme.url;
     html.push(`<p><img src="${src}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
     // A lot of mail apps hide images until the reader clicks "show": the link gets them the meme anyway (Walt 10/6).
-    html.push(`<p style="font-size:12px;color:#6b6b70">There's a hilarious meme in here. If it didn't come through, <a href="${link}" style="color:#6b6b70">here it is</a>.</p>`);
+    html.push(`<p style="font-size:12px;color:#6b6b70">There's a hilarious meme in here. If it didn't come through, <a href="${link}" style="color:#1a4fa3;text-decoration:underline">here it is</a>.</p>`);
   }
   if (sig) html.push(`<p>${esc(sig)}</p>`);
   return html.join("");
