@@ -546,8 +546,8 @@ function heatPage() {
         class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}`,
         style: `--heat:${shade(a).toFixed(2)}`,
         title: `${a.company} · ${a.warmth.score} · ${POT[potTier(a)][0]}\nLine card sent ${shortDate(a.cardSentAt)}: ${cardText(a)}`,
-        // One click: the drawer here, and the lead in the Close tab the side panel is watching (Walt 10/6).
-        onclick: () => { state.heatPick = a.leadId; render(); openInCloseTab(a.leadId); },
+        // One click opens the drawer here only; "Open in Close" in the drawer moves the Close tab (the side panel follows).
+        onclick: () => { state.heatPick = a.leadId; render(); },
       }, [
         el("span", { class: "co", text: a.company }),
         el("span", { class: `card c-${cardState(a)}` }, [el("i", { "aria-hidden": "true" }), `sent ${shortDate(a.cardSentAt)}`]),
@@ -601,7 +601,7 @@ function storyFor(a) {
 function heatDrawer(a, rows) {
   const i = rows.findIndex((r) => r.leadId === a.leadId);
   const w = a.warmth, c = a.contact;
-  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); openInCloseTab(rows[j].leadId); } };
+  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); } };
   const close = () => { state.heatPick = null; render(); };
   return el("aside", { class: `drawer w-${w.bucket}`, role: "dialog", "aria-label": a.company }, [
     el("div", { class: "dr-top" }, [
