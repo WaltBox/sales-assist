@@ -592,3 +592,5 @@ textarea { resize: vertical; min-height: 70px; }
 .chip3.got { cursor: pointer; border-color: var(--ink); background: var(--white); }
 .chip3.got:hover { background: var(--ink); color: var(--paper); }
 .erow { cursor: pointer; }
+.elist.answer .label { color: var(--green); }
+.elist.answer .erow { border-color: var(--green); }

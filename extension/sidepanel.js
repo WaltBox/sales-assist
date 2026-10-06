@@ -1718,10 +1718,12 @@ function renderEmails() {
     all: (e) => !(e.calledToday && e.calledToday.reached), sent: (e) => e.status === "sent" && !(e.calledToday && e.calledToday.reached), queued: (e) => e.status === "scheduled",
     replied: (e) => e.replied || e.rfq, opened: (e) => e.opened || e.replied || e.rfq || e.shown || e.clicked, clicked: (e) => e.clicked, reached: (e) => e.calledToday && e.calledToday.reached, tried: (e) => e.calledToday && !e.calledToday.reached,
   }[emails.show] || (() => true);
-  // Somebody wrote back (10/6): that's a call, not a row in the sent list. They sit at the top until you reach them.
-  const callNow = emails.show === "all" ? sentAll.filter((e) => (e.replied || e.rfq) && !(e.calledToday && e.calledToday.reached)) : [];
-  const callIds = new Set(callNow.map((e) => e.id));
-  const queued = queuedAll.filter(only), sent = sentAll.filter(only).filter((e) => !callIds.has(e.id));
+  // Two piles (10/6): somebody who wrote back needs an answer by email; somebody who didn't is a call. The call pile
+  // is the one you work down, warmest first (opened or seen the meme before "can't tell").
+  const wroteBack = emails.show === "all" ? sentAll.filter((e) => (e.replied || e.rfq) && !(e.calledToday && e.calledToday.reached)) : [];
+  const answerIds = new Set(wroteBack.map((e) => e.id));
+  const warmth = (e) => (e.clicked ? 0 : e.shown || e.opened ? 1 : e.seen && e.seen.level === "likely" ? 2 : 3);
+  const queued = queuedAll.filter(only), sent = sentAll.filter(only).filter((e) => !answerIds.has(e.id)).sort((a, b) => warmth(a) - warmth(b) || (b.at || "").localeCompare(a.at || ""));
   const count = (k, label, n) => n ? el("button", { class: `ecount${emails.show === k ? " on" : ""}`, text: `${n} ${label}`, onclick: () => { emails.show = emails.show === k ? "all" : k; render(); } }) : null;
   const when = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   const day = (iso) => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
@@ -1761,8 +1763,8 @@ function renderEmails() {
     emails.error ? el("div", { class: "flag", text: emails.error }) : null,
     emails.show !== "all" ? el("p", { class: "muted", style: "font-size:12px", text: `Showing ${emails.show === "reached" ? "accounts you reached today (hidden from the main list so you don't call them twice)" : emails.show === "tried" ? "accounts you called today and didn't get" : `${emails.show} only`}. Tap the count again for everything.` }) : null,
     !emails.loading && !sent.length && !queued.length ? el("p", { class: "empty", text: emails.show !== "all" ? "Nothing matches." : emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
-    callNow.length ? el("div", { class: "elist callnow" }, [el("p", { class: "label", text: `They wrote back · call them · ${callNow.length}` }), ...callNow.map(row)]) : null,
-    sent.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
+    wroteBack.length ? el("div", { class: "elist answer" }, [el("p", { class: "label", text: `They wrote back · answer them · ${wroteBack.length}` }), ...wroteBack.map(row)]) : null,
+    sent.length ? el("div", { class: "elist callnow" }, [el("p", { class: "label", text: emails.show === "all" ? `No reply yet · call them · ${sent.length}` : `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
     queued.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Going out · ${queued.length}` }), ...queued.map(row)]) : null,
     el("p", { class: "muted", style: "font-size:12px", text: "Tap a row to open the lead in your Close tab. Opened and Replied come from Close. The percentages are a guess for emails with no tracked open: a lot of mail apps block the open pixel, so \"can't tell\" is honest, not bad news. Hover a chip for the reason." }),
   ]);
