@@ -9,7 +9,7 @@ import {
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
 import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshProfiles } from "./potential.js";
-import { markReachedFromCalls, syncDialViews } from "./dialviews.js";
+import { markReachedByHand, markReachedFromCalls, syncDialViews } from "./dialviews.js";
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
@@ -288,6 +288,8 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/automations", authed, route((_req, d) => automationsView(d)));
   // The call lists in Close, rebuilt from the board: talked before, no RFQ, by warmth, minus anyone called today (10/6).
   app.post("/api/dial-views/refresh", authed, route(async (_req, d) => ({ views: await syncDialViews(d) })));
+  // "Got them" (10/6): the rep reached the person they were after; off today's lists right away.
+  app.post("/api/leads/:leadId/reached", authed, route(async (req, d) => ({ reached: await markReachedByHand(d, leadId(req)) })));
   // The side panel's Emails tab: sent and queued automatic emails, with opens and replies since (10/6).
   app.get("/api/emails/sent", authed, route(async (req, d) => ({ emails: await sentEmailsView(d, Math.min(Number(req.query.days) || 7, 30)) })));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));

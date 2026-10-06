@@ -1,4 +1,5 @@
 import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, type Account } from "./accounts.js";
+import { reachedToday } from "./dialviews.js";
 import type { Deps } from "./assistant.js";
 import { config } from "./config.js";
 import { bumpBodyFor, FollowUpError, greetName, writeFollowUp } from "./followup.js";
@@ -553,11 +554,12 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
       shown: (r.track && tracks.get(r.track)?.shown[0]) ?? null, clicked: (r.track && tracks.get(r.track)?.clicked[0]) ?? null,
       calledToday: (() => {
         if (!a) return null;
+        if (reachedToday(a.leadId, d.rep.timeZone, now)) return { at: now.toISOString(), reached: true };
         const today = new Date(now.toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }) + "T00:00:00");
         const calls = a.events.filter((e) => e.kind === "call" && new Date(e.at).toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }) === now.toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }));
         if (!calls.length) return null;
         void today;
-        return { at: calls[0].at, reached: !!a.touches.lastTalk && calls.some((c) => c.at === a.touches.lastTalk) };
+        return { at: calls[0].at, reached: reachedToday(a.leadId, d.rep.timeZone, now) || (!!a.touches.lastTalk && calls.some((c) => c.at === a.touches.lastTalk)) };
       })(),
     };
   }).sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));

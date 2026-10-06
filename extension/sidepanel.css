@@ -589,3 +589,6 @@ textarea { resize: vertical; min-height: 70px; }
 .ecount.on { color: var(--ink); border-bottom-color: var(--red); }
 .elist.callnow .label { color: var(--red); }
 .elist.callnow .erow { border-color: var(--red); }
+.chip3.got { cursor: pointer; border-color: var(--ink); background: var(--white); }
+.chip3.got:hover { background: var(--ink); color: var(--paper); }
+.erow { cursor: pointer; }

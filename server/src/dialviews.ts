@@ -50,6 +50,16 @@ export async function markReached(d: Deps, leadId: string): Promise<boolean> {
  * day in memory so the same lead isn't written every few minutes.
  */
 const markedToday = new Map<string, string>(); // leadId -> local date
+/** Marked reached today (by a call record, a tap, or the "got them" button)? Memory only; Close holds the date itself. */
+export function reachedToday(leadId: string, tz: string, now = new Date()): boolean {
+  return markedToday.get(leadId) === localDate(now, tz);
+}
+/** The rep says they got the person (10/6): marked, remembered for the day. */
+export async function markReachedByHand(d: Deps, leadId: string): Promise<boolean> {
+  const ok = await markReached(d, leadId);
+  if (ok) markedToday.set(leadId, localDate(d.now?.() ?? new Date(), d.rep.timeZone));
+  return ok;
+}
 export async function markReachedFromCalls(d: Deps, accounts: Array<Pick<Account, "leadId" | "touches">>): Promise<number> {
   const now = d.now?.() ?? new Date();
   const today = localDate(now, d.rep.timeZone);

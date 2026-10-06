@@ -1725,10 +1725,18 @@ function renderEmails() {
   const count = (k, label, n) => n ? el("button", { class: `ecount${emails.show === k ? " on" : ""}`, text: `${n} ${label}`, onclick: () => { emails.show = emails.show === k ? "all" : k; render(); } }) : null;
   const when = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   const day = (iso) => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
-  const row = (e) => el("button", { class: `erow ${e.status}`, title: "Open in Close", onclick: () => openLead(e.leadId) }, [
+  // "Got them" (10/6): you reached the person you were after; the account leaves today's lists right away.
+  const gotThem = async (ev, e) => {
+    ev.stopPropagation(); ev.currentTarget.disabled = true;
+    try { await api(`/api/leads/${e.leadId}/reached`, {}); for (const r of emails.rows) if (r.leadId === e.leadId) r.calledToday = { at: new Date().toISOString(), reached: true }; }
+    catch (err) { emails.error = err.message; }
+    render();
+  };
+  const row = (e) => el("div", { class: `erow ${e.status}`, title: "Open in Close", onclick: () => openLead(e.leadId) }, [
     el("span", { class: "etime mono", text: emails.filter === "today" ? when(e.at) : `${day(e.at)} ${when(e.at)}` }),
     el("span", { class: "emain" }, [el("span", { class: "eco", text: e.company }), el("span", { class: "eto", text: e.to })]),
     el("span", { class: "eflags" }, [
+      e.status === "sent" && !(e.calledToday && e.calledToday.reached) ? el("button", { class: "chip3 got", title: "You reached the person you were after: off today's lists", text: "Got them", onclick: (ev) => gotThem(ev, e) }) : null,
       e.calledToday ? el("span", { class: `chip3 ${e.calledToday.reached ? "good" : "warn"}`, title: e.calledToday.reached ? "You reached them today" : "You called today and didn't get them: still owed a call", text: `${e.calledToday.reached ? "Reached" : "Tried"} ${new Date(e.calledToday.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` }) : null,
       e.status === "scheduled" ? el("span", { class: "chip3 soft", text: "Queued" }) : null,
       e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" })
