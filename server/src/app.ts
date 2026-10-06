@@ -51,8 +51,6 @@ export function createApp(appDeps: AppDeps) {
     app.use("/preview", express.static(path.resolve(ROOT, "..", "extension")));
   }
 
-  // fflate's browser build, for unpacking a zip of memes in the page before anything is uploaded.
-  app.get("/vendor/fflate.js", (_req, res) => res.sendFile(path.resolve(ROOT, "node_modules", "fflate", "umd", "index.js")));
   // The web app (the morning view); the side panel is the other half.
   // Always revalidate the web app's files: a stale app.js or app.css after a deploy is worse than one extra round trip.
   app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html", setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") }));
