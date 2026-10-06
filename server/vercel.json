@@ -5,5 +5,8 @@
   "functions": {
     "api/index.ts": { "maxDuration": 300, "includeFiles": "{playbook,web}/**" }
   },
-  "crons": [{ "path": "/api/cron/catch-up", "schedule": "0 13 * * *" }]
+  "crons": [
+    { "path": "/api/cron/catch-up", "schedule": "0 13 * * *" },
+    { "path": "/api/cron/catch-up", "schedule": "45 15 * * *" }
+  ]
 }
