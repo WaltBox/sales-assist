@@ -1687,16 +1687,21 @@ function alertsBlock(alerts) {
 }
 
 // ---------- the Emails tab (Walt 10/6): automatic emails sent and queued, who opened, who replied ----------
-let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today" };
+let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today", updatedAt: null, timer: null };
 async function loadEmails() {
+  if (emails.loading) return;
   emails.loading = true; emails.error = null; render();
   try {
     const r = await api("/api/emails/sent?days=7");
     emails.rows = r.emails;
+    emails.updatedAt = new Date();
     const today = new Date().toDateString();
     emails.todaySent = r.emails.filter((e) => e.status === "sent" && new Date(e.at).toDateString() === today).length;
   } catch (e) { emails.error = e.message; }
   emails.loading = false; render();
+  // While the tab is open, refresh on its own every minute (sends land all morning; opens and replies trickle in).
+  clearTimeout(emails.timer);
+  emails.timer = setTimeout(() => { if (view === "emails") loadEmails(); }, 60_000);
 }
 function renderEmails() {
   const out = [header({ text: "Emails", cls: "phase" })];
@@ -1721,7 +1726,8 @@ function renderEmails() {
   const page = el("main", { class: "page" }, [
     el("div", { class: "qhead" }, [
       el("h1", { text: "Automatic emails" }),
-      el("span", { class: "muted", text: emails.loading ? "Loading…" : [sent.length ? `${sent.length} sent` : null, queued.length ? `${queued.length} queued` : null, sent.filter((e) => e.replied).length ? `${sent.filter((e) => e.replied).length} replied` : null].filter(Boolean).join(" · ") }),
+      el("span", { class: "muted", text: [sent.length ? `${sent.length} sent` : null, queued.length ? `${queued.length} queued` : null, sent.filter((e) => e.replied).length ? `${sent.filter((e) => e.replied).length} replied` : null].filter(Boolean).join(" · ") || (emails.loading ? "Loading…" : "") }),
+      el("button", { class: "link", text: emails.loading ? "Updating…" : emails.updatedAt ? `Updated ${emails.updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refresh` : "Refresh", onclick: () => loadEmails() }),
     ]),
     S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
     el("div", { class: "chips-row" }, [["today", "Today"], ["week", "Last 7 days"]].map(([k, label]) => el("button", { class: `chip${emails.filter === k ? " on" : ""}`, text: label, onclick: () => { emails.filter = k; render(); } }))),

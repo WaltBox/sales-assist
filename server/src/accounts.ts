@@ -310,10 +310,11 @@ export const isBounce = (e: { subject?: string | null; sender?: string | null })
   || /mailer-daemon|postmaster/i.test(e.sender ?? "");
 const oneLine = (s: string, n = 140) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
-export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: boolean } = {}): Promise<Board> {
+export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number } = {}): Promise<Board> {
   const key = `${d.rep.closeUserId}:${opts.days ?? 45}`;
   const hit = boardCache.get(key);
-  if (hit && !opts.fresh && Date.now() - hit.at < 60_000) return hit.value;
+  // A caller that only needs a recent picture (the Emails tab) can take a board up to `maxAgeMs` old instead of waiting a minute for a rebuild.
+  if (hit && !opts.fresh && Date.now() - hit.at < (opts.maxAgeMs ?? 60_000)) return hit.value;
 
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);

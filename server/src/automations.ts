@@ -532,7 +532,7 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
   const now = d.now?.() ?? new Date();
   const [rows, board] = await Promise.all([
     store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - days * DAY).toISOString()),
-    accountsBoard(d).catch(() => ({ accounts: [] as Account[] })),
+    accountsBoard(d, { maxAgeMs: 10 * 60_000 }).catch(() => ({ accounts: [] as Account[] })),
   ]);
   const byLead = new Map(board.accounts.map((a) => [a.leadId, a]));
   return rows.filter((r) => r.status === "sent" || r.status === "scheduled").map((r) => {
