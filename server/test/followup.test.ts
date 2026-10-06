@@ -50,7 +50,7 @@ test("with a prior email, the follow-up is a short reply in that thread, with no
   assert.equal(d.subject, "Re: Great talking with you – Westgate Supply line card");
   assert.deepEqual(d.to, ["renee@roddaelectric.com"]);
   assert.ok(!(d.attachments as unknown[] | undefined)?.length);
-  assert.match(String(d.body), /^Hi Renee,\n\nWanted to check in on this one\.[\s\S]*\n\nWalt Boxwell$/);
+  assert.match(String(d.body), /^Hi Renee,\n\nI wanted to check in on this\.[\s\S]*\n\nWalt Boxwell$/);
   assert.doesNotMatch(String(d.body), /[—–]/);
   assert.equal(close.writes.filter((w) => w.op === "email").length, 1);
 });

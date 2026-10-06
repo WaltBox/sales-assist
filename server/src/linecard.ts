@@ -99,7 +99,7 @@ export async function lineCardBounce(d: Deps, leadId: string, to: string, since:
 export function bumpBody(first: string | null, rep: string) {
   return stripDashes([
     `Hi ${first ?? "there"},`,
-    "Wanted to make sure this reached you. The line card is in my email below.",
+    "I wanted to make sure this reached you. The line card is in my email below.",
     "Mind replying \"got it\" so I know it came through?",
     rep,
   ].join("\n\n"));
