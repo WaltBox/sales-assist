@@ -90,7 +90,7 @@ export async function markRfqReceived(d: Deps, leadId: string, what: string | nu
   const weekOut = new Date(Date.parse(nowIso) + 7 * DAY).toISOString();
   let completed = 0;
   for (const t of (await d.close.openTasksFor(d.rep.closeUserId).catch(() => [])).filter((t) => t.lead_id === leadId && t.date <= weekOut)) { await d.close.completeTask(t.id); completed++; }
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
   return { ok: true, note, saved: !already, completedTasks: completed };
 }
 
@@ -104,7 +104,7 @@ export class ShotDownError extends Error {}
 
 const forgetLead = (d: Deps, leadId: string) => {
   leadCache.delete(leadId);
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
 };
 
 export async function markNotInterested(d: Deps, leadId: string, why: string | null) {
@@ -142,7 +142,7 @@ export async function undoNotInterested(d: Deps, leadId: string, prevStatus: str
 export async function setRfqStatus(d: Deps, leadId: string, stage: RfqStage, note: string | null) {
   const text = `${RFQ_STATUS_TAG} ${stage}${note ? ` · ${note}` : ""}`;
   await d.close.createNote(leadId, text, false);
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
   return { ok: true, note: text };
 }
 /** Opened this many times by a person with no RFQ yet: interested, call now. */
@@ -271,10 +271,17 @@ type Email = LeadEmail & { lead_id: string; user_id?: string; attachments?: Arra
 
 const leadCache = new Map<string, { at: number; lead: CloseLead | null }>();
 const boardCache = new Map<string, { at: number; value: Board }>();
+/** How old a stored board snapshot may be before a cold server rebuilds instead. */
+const BOARD_SNAPSHOT_MS = 10 * 60_000;
 type Board = { accounts: Account[]; counts: Record<NextKind, number> };
 /** Forget the rep's board so the next read rebuilds it (after a profile read, a rep's answer). */
 export function bustBoard(d: Deps) {
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
+}
+/** Both the in-memory board and the stored snapshot: a change in Close (a status, a hold) must show on the next read anywhere. */
+function forgetBoard(repId: string) {
+  for (const k of boardCache.keys()) if (k.startsWith(`${repId}:`)) { boardCache.delete(k); void store.cacheDelete(`board:${k}`).catch(() => undefined); }
+  void store.cacheDelete(`board:${repId}:45`).catch(() => undefined);
 }
 
 const addr = (s: string | null | undefined) => (s ?? "").match(/<([^>]+)>/)?.[1] ?? (s ?? "").trim();
@@ -315,6 +322,13 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
   const hit = boardCache.get(key);
   // A caller that only needs a recent picture (the Emails tab) can take a board up to `maxAgeMs` old instead of waiting a minute for a rebuild.
   if (hit && !opts.fresh && Date.now() - hit.at < (opts.maxAgeMs ?? 60_000)) return hit.value;
+  // A cold server (the hosted copy starts cold on every page load, 10/6) serves the last snapshot any copy wrote,
+  // up to a few minutes old, instead of rebuilding from Close and timing out; the long-running local server keeps
+  // the snapshot fresh every few minutes.
+  if (!hit && !opts.fresh) {
+    const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
+    if (snap && Date.now() - snap.at < BOARD_SNAPSHOT_MS) { boardCache.set(key, { at: snap.at, value: snap.value }); return snap.value; }
+  }
 
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
@@ -389,6 +403,7 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
   void syncStatuses(d, accounts).catch((e) => console.error("[status sync]", (e as Error).message));
   void clearStaleCallbacks(d, accounts).catch((e) => console.error("[stale callbacks]", (e as Error).message));
   boardCache.set(key, { at: Date.now(), value });
+  void store.cacheSet(`board:${key}`, { at: Date.now(), value }, BOARD_SNAPSHOT_MS).catch(() => undefined);
   return value;
 }
 
@@ -738,7 +753,7 @@ export async function markRescue(d: Deps, leadId: string, found: boolean, name: 
     const open = (await d.close.openTasksFor(d.rep.closeUserId).catch(() => [])).filter((t) => t.lead_id === leadId && t.date <= weekOut);
     for (const t of open) { await d.close.completeTask(t.id); completed++; }
   }
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
   return { ok: true, note, saved: !today, completedTasks: completed };
 }
 
@@ -804,7 +819,7 @@ async function draftMissing(d: Deps, max: number) {
     }
   }
   if (made) {
-    for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+    forgetBoard(d.rep.closeUserId);
   }
   return { made };
 }
@@ -826,6 +841,6 @@ export async function sendRescue(d: Deps, leadId: string, draftId: string) {
   if (!e || e.lead_id !== leadId || e.user_id !== d.rep.closeUserId) throw new RescueError("Can't find that draft anymore. Send it from Close.");
   if (e.status !== "draft") throw new RescueError("That email isn't a draft anymore (it may already be sent).");
   await d.close.sendDraft(draftId);
-  for (const k of boardCache.keys()) if (k.startsWith(`${d.rep.closeUserId}:`)) boardCache.delete(k);
+  forgetBoard(d.rep.closeUserId);
   return { sent: true, to: e.to[0] ?? null };
 }
