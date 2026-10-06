@@ -420,7 +420,7 @@ test("stop statuses: only the rep's \"no\" statuses take an account out", async 
   for (const s of ["Sent Line Card", "Qualified", "Customer", "Quoted", null, undefined, ""]) assert.ok(!isOutStatus(s), String(s));
 });
 
-test("bumpDue (10/5): the two-day cadence runs even with a callback on the books; not for the unopened, the replied-to, or an RFQ", async () => {
+test("bumpDue (10/5): the two-day cadence runs even with a callback on the books and for the unopened; not for the replied-to", async () => {
   const { buildAccount } = await import("../src/accounts.js");
   const { roddaLead } = await import("../src/fixtures.js");
   const now = new Date("2026-10-06T14:03:00Z"); // Tue 7:03am Pacific
@@ -441,8 +441,8 @@ test("bumpDue (10/5): the two-day cadence runs even with a callback on the books
   assert.equal(a.bumpDue, true);
   // Monday it wasn't (one business day).
   assert.equal(buildAccount({ d, now: new Date("2026-10-05T14:03:00Z"), card: card() as never, lead, ours: () => true, emails: [card()] as never, notes: [], tasks: [], calls: [], autos: [], gap: 2 } as never).bumpDue, false);
-  // Never opened: a rescue call, not another email.
-  assert.equal(build([card({ opens: [] })]).bumpDue, false);
+  // Never opened: still in the sequence (the planner caps it at UNCONFIRMED_MAX_BUMPS); bounced is out.
+  assert.equal(build([card({ opens: [] })]).bumpDue, true);
   // They wrote back after the last email: answer first.
   const reply = { id: "em_r", lead_id: lead.id, status: "inbox", direction: "incoming", subject: "RE: line card", date_created: "2026-10-05T10:00:00Z", sender: to, to: ["walt@westgatesupply.com"], attachments: [], thread_id: "th1" };
   assert.equal(build([card(), reply]).bumpDue, false);

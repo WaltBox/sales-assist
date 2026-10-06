@@ -561,7 +561,9 @@ export function buildAccount(x: {
     status: lead?.status_label ?? null,
     touches: tally,
     staleTaskIds: staleTasks.map((t) => t.id).filter((id): id is string => !!id),
-    bumpDue: !rfq && !bounce && !["not_opened", "bounced"].includes(seen) && !(lastIn && lastIn >= lastOut) && !!toAddr
+    // Unopened accounts are in the sequence too (Walt 10/5): "not opened" is a missing pixel, not a missing email.
+    // The planner stops them after UNCONFIRMED_MAX_BUMPS until a call, an open or a reply confirms they have it.
+    bumpDue: !rfq && !bounce && seen !== "bounced" && !(lastIn && lastIn >= lastOut) && !!toAddr
       && businessDaysBetween(new Date(lastOut), now, tz) >= (x.gap && x.gap > 0 ? x.gap : BUMP_AFTER_BUSINESS_DAYS),
     website: lead?.url || siteFromEmail(toAddr),
     potential: potentialFor(x.profile),

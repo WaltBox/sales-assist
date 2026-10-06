@@ -34,9 +34,9 @@ test("off by default; when on, the day's bumps are scheduled in Close with the r
   assert.equal(await morningRun(d), null);
   await setAutomations(d, true);
   const r = await planBumps(d);
-  assert.equal(r.planned.length, 1);
-  const [a] = r.planned;
-  assert.equal(a.company, "Crest Mechanical");
+  // Crest (opened, due) and the two unopened accounts, which are in the sequence since 10/5.
+  assert.deepEqual(r.planned.map((p) => p.company).sort(), ["Crest Mechanical", "Harbor Fabrication", "Mesa Pipe & Supply"]);
+  const a = r.planned.find((p) => p.company === "Crest Mechanical")!;
   assert.equal(a.status, "scheduled");
   assert.match(a.reason, /seen it, no RFQ yet/);
   const email = close.writes.find((w) => w.op === "email")!.body as { scheduleAt: string; inReplyToId: string };
@@ -99,14 +99,18 @@ test("coming up: who gets an automatic email and when, if nothing changes; Hold 
   assert.ok(crest, "Crest's bump is due, so it's coming up");
   assert.equal(crest!.label, "Bump in the line card thread");
   assert.match(crest!.reason, /seen it, no RFQ yet/);
-  assert.ok(!f.some((x) => x.company === "Harbor Fabrication"), "not-opened accounts are a call, never an automatic email");
+  const harbor = f.find((x) => x.company === "Harbor Fabrication");
+  assert.ok(harbor, "not-opened accounts are in the sequence too (10/5), asking whether it landed");
+  assert.equal(harbor!.label, "Bump, asking if it landed");
+  assert.match(harbor!.preview ?? "", /landed in junk/);
 
   await holdAccount(d, crest!.leadId, true);
   assert.equal((await forecast(d)).find((x) => x.leadId === crest!.leadId)?.held, true);
   await setAutomations(d, true);
-  assert.equal((await planBumps(d)).planned.length, 0, "held accounts aren't bumped");
+  const held = await planBumps(d);
+  assert.ok(!held.planned.some((p) => p.leadId === crest!.leadId), "held accounts aren't bumped");
   await holdAccount(d, crest!.leadId, false);
-  assert.equal((await planBumps(d)).planned.length, 1);
+  assert.ok((await planBumps(d)).planned.some((p) => p.leadId === crest!.leadId));
 });
 
 test("an account that sends an RFQ is out of automatic emails for good (VGas, 9/28)", async () => {
@@ -119,7 +123,7 @@ test("an account that sends an RFQ is out of automatic emails for good (VGas, 9/
   const f = await forecast(d);
   assert.ok(!f.some((x) => x.leadId === crestId), "not coming up");
   await setAutomations(d, true);
-  assert.equal((await planBumps(d)).planned.length, 0, "not planned");
+  assert.ok(!(await planBumps(d)).planned.some((p) => p.leadId === crestId), "not planned");
   assert.ok(["reply", "quote"].includes(crest.next.kind), `the next step is yours (answer or price it), got ${crest.next.kind}`);
 });
 
@@ -343,4 +347,27 @@ test("never two (10/2): a bump is pulled back if the rep emailed them by hand fi
   assert.ok(c2.writes.some((w) => w.op === "unschedule" && (w.body as { id: string }).id === b.id));
   assert.match((await automationsView(d2)).other[0].note!, /you sent the rescue draft yourself/);
   assert.equal(await dropRescueDraft(d2, b.leadId), false, "nothing to drop");
+});
+
+test("unconfirmed accounts (10/5): in the sequence with the 'did it land' line, and stopped after two with no sign of life", async () => {
+  const { UNCONFIRMED_MAX_BUMPS } = await import("../src/automations.js");
+  const { close, d } = setup("user_unconfirmed");
+  await setAutomations(d, true);
+  const board = await accountsBoard(d, { fresh: true });
+  const harbor = board.accounts.find((a) => a.company === "Harbor Fabrication")!;
+  const mesa = board.accounts.find((a) => a.company === "Mesa Pipe & Supply")!;
+  assert.equal(harbor.seen, "not_opened"); assert.equal(mesa.seen, "not_opened");
+  // Harbor already had two without an open; Mesa none.
+  for (let i = 0; i < UNCONFIRMED_MAX_BUMPS; i++) {
+    await store.putAutomation({ id: `acti_unc_${i}`, repId: d.rep.closeUserId, leadId: harbor.leadId, company: harbor.company, to: harbor.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (20 - i * 5) * 86400e3).toISOString(), status: "sent", statusAt: new Date(Date.now() - (20 - i * 5) * 86400e3).toISOString(), note: null, checkedAt: null });
+  }
+  const r = await planBumps(d);
+  assert.ok(r.skipped.some((s) => s.company === "Harbor Fabrication" && /no sign they got any of it/.test(s.why)), JSON.stringify(r.skipped));
+  const m = r.planned.find((p) => p.leadId === mesa.leadId);
+  if (mesa.bumpDue) {
+    assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
+    assert.equal(m!.variant, "landed");
+    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /landed in junk/.test(e.body));
+    assert.ok(email, "the bump asks whether it landed");
+  }
 });

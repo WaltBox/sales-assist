@@ -116,6 +116,8 @@ export function greetName(name: string | null | undefined): string | null {
 const VARIANTS: Record<string, string> = {
   // Friday send (Walt 10/2): pricing back Monday morning is the hook, so Monday has to deliver.
   friday: "Happy Friday! Bumping this back to the top before the weekend. If there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
+  // For an account that's never shown an open (Walt 10/5): ask straight out whether it landed; junk folders eat a lot of these.
+  landed: "Bumping this back to the top in case it landed in junk. If there's an RFQ on your desk, send it over and I'll price it.",
 };
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
   const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
@@ -136,13 +138,14 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   const latest = opts.onlyTo ? emails.find((e) => involves(e, opts.onlyTo!)) : emails.find(external);
   const lastOut = emails.find((e) => e.direction === "outgoing");
 
-  // Guardrail: emailed under 3 business days ago with no reply or call since.
+  // Guardrail: emailed inside the cadence (two business days, Walt 10/5) with no reply or call since.
+  const MIN_GAP_BUSINESS_DAYS = 2;
   if (lastOut && !opts.force) {
     const sentAt = new Date(when(lastOut));
     const replied = emails.some((e) => e.direction === "incoming" && when(e) > when(lastOut));
     const calledSince = ctx.calls.some((c) => c.direction === "outbound" && c.date_created > when(lastOut));
     const days = businessDaysBetween(sentAt, now, d.rep.timeZone);
-    if (days < 3 && !replied && !calledSince) {
+    if (days < MIN_GAP_BUSINESS_DAYS && !replied && !calledSince) {
       const ago = days === 0 ? "earlier today" : `${days} business day${days === 1 ? "" : "s"} ago`;
       return { status: "warn", warning: `You emailed them ${ago} with no reply or call since. Send anyway?` };
     }

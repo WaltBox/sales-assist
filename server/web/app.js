@@ -448,7 +448,7 @@ const HEAT = {
 // Where the line card stands: a person opened it, it landed but nobody's opened it, or it never arrived.
 const CARD = {
   opened: ["Opened", "A person opened the line card."],
-  landed: ["Not opened", "Delivered, but no person has opened it yet (a spam filter may have)."],
+  landed: ["Not confirmed", "Delivered, but no person has opened it yet (a spam filter may have). Still in the email sequence, for two bumps; then it's a call to confirm the address."],
   bounced: ["Bounced", "It never arrived: bounced or blocked. They haven't received the line card."],
 };
 function cardState(a) { return a.seen === "bounced" ? "bounced" : (a.seen === "opened" || a.seen === "replied" || a.seen === "confirmed") ? "opened" : "landed"; }
@@ -456,7 +456,7 @@ function cardText(a) {
   const o = a.opens, st = cardState(a);
   return st === "bounced" ? `Bounced: they never got it`
     : st === "opened" ? `Opened ${o.person}×${o.app ? ` in ${o.app}` : ""}${o.last ? `, last ${shortDate(o.last)}` : a.seen === "replied" ? " (they replied)" : a.seen === "confirmed" ? " (they said so on a call)" : ""}`
-      : o.filter ? `Landed, not opened (only a spam filter touched it)` : o.maybe ? `Landed, maybe opened` : `Landed, not opened yet`;
+      : o.filter ? `Landed, not opened (only a spam filter touched it) · in the sequence, unconfirmed` : o.maybe ? `Landed, maybe opened · in the sequence, unconfirmed` : `Landed, not opened yet · in the sequence, unconfirmed`;
 }
 
 // RFQ potential: how much PVF buying they do at all, read from their site. Steady accounts are worth more calls at any warmth.

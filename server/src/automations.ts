@@ -12,7 +12,7 @@ import { clearPick, listMemes, memeFor, memesSeen, type Meme } from "./memes.js"
 // Shortly before each send, the server checks again: if they replied, sent a file, or bounced,
 // the email is pulled back to a draft.
 
-export const DAILY_CAP = 150; // Walt 10/5: the whole wave goes, not 15 a day
+export const DAILY_CAP = 200; // Walt 10/5: the whole wave goes, not 15 a day
 /**
  * The cadence, in business days between an account's automatic emails. It was a 3/5/7 test (Walt 10/2); since
  * 10/5 it's two for everyone (the stored arms from the test were cleared). Kept as a list so a new test is one edit.
@@ -22,6 +22,12 @@ export const CADENCE_ARMS = [2] as const;
 const RAIL_LOOKBACK_DAYS = 15;
 /** After this many automatic bumps an account stops getting them: it comes back as a call. */
 export const MAX_BUMPS = 6; // Walt 10/5: at two days apart, six is about three weeks
+/**
+ * An account that's never shown an open or a reply gets this many before the sequence stops for it (Walt 10/5):
+ * a dead inbox that keeps getting mail drags down delivery for everyone else. An open, a reply, or a call that
+ * confirms they have it puts them back on the full run.
+ */
+export const UNCONFIRMED_MAX_BUMPS = 2;
 
 /** The account's cadence arm, dealt once at random and kept. */
 export async function armFor(d: Deps, leadId: string, arms?: Record<string, number>): Promise<number> {
@@ -185,21 +191,27 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` });
       continue;
     }
+    const unconfirmed = a.seen === "not_opened" || a.seen === "maybe";
+    if (unconfirmed && nth >= UNCONFIRMED_MAX_BUMPS) {
+      skipped.push({ company: a.company, why: `${UNCONFIRMED_MAX_BUMPS} automatic emails and no sign they got any of it; call to confirm the address.` });
+      continue;
+    }
     const onCadence = a.next.kind !== "bump";
     const base = {
       repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
       label: onCadence ? `Get a first RFQ from ${a.contact.name?.split(/\s+/)[0] || a.company}` : a.next.label,
-      reason: onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
+      reason: unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed): asking whether it landed. (${a.next.tag}: ${a.next.label} stays on the books.)`
+        : onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
       createdAt: now.toISOString(), checkedAt: null,
     };
     try {
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
-      const r = await writeFollowUp(d, a.leadId, { schedule: { stagger: i * 6 }, template: { meme, nth } });
+      const r = await writeFollowUp(d, a.leadId, { schedule: { stagger: i * 6 }, template: { meme, nth, variant: unconfirmed ? "landed" : null } });
       if (r.status === "warn") {
         skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") });
         continue;
       }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, variant: null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -399,15 +411,20 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
     if (a.rfq) continue; // sent an RFQ: out of the sequence; following up on the quote is the rep's job
     // Bumps due now go out the next weekday morning; waiting ones on their due date.
     const autoWaiting = a.next.kind === "waiting" && a.next.due && /· bump |· email /.test(a.next.label);
-    if (a.next.kind !== "bump" && !autoWaiting) continue;
-    const due = new Date(Math.max(new Date(a.next.due ?? now.toISOString()).getTime(), now.getTime()));
+    // The cadence can say "due" when the board shows a call or a rescue (10/5): same rule as the planner.
+    if (a.next.kind !== "bump" && !autoWaiting && !a.bumpDue) continue;
+    const nth = everSent.filter((x) => x.leadId === a.leadId && x.status === "sent").length;
+    const unconfirmed = a.seen === "not_opened" || a.seen === "maybe";
+    if (nth >= MAX_BUMPS || (unconfirmed && nth >= UNCONFIRMED_MAX_BUMPS)) continue;
+    const due = new Date(Math.max(new Date(a.next.kind === "bump" || autoWaiting ? a.next.due ?? now.toISOString() : now.toISOString()).getTime(), now.getTime()));
     const sendOn = morningOf(due, d.rep.timeZone);
     if (sendOn.getTime() > horizon) continue;
-    const what = /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
+    const what = unconfirmed ? "Bump, asking if it landed" : /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
+    const reason = unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed). ${a.next.tag}: ${a.next.label} stays on the books.`
+      : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;
     const first = greetName(a.contact.name);
-    const nth = everSent.filter((x) => x.leadId === a.leadId && x.status === "sent").length;
-    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason: a.next.detail, held: held.has(a.leadId), meme, preview: bumpBodyFor(first, d.rep.name, nth) });
+    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null) });
   }
   return out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
 }
