@@ -594,3 +594,4 @@ textarea { resize: vertical; min-height: 70px; }
 .erow { cursor: pointer; }
 .elist.answer .label { color: var(--green); }
 .elist.answer .erow { border-color: var(--green); }
+.esearch { padding: 8px 10px; font-size: 14px; }

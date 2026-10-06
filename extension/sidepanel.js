@@ -1687,7 +1687,7 @@ function alertsBlock(alerts) {
 }
 
 // ---------- the Emails tab (Walt 10/6): automatic emails sent and queued, who opened, who replied ----------
-let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today", show: "all", updatedAt: null, timer: null };
+let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today", show: "all", updatedAt: null, timer: null, q: "" };
 async function loadEmails() {
   if (emails.loading) return;
   emails.loading = true; emails.error = null; render();
@@ -1703,12 +1703,20 @@ async function loadEmails() {
   clearTimeout(emails.timer);
   emails.timer = setTimeout(() => { if (view === "emails") loadEmails(); }, 60_000);
 }
+function renderEmailsKeepFocus() {
+  const pos = document.querySelector(".esearch")?.selectionStart ?? null;
+  render();
+  const box = document.querySelector(".esearch");
+  if (box) { box.focus(); if (pos != null) box.setSelectionRange(pos, pos); }
+}
 function renderEmails() {
   const out = [header({ text: "Emails", cls: "phase" })];
   const rows = emails.rows || [];
   const today = new Date().toDateString();
   const isToday = (e) => e.at && new Date(e.at).toDateString() === today;
-  const shown = emails.filter === "today" ? rows.filter(isToday) : rows;
+  const q = emails.q.trim().toLowerCase();
+  const matches = (e) => !q || `${e.company} ${e.to} ${e.subject || ""}`.toLowerCase().includes(q);
+  const shown = (emails.filter === "today" ? rows.filter(isToday) : rows).filter(matches);
   const queuedAll = shown.filter((e) => e.status === "scheduled").sort((a, b) => (a.at || "").localeCompare(b.at || ""));
   const sentAll = shown.filter((e) => e.status === "sent");
   // What the counts in the header filter to when tapped (10/6: "I want to navigate this").
@@ -1760,6 +1768,7 @@ function renderEmails() {
     ]),
     S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
     el("div", { class: "chips-row" }, [["today", "Today"], ["week", "Last 7 days"]].map(([k, label]) => el("button", { class: `chip${emails.filter === k ? " on" : ""}`, text: label, onclick: () => { emails.filter = k; render(); } }))),
+    el("input", { class: "esearch", type: "search", placeholder: "Search company or email", value: emails.q, oninput: (ev) => { emails.q = ev.target.value; renderEmailsKeepFocus(); } }),
     emails.error ? el("div", { class: "flag", text: emails.error }) : null,
     emails.show !== "all" ? el("p", { class: "muted", style: "font-size:12px", text: `Showing ${emails.show === "reached" ? "accounts you reached today (hidden from the main list so you don't call them twice)" : emails.show === "tried" ? "accounts you called today and didn't get" : `${emails.show} only`}. Tap the count again for everything.` }) : null,
     !emails.loading && !sent.length && !queued.length ? el("p", { class: "empty", text: emails.show !== "all" ? "Nothing matches." : emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
