@@ -9,7 +9,7 @@ import {
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
 import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshProfiles } from "./potential.js";
-import { syncDialViews } from "./dialviews.js";
+import { markReachedFromCalls, syncDialViews } from "./dialviews.js";
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
@@ -264,6 +264,8 @@ export function createApp(appDeps: AppDeps) {
     if (!config.demo && board.accounts.some((a) => !a.potential)) background(refreshProfiles(d, board.accounts, { max: 12 }).then(() => bustBoard(d)), "rfq potential");
     // Today's calls get their briefs written now, so the call card opens instantly (10/6).
     if (!config.demo) background(warmLeads(d, callListIds(board.accounts)), "warm today's calls");
+    // Anyone you've reached today, by Close's call record, comes off today's call lists (10/6).
+    if (!config.demo) background(markReachedFromCalls(d, board.accounts), "reached today");
     return board;
   }));
   // RFQ potential: read every account's site now (or one account's again), and the rep's own answer after a call.
@@ -505,7 +507,8 @@ export function createApp(appDeps: AppDeps) {
         // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
         if (!config.demo) await accountsBoard(d).then((b) => refreshProfiles(d, b.accounts, { max: 6 })).then((n) => { if (n) bustBoard(d); })
           .catch((err) => console.error(`rfq potential ${rep.email}:`, (err as Error).message));
-        // The Close call lists follow the board, minus anyone called today (10/6).
+        // Anyone reached today (Close's calls) gets the mark, then the Close call lists follow the board minus them (10/6).
+        if (!config.demo) await accountsBoard(d).then((b) => markReachedFromCalls(d, b.accounts)).catch((err) => console.error(`reached ${rep.email}:`, (err as Error).message));
         if (!config.demo) await syncDialViews(d).catch((err) => console.error(`dial views ${rep.email}:`, (err as Error).message));
         // Today's call list gets its briefs written ahead of the first call (10/6).
         if (!config.demo) await accountsBoard(d).then((b) => warmLeads(d, callListIds(b.accounts))).catch((err) => console.error(`warm ${rep.email}:`, (err as Error).message));

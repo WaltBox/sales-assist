@@ -44,6 +44,24 @@ export async function markReached(d: Deps, leadId: string): Promise<boolean> {
   } catch (err) { console.error(`[reached] ${leadId}:`, (err as Error).message); return false; }
 }
 
+/**
+ * Reached today, from Close's own calls (10/6: Walt's 9:31 call to Probst had no tap and no pipeline run, so the
+ * list kept him). Any account whose last real conversation is today gets today's date on the lead. Remembered per
+ * day in memory so the same lead isn't written every few minutes.
+ */
+const markedToday = new Map<string, string>(); // leadId -> local date
+export async function markReachedFromCalls(d: Deps, accounts: Array<Pick<Account, "leadId" | "touches">>): Promise<number> {
+  const now = d.now?.() ?? new Date();
+  const today = localDate(now, d.rep.timeZone);
+  let n = 0;
+  for (const a of accounts) {
+    if (!a.touches.lastTalk || localDate(new Date(a.touches.lastTalk), d.rep.timeZone) !== today) continue;
+    if (markedToday.get(a.leadId) === today) continue;
+    if (await markReached(d, a.leadId)) { markedToday.set(a.leadId, today); n++; }
+  }
+  return n;
+}
+
 /** The Close query: these leads, minus anyone whose "Last reached" is today. */
 export function dialQuery(leadIds: string[], fieldId: string, tz: string, now: Date) {
   // Close wants a local calendar date here ("fixed_local_date"), not an instant; an ISO timestamp is rejected.

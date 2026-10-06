@@ -38,3 +38,21 @@ test("the views are created once by name, then updated in place each morning", a
   assert.deepEqual(again.map((v) => v.id), first.map((v) => v.id));
   assert.equal((await close.savedSearches()).length, 4);
 });
+
+test("reached today from Close's calls: a conversation today marks the lead, once; yesterday's doesn't", async () => {
+  const { markReachedFromCalls, REACHED_FIELD } = await import("../src/dialviews.js");
+  const close = new FakeClose({ calls: [roddaCall()] });
+  const now = new Date("2026-10-06T17:00:00Z");
+  const d: Deps = { close, llm: demoLlm, now: () => now, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: "user_reached_calls", timeZone: "America/Los_Angeles" } };
+  const t = (lastTalk: string | null) => ({ dials: 1, talked: lastTalk ? 1 : 0, voicemails: 0, noAnswer: 0, emailsOut: 0, emailsIn: 0, firstTouch: null, lastTalk });
+  const accounts = [
+    { leadId: "lead_today", touches: t("2026-10-06T16:31:00Z") },
+    { leadId: "lead_yesterday", touches: t("2026-10-05T20:00:00Z") },
+    { leadId: "lead_never", touches: t(null) },
+  ];
+  assert.equal(await markReachedFromCalls(d, accounts), 1);
+  const field = (await close.leadCustomFields()).find((f) => f.name === REACHED_FIELD)!;
+  assert.equal(close.leadFields_.lead_today?.[`custom.${field.id}`], "2026-10-06");
+  assert.equal(close.leadFields_.lead_yesterday, undefined);
+  assert.equal(await markReachedFromCalls(d, accounts), 0, "not written again the same day");
+});
