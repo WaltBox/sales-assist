@@ -145,11 +145,13 @@ async function loadBrief(st, refresh = false) {
   if (!st.brief) st.phase = "loading";
   render();
   try {
-    const [r, rescue, purch] = await Promise.all([
+    const [r, rescue, purch, holdInfo] = await Promise.all([
       api(`/api/leads/${st.leadId}/brief${refresh ? "?refresh=1" : ""}`),
       api(`/api/leads/${st.leadId}/rescue`).catch(() => ({ draft: null })),
       api(`/api/leads/${st.leadId}/purchasing`).catch(() => null),
+      api(`/api/leads/${st.leadId}/hold`).catch(() => null),
     ]);
+    st.cooling = holdInfo && holdInfo.cooling ? holdInfo.cooling : null;
     // The purchasing cycle as heard so far, and the one question to ask next (Walt 10/5).
     if (purch) st.purch = { ...purch, edit: null, busy: false, saved: false };
     // Their line card was never opened: the rescue email is drafted, ready to send once they pick up.
@@ -952,6 +954,11 @@ function shotDownButton(st) {
   const open = () => { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); };
   if (!r.open) return el("div", { class: "shotwrap" }, [
     el("button", { class: "btn small shotbtn", text: "Shot down", title: "They're not interested: no more calls or automatic emails", onclick: open }),
+    el("button", { class: `btn small${st.cooling ? " cooling" : ""}`, text: st.cooling ? "Cooling off" : "Cool off", title: st.cooling ? `Out of the automatic emails${st.cooling.until ? ` until ${new Date(st.cooling.until).toLocaleDateString()}` : ""}. Tap to put them back in.` : "Out of the automatic emails for 30 days (they asked for fewer); back in on their own after", onclick: async () => {
+      const on = !st.cooling;
+      try { const r = await api(`/api/leads/${st.leadId}/hold`, { hold: on, days: on ? 30 : null, why: on ? "asked for fewer emails" : null }); st.cooling = on ? { until: r.until } : null; } catch (e) { st.error = e.message; }
+      render();
+    } }),
     r.undone ? el("span", { class: "muted small", text: `Undone: back to ${r.undone}. The callbacks it cleared stay done, so tap an outcome to set a new one.` }) : null,
   ]);
   const save = async () => {
@@ -1705,6 +1712,7 @@ function renderEmails() {
     el("span", { class: "etime mono", text: emails.filter === "today" ? when(e.at) : `${day(e.at)} ${when(e.at)}` }),
     el("span", { class: "emain" }, [el("span", { class: "eco", text: e.company }), el("span", { class: "eto", text: e.to })]),
     el("span", { class: "eflags" }, [
+      e.calledToday ? el("span", { class: `chip3 ${e.calledToday.reached ? "good" : "warn"}`, title: e.calledToday.reached ? "You reached them today" : "You called today and didn't get them: still owed a call", text: `${e.calledToday.reached ? "Reached" : "Tried"} ${new Date(e.calledToday.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` }) : null,
       e.status === "scheduled" ? el("span", { class: "chip3 soft", text: "Queued" }) : null,
       e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" }) : e.opened ? el("span", { class: "chip3 good", text: "Opened" })
         : e.status === "sent" && e.seen ? el("span", { class: `chip3 seen-${e.seen.level}`, title: e.seen.why, text: { likely: `Likely opened · ${e.seen.chance}%`, unsure: `Can't tell · ${e.seen.chance}%`, unlikely: `Probably not · ${e.seen.chance}%`, opened: "Opened" }[e.seen.level] }) : null,
@@ -1945,6 +1953,7 @@ function glanceBlock(st) {
     ]),
     makes ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "They do" }), el("span", { text: makes })]) : null,
     uses.length ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "They use" }), el("span", {}, uses.flatMap((u, i) => (i ? [el("span", { class: "muted", text: " · " }), u] : [u])))]) : null,
+    h.myCalls && h.myCalls.last && new Date(h.myCalls.last).toDateString() === new Date().toDateString() ? el("div", { class: "g-row called" }, [el("span", { class: "label", text: "Today" }), el("strong", { text: `You already called at ${new Date(h.myCalls.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` })]) : null,
     heard.incumbent ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "Buy from" }), el("strong", { text: heard.incumbent.value })]) : null,
     heard.rfq_volume ? el("div", { class: "g-row" }, [el("span", { class: "label", text: "RFQs" }), el("span", { text: `${heard.rfq_volume.value}${heard.rfq_timing ? `, ${heard.rfq_timing.value}` : ""}${heard.vendor_policy ? ` · ${heard.vendor_policy.value}` : ""}` })]) : null,
   ]);

@@ -268,6 +268,17 @@ export class CloseClient {
   }
 
   /** Delete a draft: a rescue draft that a scheduled bump has made redundant (Walt 10/2: never two emails). */
+  /** Smart Views (saved searches), for the call lists the assistant keeps in Close (10/6). */
+  savedSearches() {
+    return this.request<{ data: Array<{ id: string; name: string }> }>("GET", "/saved_search/?_fields=id,name&_limit=100").then((r) => r.data);
+  }
+  createSavedSearch(body: { name: string; type: "lead"; is_shared: boolean; s_query: unknown }) {
+    return this.request<{ id: string }>("POST", "/saved_search/", body);
+  }
+  updateSavedSearch(id: string, body: { name?: string; s_query: unknown }) {
+    return this.request<{ id: string }>("PUT", `/saved_search/${encodeURIComponent(id)}/`, body);
+  }
+
   deleteEmail(id: string) {
     return this.request<void>("DELETE", `/activity/email/${encodeURIComponent(id)}/`);
   }
@@ -336,6 +347,13 @@ export class CloseClient {
     });
   }
 
+  /** Any lead fields, including custom ones ({ "custom.cf_x": value }). */
+  updateLead(leadId: string, body: Record<string, unknown>) {
+    return this.request<{ id: string }>("PUT", `/lead/${encodeURIComponent(leadId)}/`, body);
+  }
+  createLeadCustomField(body: { name: string; type: "date" | "text" | "number" }) {
+    return this.request<{ id: string; name: string }>("POST", "/custom_field/lead/", body);
+  }
   updateLeadStatus(leadId: string, statusId: string) {
     return this.request<{ id: string }>("PUT", `/lead/${encodeURIComponent(leadId)}/`, { status_id: statusId });
   }

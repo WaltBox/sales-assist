@@ -885,7 +885,7 @@ function mailRows(au, tab) {
     ].sort((a, b) => a.sortAt.localeCompare(b.sortAt));
   }
   if (tab === "other") {
-    return [...au.other, ...(au.held || []).map((f) => ({ id: `held_${f.leadId}`, heldRow: true, leadId: f.leadId, company: f.company, to: f.to || "", subject: f.label, label: f.label, reason: f.reason, status: "held", statusAt: null }))];
+    return [...au.other, ...(au.held || []).map((f) => ({ id: `held_${f.leadId}`, heldRow: true, leadId: f.leadId, company: f.company, to: f.to || "", subject: f.label, label: f.label, reason: f.reason, status: "held", statusAt: null, heldUntil: f.heldUntil || null, heldWhy: f.heldWhy || null }))];
   }
   return au[tab] || [];
 }
@@ -1090,7 +1090,7 @@ function emailsSection() {
 function mailRow(m) {
   const open = !!state.mailOpen[m.id];
   const when = m.status === "sent" ? m.statusAt : ["scheduled", "planned"].includes(m.status) ? m.scheduledFor : m.statusAt;
-  const hold = async (e, on) => { e.stopPropagation(); e.currentTarget.disabled = true; await api(`/api/leads/${m.leadId}/hold`, { hold: on }).catch((err) => alert(err.message)); await reloadAutos(); load(true); };
+  const hold = async (e, on, days) => { e.stopPropagation(); e.currentTarget.disabled = true; await api(`/api/leads/${m.leadId}/hold`, { hold: on, days: days || null }).catch((err) => alert(err.message)); await reloadAutos(); load(true); };
   const row = el("div", { class: `gr mgr${open ? " open" : ""}`, onclick: () => { state.mailOpen[m.id] = !open; render(); } }, [
     m.future ? el("span", { class: "whenf" }, [el("span", { class: "mono", text: dayOf(when) }), el("span", { class: "sub2", text: "8:11–11am their time" })])
       : el("span", { class: "mono", text: when ? timeOf(when) : "–" }),
@@ -1105,8 +1105,10 @@ function mailRow(m) {
     el("span", { class: "next", text: m.label }),
     el("span", { class: `mstatus ${m.status}`, text: STATUS_TEXT[m.status] || m.status }),
     el("div", { class: "acts" }, [
-      m.future ? el("button", { class: "btn small", text: "Hold", title: "Never send this account automatic emails", onclick: (e) => hold(e, true) }) : null,
-      m.heldRow ? el("button", { class: "btn small", text: "Resume", onclick: (e) => hold(e, false) }) : null,
+      m.future ? el("button", { class: "btn small", text: "Cool off 30d", title: "Out of the automatic emails for 30 days, then back in on its own", onclick: (e) => hold(e, true, 30) }) : null,
+      m.future ? el("button", { class: "btn small", text: "90d", title: "Out for 90 days", onclick: (e) => hold(e, true, 90) }) : null,
+      m.future ? el("button", { class: "linkbtn small3", text: "for good", title: "Out until you put them back", onclick: (e) => hold(e, true, null) }) : null,
+      m.heldRow ? el("button", { class: "btn small", text: "Put back", onclick: (e) => hold(e, false) }) : null,
       m.status === "scheduled" ? el("button", {
         class: "btn small", text: "Skip",
         onclick: async (e) => { e.stopPropagation(); e.currentTarget.disabled = true; await api(`/api/automations/${m.id}/skip`, {}).catch((err) => alert(err.message)); reloadAutos(); },
@@ -1119,7 +1121,7 @@ function mailRow(m) {
     el("p", { class: "why" }, [el("strong", { text: "Why: " }), m.reason]),
     m.future ? el("p", { class: "why muted", text: "It's scheduled that morning as a reply in their thread. It won't go out if they reply, send a file, or you book a callback first." }) : null,
     m.future && m.preview ? bumpPreview(m) : null,
-    m.heldRow ? el("p", { class: "why muted", text: "On hold: this account never gets automatic emails. Resume to put it back." }) : null,
+    m.heldRow ? el("p", { class: "why muted", text: m.heldUntil ? `Cooling off until ${dayOf(m.heldUntil)}${m.heldWhy ? ` (${m.heldWhy})` : ""}; back in the automatic emails on its own after that. Put back to end it early.` : `On hold${m.heldWhy ? ` (${m.heldWhy})` : ""}: no automatic emails until you put them back.` }) : null,
     m.note ? el("p", { class: "why muted", text: m.note }) : null,
     m.body ? el("div", { class: "draft" }, [el("p", { class: "label", text: `To ${m.to} · ${m.subject}` }), el("p", { class: "body", text: m.body })]) : null,
   ])];

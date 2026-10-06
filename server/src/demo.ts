@@ -44,7 +44,7 @@ export class FakeClose implements Close {
   async callOutcomes() { return new Map<string, string>(); }
   async leadName(id: string) { return this.names.get(id) ?? this.lead_.display_name; }
   async leadStatuses() { return statuses; }
-  async leadCustomFields() { return customFields; }
+  async leadCustomFields() { return [...customFields, ...this.customFields_]; }
   async notes() { return []; }
   async openTasks(): Promise<CloseTask[]> { return []; }
   /** The simulated call: dialing 6s after the panel first polls, ends at 14s, transcript arrives at 20s. */
@@ -112,6 +112,15 @@ export class FakeClose implements Close {
     this.writes.push({ op: "unschedule", body: { id } });
     return { id, status: "draft" };
   }
+  customFields_: Array<{ id: string; name: string }> = [];
+  leadFields_: Record<string, Record<string, unknown>> = {};
+  async createLeadCustomField(body: { name: string; type: string }) { const f = { id: `cf_demo${this.customFields_.length + 1}`, name: body.name }; this.customFields_.push(f); this.record("custom-field", body); return f; }
+  async updateLead(leadId: string, body: Record<string, unknown>) { this.leadFields_[leadId] = { ...(this.leadFields_[leadId] ?? {}), ...body }; this.record("lead-update", { leadId, ...body }); return { id: leadId }; }
+  savedSearches_: Array<{ id: string; name: string; s_query: unknown }> = [];
+  async savedSearches() { return this.savedSearches_.map(({ id, name }) => ({ id, name })); }
+  async createSavedSearch(body: { name: string; s_query: unknown }) { const id = `save_demo${this.savedSearches_.length + 1}`; this.savedSearches_.push({ id, name: body.name, s_query: body.s_query }); this.record("saved-search", body); return { id }; }
+  async updateSavedSearch(id: string, body: { name?: string; s_query: unknown }) { const v = this.savedSearches_.find((x) => x.id === id); if (v) { v.s_query = body.s_query; if (body.name) v.name = body.name; } this.record("saved-search-update", { id, ...body }); return { id }; }
+
   async deleteEmail(id: string) {
     this.statusOf.set(id, "deleted");
     this.writes.push({ op: "delete", body: { id } });

@@ -197,7 +197,8 @@ test("one tap saves status and callback now; the transcript then fills in the re
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_queueTest" } };
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_demoRoddaCall0001", rating: "B" });
   // The tap saves status + a placeholder callback right away…
-  assert.deepEqual(close.writes.map((w) => w.op).sort(), ["status", "task"]);
+  assert.deepEqual(close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field").sort(), ["status", "task"]);
+  assert.ok(close.writes.some((w) => w.op === "lead-update"), "Reached buyer puts today's date on the lead (Last reached)");
   assert.equal(r.saved[0], "status Qualified");
   assert.ok(r.queued);
   await assert.rejects(quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_demoRoddaCall0001" }), /already saved/);
@@ -212,7 +213,8 @@ test("one tap saves status and callback now; the transcript then fills in the re
   assert.equal(item.smartTask?.changed, true);
   // …and contacts, note, email draft and the extra task go straight into Close, no approval step.
   assert.equal(item.state, "saved");
-  const ops = close.writes.map((w) => w.op);
+  // (Last reached writes, from the tap, aren't part of this order.)
+  const ops = close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field");
   for (const op of ["note", "contact", "email"]) assert.ok(ops.includes(op), `${op} saved`);
   assert.equal(ops.filter((o) => o === "task").length, 2, "placeholder + the Oct 13 intro call");
   assert.ok(!ops.slice(2).includes("status"), "status was already saved by the tap");

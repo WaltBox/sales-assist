@@ -9,6 +9,7 @@ import {
 import { ClaudeError } from "./claude.js";
 import { CloseError } from "./close.js";
 import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshProfiles } from "./potential.js";
+import { syncDialViews } from "./dialviews.js";
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
@@ -21,7 +22,7 @@ import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store
 import { deleteMeme, listMemes, memeCounts, MemeError, memesSeen, memeStats, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
+import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, writeFollowUp } from "./followup.js";
@@ -267,6 +268,8 @@ export function createApp(appDeps: AppDeps) {
   // The rescue call: the email is drafted in Close ahead of time; afterwards, the rep marks whether they found it.
   // Automatic emails: what's going out today and why, what went out, what was skipped or stopped.
   app.get("/api/automations", authed, route((_req, d) => automationsView(d)));
+  // The call lists in Close, rebuilt from the board: talked before, no RFQ, by warmth, minus anyone called today (10/6).
+  app.post("/api/dial-views/refresh", authed, route(async (_req, d) => ({ views: await syncDialViews(d) })));
   // The side panel's Emails tab: sent and queued automatic emails, with opens and replies since (10/6).
   app.get("/api/emails/sent", authed, route(async (req, d) => ({ emails: await sentEmailsView(d, Math.min(Number(req.query.days) || 7, 30)) })));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));
@@ -279,7 +282,9 @@ export function createApp(appDeps: AppDeps) {
     stagger: typeof req.body?.stagger === "number" ? req.body.stagger : 2,
     test: req.body?.test === true,
   })));
-  app.post("/api/leads/:leadId/hold", authed, route((req, d) => holdAccount(d, leadId(req), req.body?.hold !== false)));
+  // Cooling periods (10/6): out of the automatic emails for `days` (or for good), back in on their own after; `hold: false` puts them back now.
+  app.post("/api/leads/:leadId/hold", authed, route((req, d) => holdAccount(d, leadId(req), req.body?.hold !== false, { days: Number(req.body?.days) || null, why: typeof req.body?.why === "string" ? req.body.why.slice(0, 200) : null })));
+  app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));
   // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
   app.get("/api/memes", authed, route(async (req, d) => {
     const memes = await listMemes();
@@ -484,6 +489,8 @@ export function createApp(appDeps: AppDeps) {
         // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
         if (!config.demo) await accountsBoard(d).then((b) => refreshProfiles(d, b.accounts, { max: 6 })).then((n) => { if (n) bustBoard(d); })
           .catch((err) => console.error(`rfq potential ${rep.email}:`, (err as Error).message));
+        // The Close call lists follow the board, minus anyone called today (10/6).
+        if (!config.demo) await syncDialViews(d).catch((err) => console.error(`dial views ${rep.email}:`, (err as Error).message));
         // Today's call list gets its briefs written ahead of the first call (10/6).
         if (!config.demo) await accountsBoard(d).then((b) => warmLeads(d, callListIds(b.accounts))).catch((err) => console.error(`warm ${rep.email}:`, (err as Error).message));
       }

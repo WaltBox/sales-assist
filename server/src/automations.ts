@@ -376,29 +376,59 @@ export async function skipAutomation(d: Deps, id: string) {
   return next;
 }
 
-// ---------- holds: accounts that never get an automatic email ----------
+// ---------- holds and cooling periods: accounts out of the automatic emails, for good or for a while ----------
 
-async function heldAccounts(d: Deps): Promise<Set<string>> {
-  return new Set((await store.getSetting<string[]>(d.rep.closeUserId, "held")) ?? []);
+/** A cooling period (Walt 10/6, after Vicki at Hupp asked for fewer emails): out of the sequence until `until` (null = for good). */
+export type Cooling = { since: string; until: string | null; why: string | null };
+async function coolings(d: Deps): Promise<Record<string, Cooling>> {
+  const map = (await store.getSetting<Record<string, Cooling>>(d.rep.closeUserId, "cooling").catch(() => null)) ?? {};
+  // The older on/off list: a hold with no end.
+  for (const id of (await store.getSetting<string[]>(d.rep.closeUserId, "held").catch(() => null)) ?? []) map[id] ??= { since: new Date(0).toISOString(), until: null, why: null };
+  return map;
 }
-
-export async function holdAccount(d: Deps, leadId: string, hold: boolean) {
-  const held = await heldAccounts(d);
-  if (hold) held.add(leadId); else held.delete(leadId);
-  await store.putSetting(d.rep.closeUserId, "held", [...held]);
-  return { leadId, held: hold };
+/** Who's out of the sequence right now: a cooling period that hasn't ended, or a hold. Expired ones are back in on their own. */
+async function heldAccounts(d: Deps): Promise<Set<string>> {
+  const now = (d.now?.() ?? new Date()).toISOString();
+  return new Set(Object.entries(await coolings(d)).filter(([, c]) => !c.until || c.until > now).map(([id]) => id));
+}
+export async function coolingFor(d: Deps, leadId: string): Promise<Cooling | null> {
+  const c = (await coolings(d))[leadId];
+  const now = (d.now?.() ?? new Date()).toISOString();
+  return c && (!c.until || c.until > now) ? c : null;
+}
+/**
+ * Put an account on a cooling period (`days`; omit for a hold with no end) or take it off. Either way it's written
+ * to the lead in Close as a note, so the reason is on the record.
+ */
+export async function holdAccount(d: Deps, leadId: string, hold: boolean, opts: { days?: number | null; why?: string | null } = {}) {
+  const now = d.now?.() ?? new Date();
+  const map = await coolings(d);
+  const legacy = ((await store.getSetting<string[]>(d.rep.closeUserId, "held").catch(() => null)) ?? []).filter((id) => id !== leadId);
+  let until: string | null = null;
+  if (hold) {
+    until = opts.days ? new Date(now.getTime() + opts.days * DAY).toISOString() : null;
+    map[leadId] = { since: now.toISOString(), until, why: opts.why ?? null };
+    await d.close.createNote(leadId, `[Cooling] Out of the automatic emails ${until ? `until ${until.slice(0, 10)}` : "until further notice"}${opts.why ? ` · ${opts.why}` : ""}`, false).catch(() => undefined);
+  } else {
+    delete map[leadId];
+    await d.close.createNote(leadId, "[Cooling] Back in the automatic emails.", false).catch(() => undefined);
+  }
+  await store.putSetting(d.rep.closeUserId, "cooling", map);
+  await store.putSetting(d.rep.closeUserId, "held", legacy);
+  return { leadId, held: hold, until };
 }
 
 // ---------- the forecast: who gets an automatic email, and when, if nothing changes ----------
 
-export type Forecast = { leadId: string; company: string; to: string | null; sendOn: string; label: string; reason: string; held: boolean; meme: Meme | null; preview: string | null };
+export type Forecast = { leadId: string; company: string; to: string | null; sendOn: string; label: string; reason: string; held: boolean; heldUntil?: string | null; heldWhy?: string | null; meme: Meme | null; preview: string | null };
 
 /** Every account whose next step turns into an automatic email in the next two weeks. */
 export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   const now = d.now?.() ?? new Date();
-  const [board, held, recent] = await Promise.all([
+  const [board, held, cool, recent] = await Promise.all([
     accountsBoard(d),
     heldAccounts(d),
+    coolings(d),
     store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 7 * DAY).toISOString()),
   ]);
   const scheduled = new Set(recent.filter((a) => a.status === "scheduled").map((a) => a.leadId));
@@ -427,7 +457,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
       : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;
     const first = greetName(a.contact.name);
-    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null) });
+    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), heldUntil: held.has(a.leadId) ? cool[a.leadId]?.until ?? null : null, heldWhy: held.has(a.leadId) ? cool[a.leadId]?.why ?? null : null, meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null) });
   }
   return out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
 }
@@ -483,6 +513,8 @@ export type SentEmail = {
    * none on this one. "unsure": no open has ever shown for them, so the pixel may just be blocked.
    */
   seen: { level: "opened" | "likely" | "unsure" | "unlikely"; chance: number; why: string };
+  /** You already called them today: "reached" (a real conversation) or "tried" (no answer or voicemail). */
+  calledToday: { at: string; reached: boolean } | null;
 };
 function seenGuess(a: Account | undefined, sent: boolean, at: string | null, opened: boolean, replied: boolean, rfq: boolean, now: Date): SentEmail["seen"] {
   if (!sent || !at) return { level: "unsure", chance: 0, why: "Not sent yet." };
@@ -513,6 +545,14 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
     return {
       id: r.id, leadId: r.leadId, company: r.company, to: r.to, subject: r.subject, status: r.status, at, variant: r.variant ?? null, meme: r.meme ?? null,
       opened, replied, rfq, seen: seenGuess(a, r.status === "sent", at, opened, replied, rfq, now),
+      calledToday: (() => {
+        if (!a) return null;
+        const today = new Date(now.toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }) + "T00:00:00");
+        const calls = a.events.filter((e) => e.kind === "call" && new Date(e.at).toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }) === now.toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }));
+        if (!calls.length) return null;
+        void today;
+        return { at: calls[0].at, reached: !!a.touches.lastTalk && calls.some((c) => c.at === a.touches.lastTalk) };
+      })(),
     };
   }).sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
 }

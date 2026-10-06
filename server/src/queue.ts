@@ -11,6 +11,7 @@ import { businessDaysAt, formatLocal, isBackwardsMove, isOutStatus, isoWithOffse
 import { store } from "./store.js";
 import { extractPurchasing, type Purchasing } from "./purchasing.js";
 import { recordPurchasing } from "./potential.js";
+import { markReached } from "./dialviews.js";
 
 const shortDate = (d: Date, tz: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric", day: "numeric" }).format(d);
 import type { Proposals, QuickOutcome } from "./schemas.js";
@@ -134,6 +135,8 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   const tapKey = `${d.rep.closeUserId}:${leadId}:${req.call_id ?? "none"}`;
   const last = recentTaps.get(tapKey);
   if (!change && last && Date.now() - last < 10 * 60 * 1000) throw new QueueError("You already saved an outcome for this call.");
+  // A real conversation: "Last reached" is today, so today's call lists in Close drop them (10/6).
+  if (req.outcome === "reached_buyer" || req.outcome === "got_name") void markReached(d, leadId);
   recentTaps.set(tapKey, Date.now());
 
   const now = d.now?.() ?? new Date();
@@ -555,6 +558,8 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
       p.tasks = p.tasks.filter((t) => Math.abs(new Date(t.due_at).getTime() - t0) > 3 * 3600 * 1000);
     }
     reconcileAddresses(p, it.warnings);
+    // The transcript is the other proof of a conversation (someone on their side spoke).
+    if (call && transcript && call.duration >= 20 && call.recording_transcript?.utterances?.some((u) => u.speaker_side === "contact")) void markReached(d, it.leadId);
     it.purchasing = await purchasingP;
     if (it.purchasing && Object.keys(it.purchasing).length) await recordPurchasing(d, it.leadId, it.purchasing).catch(() => undefined);
     it.proposals = p;

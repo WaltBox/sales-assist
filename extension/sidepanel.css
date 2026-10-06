@@ -580,3 +580,6 @@ textarea { resize: vertical; min-height: 70px; }
 .chip3.seen-likely { color: var(--green); border-color: rgba(11, 107, 47, .45); }
 .chip3.seen-unsure { color: var(--muted); }
 .chip3.seen-unlikely { color: var(--amber); border-color: rgba(138, 90, 0, .45); }
+.chip3.warn { color: var(--amber); border-color: rgba(138, 90, 0, .45); }
+.glance .g-row.called strong { color: var(--amber); }
+.btn.cooling { color: var(--amber); border-color: var(--amber); }

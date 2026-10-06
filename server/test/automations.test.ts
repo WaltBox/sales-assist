@@ -403,3 +403,23 @@ test("the Emails tab (10/6): sent and queued rows, with whether the buyer opened
   assert.equal(h.status, "scheduled"); assert.equal(h.opened, false); assert.equal(h.at, (await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString())).find((r) => r.id === "acti_tab_harbor")!.scheduledFor);
   void close;
 });
+
+test("cooling periods (10/6): out of the sequence until the date, back in on their own after, or put back by hand", async () => {
+  const { holdAccount, coolingFor, forecast } = await import("../src/automations.js");
+  const { close, d } = setup("user_cooling");
+  const crest = (await accountsBoard(d, { fresh: true })).accounts.find((a) => a.company === "Crest Mechanical")!;
+  const r = await holdAccount(d, crest.leadId, true, { days: 30, why: "asked for fewer emails" });
+  assert.ok(r.until && new Date(r.until).getTime() > Date.now() + 29 * 86400e3);
+  assert.equal((await coolingFor(d, crest.leadId))?.why, "asked for fewer emails");
+  assert.ok((await forecast(d)).find((f) => f.leadId === crest.leadId)?.held, "held on the Coming up page");
+  assert.ok(close.writes.some((w) => w.op === "note" && /\[Cooling\] Out of the automatic emails until/.test((w.body as { note: string }).note)), "written to the lead in Close");
+  await setAutomations(d, true);
+  assert.ok(!(await planBumps(d)).planned.some((p) => p.leadId === crest.leadId), "not planned while cooling");
+  // Thirty-one days on: back in by itself.
+  const later: Deps = { ...d, now: () => new Date(Date.now() + 31 * 86400e3) };
+  assert.equal(await coolingFor(later, crest.leadId), null);
+  // Or put back by hand.
+  await holdAccount(d, crest.leadId, false);
+  assert.equal(await coolingFor(d, crest.leadId), null);
+  assert.ok(close.writes.some((w) => w.op === "note" && /Back in the automatic emails/.test((w.body as { note: string }).note)));
+});
