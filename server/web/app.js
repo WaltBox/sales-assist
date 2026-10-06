@@ -448,7 +448,7 @@ const HEAT = {
 // Where the line card stands: a person opened it, it landed but nobody's opened it, or it never arrived.
 const CARD = {
   opened: ["Opened", "A person opened the line card."],
-  landed: ["Not confirmed", "Delivered, but no person has opened it yet (a spam filter may have). Still in the email sequence, for two bumps; then it's a call to confirm the address."],
+  landed: ["Not confirmed", "Delivered, but no person has opened it yet (a spam filter may have). Still in the email sequence every two business days, until you put them on a cooling period."],
   bounced: ["Bounced", "It never arrived: bounced or blocked. They haven't received the line card."],
 };
 function cardState(a) { return a.seen === "bounced" ? "bounced" : (a.seen === "opened" || a.seen === "replied" || a.seen === "confirmed") ? "opened" : "landed"; }
@@ -528,7 +528,7 @@ function heatPage() {
       all.some((a) => !a.potential) ? el("button", { class: "linkbtn", disabled: state.potBusy, text: state.potBusy ? "Reading their sites…" : `Read ${all.filter((a) => !a.potential).length} sites now`, onclick: () => readSites(null) }) : null,
     ]),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" }) : null,
-    el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up." }),
+    el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up. Everyone stays in the two-day email sequence until you cool them off by hand." }),
     ...buckets.map((k) => el("div", { class: `heatband w-${k}` }, [
       el("div", { class: "heatlbl" }, [el("span", { class: "label", text: HEAT[k][0] }), el("span", { class: "mono muted", text: by[k].length }), el("span", { class: "muted small3 why", text: HEAT[k][1] })]),
       by[k].length ? el("div", { class: "tiles" }, by[k].map((a) => el("button", {

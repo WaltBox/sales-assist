@@ -21,13 +21,13 @@ export const CADENCE_ARMS = [2] as const;
 /** How far back the rails look for an earlier automatic email: longer than the longest cadence. */
 const RAIL_LOOKBACK_DAYS = 15;
 /** After this many automatic bumps an account stops getting them: it comes back as a call. */
-export const MAX_BUMPS = 6; // Walt 10/5: at two days apart, six is about three weeks
 /**
- * An account that's never shown an open or a reply gets this many before the sequence stops for it (Walt 10/5):
- * a dead inbox that keeps getting mail drags down delivery for everyone else. An open, a reply, or a call that
- * confirms they have it puts them back on the full run.
+ * No automatic cap (Walt 10/6): unless someone is put on a cooling period by hand, they get an email every two
+ * business days for as long as they're on the board. The only things that stop a bump on their own are a reply
+ * waiting for an answer, an RFQ in, a bounce, or an email you sent by hand inside the gap.
  */
-export const UNCONFIRMED_MAX_BUMPS = 2;
+export const MAX_BUMPS = Number.POSITIVE_INFINITY;
+export const UNCONFIRMED_MAX_BUMPS = Number.POSITIVE_INFINITY;
 
 /** The account's cadence arm, dealt once at random and kept. */
 export async function armFor(d: Deps, leadId: string, arms?: Record<string, number>): Promise<number> {
@@ -200,7 +200,7 @@ async function planDay(d: Deps, now: Date) {
     const base = {
       repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
       label: onCadence ? `Get a first RFQ from ${a.contact.name?.split(/\s+/)[0] || a.company}` : a.next.label,
-      reason: unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed). (${a.next.tag}: ${a.next.label} stays on the books.)`
+      reason: unconfirmed ? `No open or reply yet (bump ${nth + 1}). (${a.next.tag}: ${a.next.label} stays on the books.)`
         : onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
       createdAt: now.toISOString(), checkedAt: null,
     };
@@ -453,7 +453,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
     const sendOn = morningOf(due, d.rep.timeZone);
     if (sendOn.getTime() > horizon) continue;
     const what = unconfirmed ? "Bump (not confirmed)" : /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
-    const reason = unconfirmed ? `No open or reply yet (${nth + 1} of ${UNCONFIRMED_MAX_BUMPS} while unconfirmed). ${a.next.tag}: ${a.next.label} stays on the books.`
+    const reason = unconfirmed ? `No open or reply yet (bump ${nth + 1}). ${a.next.tag}: ${a.next.label} stays on the books.`
       : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;
     const first = greetName(a.contact.name);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { accountsBoard } from "../src/accounts.js";
 import type { Deps } from "../src/assistant.js";
-import { automationsView, CADENCE_ARMS, dedupeDue, dropRescueDraft, MAX_BUMPS, morningRun, planBumps, sendBumpsNow, setAutomations, skipAutomation, stopScheduledFor, syncAutomations } from "../src/automations.js";
+import { automationsView, CADENCE_ARMS, dedupeDue, dropRescueDraft, morningRun, planBumps, sendBumpsNow, setAutomations, skipAutomation, stopScheduledFor, syncAutomations } from "../src/automations.js";
 import { demoLineCards, demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID, DEMO_USER_ID, roddaCall } from "../src/fixtures.js";
 import { sendSlot } from "../src/followup.js";
@@ -331,15 +331,18 @@ test("send now (10/2): out in minutes, staggered, with the copy, a meme, and the
   assert.equal((await store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms"))![crest.leadId], row.arm);
 });
 
-test("the cap (10/2): after the last allowed automatic bump an account comes back as a call, not another email", async () => {
+test("no cap (10/6): a tenth automatic bump still goes; only a cooling period stops the sequence", async () => {
+  const { holdAccount } = await import("../src/automations.js");
   const { d } = setup("user_cap");
   const crest = (await accountsBoard(d, { fresh: true })).accounts.find((a) => a.company === "Crest Mechanical")!;
-  for (let i = 0; i < MAX_BUMPS; i++) {
-    await store.putAutomation({ id: `acti_prev_${i}`, repId: d.rep.closeUserId, leadId: crest.leadId, company: crest.company, to: crest.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (30 - i * 4) * 86400e3).toISOString(), status: "sent", statusAt: null, note: null, checkedAt: null });
+  for (let i = 0; i < 9; i++) {
+    await store.putAutomation({ id: `acti_prev_${i}`, repId: d.rep.closeUserId, leadId: crest.leadId, company: crest.company, to: crest.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (40 - i * 4) * 86400e3).toISOString(), status: "sent", statusAt: null, note: null, checkedAt: null });
   }
   const r = await sendBumpsNow(d, { leadIds: [crest.leadId], variant: "friday", memes: [] });
-  assert.equal(r.planned.length, 0);
-  assert.deepEqual(r.skipped, [{ company: "Crest Mechanical", why: `${MAX_BUMPS} automatic emails already; call them.` }]);
+  assert.equal(r.planned.length, 1, JSON.stringify(r.skipped));
+  await holdAccount(d, crest.leadId, true, { days: 30 });
+  const held = await sendBumpsNow(d, { leadIds: [crest.leadId], variant: "friday", memes: [] });
+  assert.deepEqual(held.skipped.map((x) => x.why), ["On hold"]);
 });
 
 test("never two (10/2): a bump is pulled back if the rep emailed them by hand first, and a hand-sent rescue draft stops a queued bump", async () => {
@@ -362,20 +365,20 @@ test("never two (10/2): a bump is pulled back if the rep emailed them by hand fi
   assert.equal(await dropRescueDraft(d2, b.leadId), false, "nothing to drop");
 });
 
-test("unconfirmed accounts (10/5): in the sequence with the 'did it land' line, and stopped after two with no sign of life", async () => {
-  const { UNCONFIRMED_MAX_BUMPS } = await import("../src/automations.js");
+test("unconfirmed accounts (10/5, 10/6): in the sequence with the plain ask, and they stay in it (no automatic stop)", async () => {
   const { close, d } = setup("user_unconfirmed");
   await setAutomations(d, true);
   const board = await accountsBoard(d, { fresh: true });
   const harbor = board.accounts.find((a) => a.company === "Harbor Fabrication")!;
   const mesa = board.accounts.find((a) => a.company === "Mesa Pipe & Supply")!;
   assert.equal(harbor.seen, "not_opened"); assert.equal(mesa.seen, "not_opened");
-  // Harbor already had two without an open; Mesa none.
-  for (let i = 0; i < UNCONFIRMED_MAX_BUMPS; i++) {
+  // Harbor already had three without an open; it still goes.
+  for (let i = 0; i < 3; i++) {
     await store.putAutomation({ id: `acti_unc_${i}`, repId: d.rep.closeUserId, leadId: harbor.leadId, company: harbor.company, to: harbor.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: null, createdAt: new Date(Date.now() - (20 - i * 5) * 86400e3).toISOString(), status: "sent", statusAt: new Date(Date.now() - (20 - i * 5) * 86400e3).toISOString(), note: null, checkedAt: null });
   }
   const r = await planBumps(d);
-  assert.ok(r.skipped.some((s) => s.company === "Harbor Fabrication" && /no sign they got any of it/.test(s.why)), JSON.stringify(r.skipped));
+  assert.ok(!r.skipped.some((s) => s.company === "Harbor Fabrication"), JSON.stringify(r.skipped));
+  if (harbor.bumpDue) assert.ok(r.planned.some((p) => p.leadId === harbor.leadId), "Harbor's fourth bump goes");
   const m = r.planned.find((p) => p.leadId === mesa.leadId);
   if (mesa.bumpDue) {
     assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
