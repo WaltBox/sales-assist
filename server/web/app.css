@@ -435,7 +435,10 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .tstat.good b { color: var(--green); }
 .tdates { flex-basis: 100%; font-size: 13px; }
 /* Memes in the automatic bumps (9/30) */
-.macct { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.macct { display: flex; flex-direction: row; align-items: center; gap: 10px; min-width: 0; }
+/* The name and the subject stack, each on its own line, clipped with an ellipsis instead of running into the next column. */
+.macct > div { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.macct .co, .macct .sub2 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memethumb { width: 40px; height: 40px; object-fit: cover; border: 1px solid var(--ink-line); flex: none; }
 .bumpprev { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .bumpmail { background: var(--white); border: 1px solid var(--ink-line); padding: 14px 16px; max-width: 520px; display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; }

@@ -284,7 +284,7 @@ export function createApp(appDeps: AppDeps) {
     const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
     const counts = await memeCounts(d);
     const stats = await accountsBoard(d).then((b) => memeStats(d, b.accounts)).catch(() => ({} as MemeStats));
-    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name] ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes" };
+    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name]?.sent ?? 0, queued: counts[m.name]?.queued ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes" };
   }));
   // The meme library (Walt 10/5): upload an image or a zip of them, rename (every record follows), retire.
   app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req) => {

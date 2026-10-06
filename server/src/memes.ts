@@ -253,9 +253,21 @@ export async function memeStats(d: Deps, accounts: Array<{ leadId: string; opens
   return out;
 }
 
-/** How many companies each meme has gone to (sent bumps, rescue sends, call-screen bumps). */
-export async function memeCounts(d: Deps): Promise<Record<string, number>> {
-  const out: Record<string, number> = {};
-  for (const names of (await memesSeen(d)).values()) for (const n of names) out[n] = (out[n] ?? 0) + 1;
+/** How many companies each meme has gone to (sent, by Close) and how many it's queued for (scheduled, not yet sent). */
+export async function memeCounts(d: Deps): Promise<Record<string, { sent: number; queued: number }>> {
+  const out: Record<string, { sent: number; queued: number }> = {};
+  const row = (n: string) => (out[n] ??= { sent: 0, queued: 0 });
+  const sentTo = new Map<string, Set<string>>();
+  for (const a of await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString())) {
+    if (!a.meme || !["scheduled", "sent"].includes(a.status)) continue;
+    const key = `${a.leadId}:${a.meme}`;
+    if (sentTo.get(a.meme)?.has(a.leadId)) continue;
+    (sentTo.get(a.meme) ?? sentTo.set(a.meme, new Set()).get(a.meme)!).add(a.leadId);
+    if (a.status === "sent") row(a.meme).sent++; else row(a.meme).queued++;
+    void key;
+  }
+  // Rescue drafts and call-screen bumps went by hand: those count as sent.
+  const rescue = (await store.getSetting<Record<string, string[]>>(d.rep.closeUserId, "rescueMemes").catch(() => null)) ?? {};
+  for (const [leadId, names] of Object.entries(rescue)) for (const n of names) if (!sentTo.get(n)?.has(leadId)) { row(n).sent++; (sentTo.get(n) ?? sentTo.set(n, new Set()).get(n)!).add(leadId); }
   return out;
 }

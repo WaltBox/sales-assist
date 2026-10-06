@@ -1018,7 +1018,7 @@ function memeLibrary() {
           onkeydown: (e) => { if (e.key === "Enter") commitRename(m); if (e.key === "Escape") { lib.rename = null; render(); } }, onblur: () => commitRename(m) })
         : el("button", { class: "name", title: "Rename", text: stem(m.name), onclick: () => { lib.rename = { name: m.name, value: stem(m.name) }; render(); } }),
       el("div", { class: "meta" }, [
-        el("span", { class: "mono muted", text: m.sent ? `sent to ${m.sent}` : "not sent yet" }),
+        el("span", { class: "mono muted", title: "Sent: Close has sent it. Queued: scheduled in Close, not out yet.", text: [m.sent ? `sent ${m.sent}` : null, m.queued ? `queued ${m.queued}` : null].filter(Boolean).join(" · ") || "not used yet" }),
         el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
       ]),
       m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks" }, [
@@ -1092,7 +1092,7 @@ function mailRow(m) {
   const when = m.status === "sent" ? m.statusAt : ["scheduled", "planned"].includes(m.status) ? m.scheduledFor : m.statusAt;
   const hold = async (e, on) => { e.stopPropagation(); e.currentTarget.disabled = true; await api(`/api/leads/${m.leadId}/hold`, { hold: on }).catch((err) => alert(err.message)); await reloadAutos(); load(true); };
   const row = el("div", { class: `gr mgr${open ? " open" : ""}`, onclick: () => { state.mailOpen[m.id] = !open; render(); } }, [
-    m.future ? el("span", { class: "whenf" }, [el("span", { class: "mono", text: dayOf(when) }), el("span", { class: "sub2", text: "9–11am their time" })])
+    m.future ? el("span", { class: "whenf" }, [el("span", { class: "mono", text: dayOf(when) }), el("span", { class: "sub2", text: "8:11–11am their time" })])
       : el("span", { class: "mono", text: when ? timeOf(when) : "–" }),
     el("div", { class: "acct macct" }, [
       m.future && m.meme ? el("img", { class: "memethumb", src: m.meme.url, alt: "", loading: "lazy" }) : null,
