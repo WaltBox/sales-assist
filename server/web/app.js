@@ -1073,7 +1073,7 @@ function emailsSection() {
         state.mailBusy = false; reloadAutos();
       } }),
     ]) : au ? el("button", { class: "linkbtn", text: "Back to test mode", onclick: async () => { await api("/api/automations/test-mode", { on: true }).catch((e) => alert(e.message)); reloadAutos(); } }) : null,
-    au ? el("p", { class: "muted small3", text: `Bumps are written each weekday morning, scheduled in Close for 9 to 11am their time, and re-checked just before they go: if they've written in, it's pulled back. Up to ${au.dailyCap} a day. Skip any you don't want.` }) : null,
+    au ? el("p", { class: "muted small3", text: `Bumps are written each weekday morning, scheduled in Close for a random minute between 8:11 and 11am their time, and re-checked just before they go: if they've written in, it's pulled back. Up to ${au.dailyCap} a day. Skip any you don't want.` }) : null,
     el("div", { class: "tabs" }, MAIL_TABS.map(([k, label]) => el("button", {
       class: `tab${state.mailTab === k ? " on" : ""}`, onclick: () => { state.mailTab = k; render(); },
     }, [label, el("span", { class: "c mono", text: au ? mailRows(au, k).length : "–" })]))),
