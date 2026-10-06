@@ -1712,8 +1712,10 @@ function renderEmails() {
   const queuedAll = shown.filter((e) => e.status === "scheduled").sort((a, b) => (a.at || "").localeCompare(b.at || ""));
   const sentAll = shown.filter((e) => e.status === "sent");
   // What the counts in the header filter to when tapped (10/6: "I want to navigate this").
+  // Accounts you've already reached today are done for the day: they leave the list (10/6, "I'm liable to click her
+  // and call her"), and come back under the "reached today" count only.
   const only = {
-    all: () => true, sent: (e) => e.status === "sent", queued: (e) => e.status === "scheduled",
+    all: (e) => !(e.calledToday && e.calledToday.reached), sent: (e) => e.status === "sent" && !(e.calledToday && e.calledToday.reached), queued: (e) => e.status === "scheduled",
     replied: (e) => e.replied || e.rfq, opened: (e) => e.opened || e.replied || e.rfq || e.shown || e.clicked, clicked: (e) => e.clicked, reached: (e) => e.calledToday && e.calledToday.reached, tried: (e) => e.calledToday && !e.calledToday.reached,
   }[emails.show] || (() => true);
   const queued = queuedAll.filter(only), sent = sentAll.filter(only);
@@ -1746,7 +1748,7 @@ function renderEmails() {
     S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
     el("div", { class: "chips-row" }, [["today", "Today"], ["week", "Last 7 days"]].map(([k, label]) => el("button", { class: `chip${emails.filter === k ? " on" : ""}`, text: label, onclick: () => { emails.filter = k; render(); } }))),
     emails.error ? el("div", { class: "flag", text: emails.error }) : null,
-    emails.show !== "all" ? el("p", { class: "muted", style: "font-size:12px", text: `Showing ${emails.show === "reached" ? "accounts you reached today" : emails.show === "tried" ? "accounts you called today and didn't get" : `${emails.show} only`}. Tap the count again for everything.` }) : null,
+    emails.show !== "all" ? el("p", { class: "muted", style: "font-size:12px", text: `Showing ${emails.show === "reached" ? "accounts you reached today (hidden from the main list so you don't call them twice)" : emails.show === "tried" ? "accounts you called today and didn't get" : `${emails.show} only`}. Tap the count again for everything.` }) : null,
     !emails.loading && !sent.length && !queued.length ? el("p", { class: "empty", text: emails.show !== "all" ? "Nothing matches." : emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
     sent.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
     queued.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Going out · ${queued.length}` }), ...queued.map(row)]) : null,
