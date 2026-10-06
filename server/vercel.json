@@ -3,7 +3,7 @@
   "framework": null,
   "rewrites": [{ "source": "/(.*)", "destination": "/api?__path=/$1" }],
   "functions": {
-    "api/index.ts": { "maxDuration": 300, "includeFiles": "{playbook,web}/**" }
+    "api/index.ts": { "maxDuration": 300, "memory": 3009, "includeFiles": "{playbook,web}/**" }
   },
   "crons": [
     { "path": "/api/cron/catch-up", "schedule": "5 14 * * *" },
