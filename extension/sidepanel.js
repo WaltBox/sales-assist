@@ -114,10 +114,16 @@ async function syncLead() {
   if (!known) loadBrief(S);
 }
 
+// Open a lead in the Close tab that's already open (Walt 10/6): the active one if it's Close, else any Close tab
+// in this window, else the active tab. Never a new tab.
 async function openLead(leadId) {
   if (PREVIEW) return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) chrome.tabs.update(tab.id, { url: `https://app.close.com/lead/${leadId}/` });
+  const url = `https://app.close.com/lead/${leadId}/`;
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active && /^https:\/\/app\.close\.com\//.test(active.url || "")) return chrome.tabs.update(active.id, { url });
+  const [closeTab] = await chrome.tabs.query({ url: "https://app.close.com/*", currentWindow: true });
+  if (closeTab) return chrome.tabs.update(closeTab.id, { url, active: true });
+  if (active) chrome.tabs.update(active.id, { url });
 }
 
 async function warmList(leadId) {
@@ -127,7 +133,13 @@ async function warmList(leadId) {
 
 // ---------- call card ----------
 
+// The Emails pill count: refreshed with the brief so it's right without opening the tab.
+async function refreshEmailCount() {
+  if (!settings.token) return;
+  try { const r = await api("/api/emails/sent?days=1"); const today = new Date().toDateString(); emails.todaySent = r.emails.filter((e) => e.status === "sent" && new Date(e.at).toDateString() === today).length; } catch {}
+}
 async function loadBrief(st, refresh = false) {
+  refreshEmailCount();
   st.error = null;
   if (!st.brief) st.phase = "loading";
   render();
@@ -662,6 +674,7 @@ function render() {
     el("button", { class: "btn primary", text: "Sign in", onclick: () => chrome.runtime.openOptionsPage() }),
   ]));
   else if (view === "queue") app.replaceChildren(...renderQueue());
+  else if (view === "emails") app.replaceChildren(...renderEmails());
   else if (view === "item") app.replaceChildren(...renderItem());
   else if (view === "stats") app.replaceChildren(...renderStats());
   else if (view === "week") app.replaceChildren(...renderWeek());
@@ -700,6 +713,7 @@ function header(phase, phaseClick) {
       title: "Recent calls and what was saved to Close",
       onclick: () => { view = "queue"; refreshQueue(); render(); },
     }) : null,
+    view !== "emails" ? el("button", { class: "pill recent", text: emails.todaySent != null ? `Emails ${emails.todaySent}` : "Emails", title: "Automatic emails: what went out, what's queued, who opened or replied", onclick: () => { view = "emails"; loadEmails(); render(); } }) : null,
     phase ? el(phaseClick ? "button" : "span", { class: `pill ${phase.cls || "phase"}`, text: phase.text, onclick: phaseClick }) : null,
     settings.token ? el("div", { class: "hrow2" }, [
       statsStrip(),
@@ -1662,6 +1676,53 @@ function renderReschedule(st, r) {
 
 function alertsBlock(alerts) {
   return el("ul", { class: "alerts" }, alerts.map((a) => el("li", { class: a.level, text: a.text })));
+}
+
+// ---------- the Emails tab (Walt 10/6): automatic emails sent and queued, who opened, who replied ----------
+let emails = { rows: null, loading: false, error: null, todaySent: null, filter: "today" };
+async function loadEmails() {
+  emails.loading = true; emails.error = null; render();
+  try {
+    const r = await api("/api/emails/sent?days=7");
+    emails.rows = r.emails;
+    const today = new Date().toDateString();
+    emails.todaySent = r.emails.filter((e) => e.status === "sent" && new Date(e.at).toDateString() === today).length;
+  } catch (e) { emails.error = e.message; }
+  emails.loading = false; render();
+}
+function renderEmails() {
+  const out = [header({ text: "Emails", cls: "phase" })];
+  const rows = emails.rows || [];
+  const today = new Date().toDateString();
+  const isToday = (e) => e.at && new Date(e.at).toDateString() === today;
+  const shown = emails.filter === "today" ? rows.filter(isToday) : rows;
+  const queued = shown.filter((e) => e.status === "scheduled").sort((a, b) => (a.at || "").localeCompare(b.at || ""));
+  const sent = shown.filter((e) => e.status === "sent");
+  const when = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  const day = (iso) => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
+  const row = (e) => el("button", { class: `erow ${e.status}`, title: "Open in Close", onclick: () => openLead(e.leadId) }, [
+    el("span", { class: "etime mono", text: emails.filter === "today" ? when(e.at) : `${day(e.at)} ${when(e.at)}` }),
+    el("span", { class: "emain" }, [el("span", { class: "eco", text: e.company }), el("span", { class: "eto", text: e.to })]),
+    el("span", { class: "eflags" }, [
+      e.status === "scheduled" ? el("span", { class: "chip3 soft", text: "Queued" }) : null,
+      e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" }) : e.opened ? el("span", { class: "chip3", text: "Opened" }) : e.status === "sent" ? el("span", { class: "chip3 soft", text: "Sent" }) : null,
+    ]),
+  ]);
+  const page = el("main", { class: "page" }, [
+    el("div", { class: "qhead" }, [
+      el("h1", { text: "Automatic emails" }),
+      el("span", { class: "muted", text: emails.loading ? "Loading…" : [sent.length ? `${sent.length} sent` : null, queued.length ? `${queued.length} queued` : null, sent.filter((e) => e.replied).length ? `${sent.filter((e) => e.replied).length} replied` : null].filter(Boolean).join(" · ") }),
+    ]),
+    S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
+    el("div", { class: "chips-row" }, [["today", "Today"], ["week", "Last 7 days"]].map(([k, label]) => el("button", { class: `chip${emails.filter === k ? " on" : ""}`, text: label, onclick: () => { emails.filter = k; render(); } }))),
+    emails.error ? el("div", { class: "flag", text: emails.error }) : null,
+    !emails.loading && !shown.length ? el("p", { class: "empty", text: emails.filter === "today" ? "Nothing sent or queued today." : "Nothing in the last 7 days." }) : null,
+    sent.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Sent · ${sent.length}` }), ...sent.map(row)]) : null,
+    queued.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `Going out · ${queued.length}` }), ...queued.map(row)]) : null,
+    el("p", { class: "muted", style: "font-size:12px", text: "Tap a row to open the lead in your Close tab. Opened and Replied are read from Close and update every few minutes." }),
+  ]);
+  out.push(page);
+  return out;
 }
 
 function renderQueue() {

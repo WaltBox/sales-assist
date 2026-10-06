@@ -384,3 +384,22 @@ test("unconfirmed accounts (10/5): in the sequence with the 'did it land' line, 
     assert.ok(email, "the bump is the plain ask");
   }
 });
+
+test("the Emails tab (10/6): sent and queued rows, with whether the buyer opened or replied since", async () => {
+  const { sentEmailsView } = await import("../src/automations.js");
+  const { close, d } = setup("user_emails_tab");
+  const board = await accountsBoard(d, { fresh: true });
+  const crest = board.accounts.find((a) => a.company === "Crest Mechanical")!;
+  const harbor = board.accounts.find((a) => a.company === "Harbor Fabrication")!;
+  const base = { repId: d.rep.closeUserId, subject: "Re: x", kind: "bump" as const, label: "", reason: "", createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), note: null, checkedAt: null };
+  // Crest: sent two days ago, and Amy opened it after (the fixture has an open yesterday).
+  await store.putAutomation({ ...base, id: "acti_tab_crest", leadId: crest.leadId, company: crest.company, to: crest.contact.email!, status: "sent", statusAt: new Date(Date.now() - 2 * 86400e3).toISOString(), scheduledFor: null, meme: "a.jpg" });
+  // Harbor: queued for later today.
+  await store.putAutomation({ ...base, id: "acti_tab_harbor", leadId: harbor.leadId, company: harbor.company, to: harbor.contact.email!, status: "scheduled", statusAt: null, scheduledFor: new Date(Date.now() + 3600e3).toISOString() });
+  const rows = await sentEmailsView(d, 7);
+  const c = rows.find((r) => r.id === "acti_tab_crest")!, h = rows.find((r) => r.id === "acti_tab_harbor")!;
+  assert.equal(c.status, "sent"); assert.equal(c.opened, crest.opens.last! > c.at!, "opened after the send, from Close's opens");
+  assert.equal(c.replied, false);
+  assert.equal(h.status, "scheduled"); assert.equal(h.opened, false); assert.equal(h.at, (await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString())).find((r) => r.id === "acti_tab_harbor")!.scheduledFor);
+  void close;
+});

@@ -564,3 +564,16 @@ textarea { resize: vertical; min-height: 70px; }
 .glance .g-row .label { padding-top: 2px; }
 .glance .g-who strong { font-size: 17px; }
 .oncall .glance { margin: 0; }
+
+/* The Emails tab (10/6): one row per automatic email; tap to open the lead in Close. */
+.elist { display: flex; flex-direction: column; gap: 4px; }
+.elist .label { margin-bottom: 2px; }
+.erow { display: grid; grid-template-columns: 62px 1fr auto; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 7px 10px; background: var(--white); border: 1px solid var(--ink-line); font: inherit; color: var(--ink); cursor: pointer; }
+.erow:hover { border-color: var(--ink); }
+.erow.scheduled { background: transparent; border-style: dashed; }
+.erow .etime { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.erow .emain { display: flex; flex-direction: column; min-width: 0; }
+.erow .eco { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.erow .eto { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.erow .eflags { display: flex; gap: 4px; }
+.chip.on { border-color: var(--ink); background: var(--white); font-weight: 600; }

@@ -21,7 +21,7 @@ import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store
 import { deleteMeme, listMemes, memeCounts, MemeError, memesSeen, memeStats, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
+import { automationsView, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, writeFollowUp } from "./followup.js";
@@ -267,6 +267,8 @@ export function createApp(appDeps: AppDeps) {
   // The rescue call: the email is drafted in Close ahead of time; afterwards, the rep marks whether they found it.
   // Automatic emails: what's going out today and why, what went out, what was skipped or stopped.
   app.get("/api/automations", authed, route((_req, d) => automationsView(d)));
+  // The side panel's Emails tab: sent and queued automatic emails, with opens and replies since (10/6).
+  app.get("/api/emails/sent", authed, route(async (req, d) => ({ emails: await sentEmailsView(d, Math.min(Number(req.query.days) || 7, 30)) })));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));
   app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));

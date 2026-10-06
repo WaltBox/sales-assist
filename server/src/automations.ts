@@ -1,4 +1,4 @@
-import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS } from "./accounts.js";
+import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, type Account } from "./accounts.js";
 import type { Deps } from "./assistant.js";
 import { config } from "./config.js";
 import { bumpBodyFor, FollowUpError, greetName, writeFollowUp } from "./followup.js";
@@ -467,6 +467,34 @@ export async function automationsView(d: Deps) {
     sent: withBody.filter((a) => a.status === "sent").sort((a, b) => (b.statusAt ?? "").localeCompare(a.statusAt ?? "")),
     other: withBody.filter((a) => ["skipped", "stopped", "failed"].includes(a.status)),
   };
+}
+
+/**
+ * The side panel's Emails tab (Walt 10/6): what went out and what's queued, newest first, each with whether the
+ * buyer opened or replied since. No bodies (that's a Close call per row); the lead opens in Close for the rest.
+ */
+export type SentEmail = {
+  id: string; leadId: string; company: string; to: string; subject: string; status: Automation["status"];
+  at: string | null; variant: string | null; meme: string | null; opened: boolean; replied: boolean; rfq: boolean;
+};
+export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
+  const now = d.now?.() ?? new Date();
+  const [rows, board] = await Promise.all([
+    store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - days * DAY).toISOString()),
+    accountsBoard(d).catch(() => ({ accounts: [] as Account[] })),
+  ]);
+  const byLead = new Map(board.accounts.map((a) => [a.leadId, a]));
+  return rows.filter((r) => r.status === "sent" || r.status === "scheduled").map((r) => {
+    const a = byLead.get(r.leadId);
+    const at = r.status === "sent" ? r.statusAt ?? r.createdAt : r.scheduledFor ?? r.createdAt;
+    const after = (iso: string | null | undefined) => !!iso && !!at && new Date(iso).getTime() > new Date(at).getTime();
+    return {
+      id: r.id, leadId: r.leadId, company: r.company, to: r.to, subject: r.subject, status: r.status, at, variant: r.variant ?? null, meme: r.meme ?? null,
+      opened: !!a && r.status === "sent" && after(a.opens.last),
+      replied: !!a && r.status === "sent" && a.events.some((e) => e.kind === "reply" && after(e.at)),
+      rfq: !!a && !!a.rfq && r.status === "sent" && after(a.rfq.at),
+    };
+  }).sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
 }
 
 /** The morning run: once per weekday, from 7am the rep's time, for every rep with automations on. */
