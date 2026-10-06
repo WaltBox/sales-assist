@@ -469,15 +469,24 @@ const POT = {
 const POT_RANK = { steady: 0, project: 1, occasional: 2, unknown: 3 };
 const potTier = (a) => (a.potential && a.potential.tier) || "unknown";
 
-// The Close tab: one named window the heat map reuses, so clicking tile after tile walks the side panel through them
-// instead of opening a new tab each time. (A web page can't reach another tab directly; a named window is the one way.)
+// Opening a lead in Close (Walt 10/6): the extension, if it's installed, moves the Close tab in whichever window it
+// lives and brings that window forward (a page can't reach other windows; the extension can). Without the
+// extension, one named window the page reuses.
 let closeWin = null;
 function openInCloseTab(leadId) {
   const url = closeLead(leadId);
-  try {
-    if (closeWin && !closeWin.closed) { closeWin.location.href = url; return; }
-    closeWin = window.open(url, "westgate-close");
-  } catch { window.open(url, "westgate-close"); }
+  let acked = false;
+  const onAck = (e) => { if (e.detail && e.detail.leadId === leadId) acked = true; };
+  window.addEventListener("westgate:open-lead-ack", onAck, { once: true });
+  window.dispatchEvent(new CustomEvent("westgate:open-lead", { detail: { leadId } }));
+  setTimeout(() => {
+    window.removeEventListener("westgate:open-lead-ack", onAck);
+    if (acked) return;
+    try {
+      if (closeWin && !closeWin.closed) { closeWin.location.href = url; return; }
+      closeWin = window.open(url, "westgate-close");
+    } catch { window.open(url, "westgate-close"); }
+  }, 400);
 }
 
 function heatRows() {
@@ -546,8 +555,8 @@ function heatPage() {
         class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}`,
         style: `--heat:${shade(a).toFixed(2)}`,
         title: `${a.company} · ${a.warmth.score} · ${POT[potTier(a)][0]}\nLine card sent ${shortDate(a.cardSentAt)}: ${cardText(a)}`,
-        // One click opens the drawer here only; "Open in Close" in the drawer moves the Close tab (the side panel follows).
-        onclick: () => { state.heatPick = a.leadId; render(); },
+        // One click: the drawer here, and the Close window follows to the lead (the side panel there shows it).
+        onclick: () => { state.heatPick = a.leadId; render(); openInCloseTab(a.leadId); },
       }, [
         el("span", { class: "co", text: a.company }),
         el("span", { class: `card c-${cardState(a)}` }, [el("i", { "aria-hidden": "true" }), `sent ${shortDate(a.cardSentAt)}`]),
@@ -601,7 +610,7 @@ function storyFor(a) {
 function heatDrawer(a, rows) {
   const i = rows.findIndex((r) => r.leadId === a.leadId);
   const w = a.warmth, c = a.contact;
-  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); } };
+  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); openInCloseTab(rows[j].leadId); } };
   const close = () => { state.heatPick = null; render(); };
   return el("aside", { class: `drawer w-${w.bucket}`, role: "dialog", "aria-label": a.company }, [
     el("div", { class: "dr-top" }, [

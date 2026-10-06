@@ -26,3 +26,24 @@ chrome.declarativeNetRequest.updateSessionRules({
     condition: { resourceTypes: ["sub_frame"], tabIds: [chrome.tabs.TAB_ID_NONE] },
   }],
 }).catch(console.error);
+
+// The web app (heat map, accounts board) asks for a lead: move the Close tab to it, in whatever window it lives,
+// and bring that window forward. The tab in the sender's own window is the last choice, so the board stays put.
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (!msg || msg.type !== "open-lead" || !/^lead_[A-Za-z0-9]+$/.test(msg.leadId)) return;
+  const url = `https://app.close.com/lead/${msg.leadId}/`;
+  (async () => {
+    const tabs = await chrome.tabs.query({ url: "https://app.close.com/*" });
+    const here = sender.tab ? sender.tab.windowId : null;
+    const pick = tabs.find((t) => t.windowId !== here && t.active) || tabs.find((t) => t.windowId !== here) || tabs[0];
+    if (pick) {
+      await chrome.tabs.update(pick.id, { url, active: true });
+      await chrome.windows.update(pick.windowId, { focused: true }).catch(() => {});
+    } else {
+      const win = await chrome.windows.create({ url, focused: true });
+      void win;
+    }
+    reply({ ok: true });
+  })().catch((err) => reply({ ok: false, error: String(err) }));
+  return true; // async reply
+});
