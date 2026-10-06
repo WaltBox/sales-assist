@@ -131,9 +131,11 @@ const VARIANTS: Record<string, string> = {
   // For an account that's never shown an open (Walt 10/6): the same voice, a plain ask, no talk of junk folders.
   landed: "I wanted to make sure this reached you. If you have anything coming up that I can put a price on, send it over. A rough list is fine and I'll take it from there.",
 };
+/** Said in every bump (10/6): the PDF rides along each time, so nobody has to dig for it. */
+export const ATTACHED_LINE = "I attached our line card again so it's easy to find.";
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
   const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
-  return `Hi ${first ?? "there"},\n\n${line}\n\n${repName}`;
+  return `Hi ${first ?? "there"},\n\n${line}\n\n${ATTACHED_LINE}\n\n${repName}`;
 }
 
 export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; nth: number; variant?: string | null }; onlyTo?: string } = {}): Promise<FollowUpResult> {
@@ -212,13 +214,10 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   }
   if (failures.length || !draft) throw new FollowUpError(`Couldn't write a follow-up that passed the checks (${failures.map((f) => f.problem).join(" ")}). Write this one yourself.`);
 
-  // Attach the line card only on a brand-new thread; on a reply it's already above.
+  // The line card is attached every time (Walt 10/6: buyers kept saying they couldn't find it in the thread).
   const warnings: string[] = [];
-  let attachments: Awaited<ReturnType<typeof lineCardAttachments>> = [];
-  if (!threaded) {
-    attachments = await lineCardAttachments(d).catch(() => []);
-    if (!attachments.length) warnings.push("LINE CARD NOT ATTACHED: add it in Close before sending.");
-  }
+  let attachments: Awaited<ReturnType<typeof lineCardAttachments>> = await lineCardAttachments(d).catch(() => []);
+  if (!attachments.length) warnings.push("LINE CARD NOT ATTACHED: add it in Close before sending.");
   // "now": out in a couple of minutes plus the stagger, whatever the hour (an approved same-day send, 10/2).
   const tz = ctx.facts.prospectTz ?? d.rep.timeZone;
   const scheduledFor = !opts.schedule ? null

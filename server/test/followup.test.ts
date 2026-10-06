@@ -36,7 +36,7 @@ test("business days skip weekends", () => {
   assert.equal(businessDaysBetween(new Date("2026-09-23T15:00:00Z"), NOW, "America/Los_Angeles"), 0);
 });
 
-test("with a prior email, the follow-up is a short reply in that thread, with no attachment", async () => {
+test("with a prior email, the follow-up is a short reply in that thread, with the line card attached again", async () => {
   const close = new FakeClose({ calls: [roddaCall()] });
   close.sentWithOpens = [
     lineCard(),
@@ -49,7 +49,7 @@ test("with a prior email, the follow-up is a short reply in that thread, with no
   assert.equal(d.threadId, "thr_1");
   assert.equal(d.subject, "Re: Great talking with you – Westgate Supply line card");
   assert.deepEqual(d.to, ["renee@roddaelectric.com"]);
-  assert.ok(!(d.attachments as unknown[] | undefined)?.length);
+  assert.ok((d.attachments as unknown[] | undefined)?.length, "the line card is attached again on every follow-up (10/6)");
   assert.match(String(d.body), /^Hi Renee,\n\nI wanted to check in on this\.[\s\S]*\n\nWalt Boxwell$/);
   assert.doesNotMatch(String(d.body), /[—–]/);
   assert.equal(close.writes.filter((w) => w.op === "email").length, 1);

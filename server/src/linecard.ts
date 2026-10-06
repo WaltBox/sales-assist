@@ -99,7 +99,7 @@ export async function lineCardBounce(d: Deps, leadId: string, to: string, since:
 export function bumpBody(first: string | null, rep: string) {
   return stripDashes([
     `Hi ${first ?? "there"},`,
-    "I wanted to make sure this reached you. The line card is in my email below.",
+    "I wanted to make sure this reached you. I attached our line card again so it's easy to find.",
     "Mind replying \"got it\" so I know it came through?",
     rep,
   ].join("\n\n"));
@@ -150,7 +150,7 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
     const meme = opts.meme !== undefined ? opts.meme : await memeFor(d, leadId).catch(() => null);
     const body = bumpBody(first, d.rep.name);
     return {
-      to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, attach: false, check, suggestions, nameGuessed,
+      to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, attach: true, check, suggestions, nameGuessed,
       body, html: meme ? bumpHtml(body, d.rep.name, meme) : null, meme: meme?.name ?? null,
       reply: { id: prior.id, threadId: prior.thread_id ?? null, subject: prior.subject ?? "" },
       alreadySent: { at: when(lastCard), opened: cardOpened },

@@ -700,7 +700,8 @@ export async function prepareRescue(d: Deps, leadId: string, opts: { meme?: Meme
   const body = bumpBody(greet, d.rep.name);
   // A meme, like the automatic bumps (10/2): one the company hasn't had, and remembered so they never get it twice.
   const meme = opts.meme !== undefined ? opts.meme : await memeFor(d, leadId).catch(() => null);
-  const attachments: Awaited<ReturnType<typeof lineCardAttachments>> = [];
+  // Attached again (10/6): "it's in the email below" wasn't enough; buyers couldn't find it.
+  const attachments: Awaited<ReturnType<typeof lineCardAttachments>> = await lineCardAttachments(d).catch(() => []);
   const subject = /^re:/i.test(card.subject ?? "") ? card.subject! : `Re: ${card.subject ?? "Westgate Supply – line card"}`;
   const token = meme ? newToken() : null;
   const draft = await d.close.createDraftEmail(leadId, {

@@ -148,13 +148,13 @@ test("send line card now: ready on the call screen, sent once to the address you
   assert.equal(again.subject, "Re: Great talking with you – Westgate Supply line card");
   assert.equal(again.reply!.id, "acti_firstCard");
   assert.deepEqual(again.alreadySent, { at: "2026-09-26T01:34:00Z", opened: false }, "only their spam filter touched it");
-  assert.match(again.body, /^Hi Rob,\n\nI wanted to make sure this reached you\. The line card is in my email below\./);
-  assert.equal(again.attach, false);
+  assert.match(again.body, /^Hi Rob,\n\nI wanted to make sure this reached you\. I attached our line card again so it's easy to find\./);
+  assert.equal(again.attach, true, "the line card rides along again (10/6)");
   const forklift = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const sentAgain = await sendLineCard(d2, DEMO_LEAD_ID, { to: "rob.roy@gmail.com", meme: forklift });
   assert.equal(sentAgain.threaded, true);
   const reply = close2.writes.filter((w) => w.op === "email").pop()!.body as { inReplyToId: string; threadId: string; attachments?: unknown[]; html?: string | null };
-  assert.equal((reply.attachments ?? []).length, 0, "the bump has no attachment");
+  assert.equal((reply.attachments ?? []).length, 1, "the line card rides along on the call-screen bump too (10/6)");
   assert.match(reply.html ?? "", /forklift\.jpg/, "the call-screen bump carries a meme (10/2)");
   const { store } = await import("../src/store.js");
   assert.deepEqual(((await store.getSetting<Record<string, string[]>>(d2.rep.closeUserId, "rescueMemes")) ?? {})[DEMO_LEAD_ID], ["forklift.jpg"], "remembered so they never get it twice");
