@@ -7,7 +7,7 @@ import { store, type Automation } from "./store.js";
 import { clearPick, listMemes, memeFor, memesSeen, type Meme } from "./memes.js";
 
 // Automatic bumps (Walt 9/26). Each weekday morning, every account whose next step is "bump"
-// gets a short reply in its thread, scheduled in Close for 9 to 11am their time; Close sends it.
+// gets a short reply in its thread, scheduled in Close for a random minute between 8:11 and 11am their time; Close sends it.
 // The page shows what's going out today and why, what went out, and what was skipped or stopped.
 // Shortly before each send, the server checks again: if they replied, sent a file, or bounced,
 // the email is pulled back to a draft.
@@ -339,6 +339,7 @@ export async function syncAutomations(d: Deps) {
       && businessDaysBetween(new Date(r.statusAt ?? r.createdAt), goesAt, d.rep.timeZone) < gap
       && (r.leadId === a.leadId || r.to.trim().toLowerCase() === a.to.trim().toLowerCase()));
     if (twin) {
+      console.warn(`[sync] pulling back ${a.company}: twin ${twin.id} sent ${twin.statusAt ?? twin.createdAt}, goes ${goesAt.toISOString()}, gap ${gap}, days ${businessDaysBetween(new Date(twin.statusAt ?? twin.createdAt), goesAt, d.rep.timeZone)}`);
       await d.close.unschedule(a.id).catch(() => {});
       await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: they already got an automatic email on ${(twin.statusAt ?? twin.createdAt).slice(0, 10)}. It's a draft in Close now.` });
       continue;

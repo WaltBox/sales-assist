@@ -19,18 +19,24 @@ export type FollowUpResult =
   | { status: "drafted"; draftId: string; to: string; subject: string; body: string; threaded: boolean; attachedLineCard: boolean; warnings: string[]; scheduledFor: string | null; meme?: string | null };
 
 /**
- * When an automatic bump goes out: a weekday morning, 9 to 11 their time. Before 9 → 9 today; in the
- * window → shortly; after → 9 the next weekday. `stagger` spreads a batch out so they don't all land at 9:00.
+ * When an automatic bump goes out (Walt 10/6): a weekday, a random minute between 8:11 and 11:00 their time, so a
+ * batch doesn't land as a block at the top of the hour. Before 8:11 → somewhere in today's window; inside it → a
+ * random minute from a few minutes out to 11:00; after 11 → the next weekday's window. `stagger` only nudges the
+ * earliest possible minute, so a big batch still spreads across the whole window.
  */
-export function sendSlot(tz: string, now: Date, stagger = 0): string {
+export const SEND_WINDOW = { fromMinute: 8 * 60 + 11, toMinute: 11 * 60 };
+export function sendSlot(tz: string, now: Date, stagger = 0, rand: () => number = Math.random): string {
   const p = localParts(now, tz);
   const mins = p.hour * 60 + p.minute;
   const weekday = p.weekday >= 1 && p.weekday <= 5;
-  const spread = Math.min(stagger, 110) * 60 * 1000;
+  const pick = (dayStart: Date, fromMin: number) => {
+    const span = Math.max(1, SEND_WINDOW.toMinute - fromMin);
+    return new Date(dayStart.getTime() + (fromMin + Math.floor(rand() * span)) * 60 * 1000);
+  };
   let at: Date;
-  if (weekday && mins < 9 * 60) at = new Date(zonedTime(p.year, p.month, p.day, 9, 0, tz).getTime() + spread);
-  else if (weekday && mins < 10 * 60 + 30) at = new Date(now.getTime() + 20 * 60 * 1000 + Math.min(spread, 30 * 60 * 1000));
-  else at = new Date(nextWeekdayAt(tz, now, 9, 0).getTime() + spread);
+  if (weekday && mins < SEND_WINDOW.fromMinute) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), SEND_WINDOW.fromMinute + Math.min(stagger, 20));
+  else if (weekday && mins < SEND_WINDOW.toMinute - 5) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), mins + 5 + Math.min(stagger, 10));
+  else { const next = nextWeekdayAt(tz, now, 0, 0); at = pick(next, SEND_WINDOW.fromMinute + Math.min(stagger, 20)); }
   return isoWithOffset(at, tz);
 }
 

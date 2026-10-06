@@ -19,13 +19,20 @@ const setup = (userId: string) => {
   return { close, d };
 };
 
-test("bumps go out 9 to 11am their time on weekdays", () => {
+test("bumps go out at a random minute between 8:11 and 11am their time on weekdays (10/6)", () => {
   const tz = "America/Chicago";
-  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z")), "2026-09-28T09:00:00-05:00", "Monday 7am → 9am");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z")), "2026-09-28T09:50:00-05:00", "Monday 9:30 → in 20 minutes");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T19:00:00Z")), "2026-09-29T09:00:00-05:00", "Monday 2pm → Tuesday 9am");
-  assert.equal(sendSlot(tz, new Date("2026-09-26T15:00:00Z")), "2026-09-28T09:00:00-05:00", "Saturday → Monday 9am");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 12), "2026-09-28T09:12:00-05:00", "a batch is spread out");
+  const lo = () => 0, hi = () => 0.999;
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, lo), "2026-09-28T08:11:00-05:00", "Monday 7am → earliest 8:11");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, hi), "2026-09-28T10:59:00-05:00", "Monday 7am → latest 10:59");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z"), 0, lo), "2026-09-28T09:35:00-05:00", "Monday 9:30 → at least 5 minutes out");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z"), 0, hi), "2026-09-28T10:59:00-05:00", "Monday 9:30 → still inside the window");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T19:00:00Z"), 0, lo), "2026-09-29T08:11:00-05:00", "Monday 2pm → Tuesday's window");
+  assert.equal(sendSlot(tz, new Date("2026-09-26T15:00:00Z"), 0, lo), "2026-09-28T08:11:00-05:00", "Saturday → Monday's window");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 12, lo), "2026-09-28T08:23:00-05:00", "stagger nudges the earliest minute");
+  // Random by default: a batch spreads across the window rather than landing together.
+  const slots = new Set(Array.from({ length: 40 }, () => sendSlot(tz, new Date("2026-09-28T12:00:00Z"))));
+  assert.ok(slots.size > 20, `spread: ${slots.size} distinct minutes`);
+  for (const s of slots) assert.ok(s >= "2026-09-28T08:11:00-05:00" && s <= "2026-09-28T10:59:00-05:00", s);
 });
 
 test("off by default; when on, the day's bumps are scheduled in Close with the reason, once per account", async () => {
