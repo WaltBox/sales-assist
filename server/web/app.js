@@ -469,6 +469,17 @@ const POT = {
 const POT_RANK = { steady: 0, project: 1, occasional: 2, unknown: 3 };
 const potTier = (a) => (a.potential && a.potential.tier) || "unknown";
 
+// The Close tab: one named window the heat map reuses, so clicking tile after tile walks the side panel through them
+// instead of opening a new tab each time. (A web page can't reach another tab directly; a named window is the one way.)
+let closeWin = null;
+function openInCloseTab(leadId) {
+  const url = closeLead(leadId);
+  try {
+    if (closeWin && !closeWin.closed) { closeWin.location.href = url; return; }
+    closeWin = window.open(url, "westgate-close");
+  } catch { window.open(url, "westgate-close"); }
+}
+
 function heatRows() {
   const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
   // Hottest first; inside a warmth band, the accounts worth the most come first.
@@ -535,7 +546,8 @@ function heatPage() {
         class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}`,
         style: `--heat:${shade(a).toFixed(2)}`,
         title: `${a.company} · ${a.warmth.score} · ${POT[potTier(a)][0]}\nLine card sent ${shortDate(a.cardSentAt)}: ${cardText(a)}`,
-        onclick: () => { state.heatPick = a.leadId; render(); },
+        // One click: the drawer here, and the lead in the Close tab the side panel is watching (Walt 10/6).
+        onclick: () => { state.heatPick = a.leadId; render(); openInCloseTab(a.leadId); },
       }, [
         el("span", { class: "co", text: a.company }),
         el("span", { class: `card c-${cardState(a)}` }, [el("i", { "aria-hidden": "true" }), `sent ${shortDate(a.cardSentAt)}`]),
@@ -589,7 +601,7 @@ function storyFor(a) {
 function heatDrawer(a, rows) {
   const i = rows.findIndex((r) => r.leadId === a.leadId);
   const w = a.warmth, c = a.contact;
-  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); } };
+  const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".tile.on")?.scrollIntoView({ block: "nearest" }); openInCloseTab(rows[j].leadId); } };
   const close = () => { state.heatPick = null; render(); };
   return el("aside", { class: `drawer w-${w.bucket}`, role: "dialog", "aria-label": a.company }, [
     el("div", { class: "dr-top" }, [
@@ -597,7 +609,7 @@ function heatDrawer(a, rows) {
       el("button", { class: "linkbtn", text: "Close", onclick: close }),
     ]),
     el("span", { class: `warmth w-${w.bucket} big` }, [el("i", { "aria-hidden": "true" }), `${HEAT[w.bucket][0]} · ${w.score}`]),
-    el("a", { class: "dr-co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
+    el("a", { class: "dr-co", href: closeLead(a.leadId), target: "westgate-close", text: a.company, onclick: (e) => { e.preventDefault(); openInCloseTab(a.leadId); } }),
     el("div", { class: "sub2 dr-who", text: [c.name, c.email].filter(Boolean).join(" · ") }),
     c.phone ? el("a", { class: "mono tel dr-tel", href: `tel:${c.phone}`, text: prettyPhone(c.phone) }) : null,
     el("div", { class: "dr-story" }, [
@@ -624,7 +636,7 @@ function heatDrawer(a, rows) {
     ]))),
     el("div", { class: "dr-nav" }, [
       el("button", { class: "btn", text: "← Previous", disabled: i <= 0, onclick: () => goTo(i - 1) }),
-      el("a", { class: "btn", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: "Open in Close" }),
+      el("button", { class: "btn", text: "Open in Close", onclick: () => openInCloseTab(a.leadId) }),
       el("button", { class: "btn primary", text: "Next lead →", disabled: i >= rows.length - 1, onclick: () => goTo(i + 1) }),
     ]),
   ]);
