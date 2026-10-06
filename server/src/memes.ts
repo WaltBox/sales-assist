@@ -169,7 +169,8 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const paras = body.trim().split(/\n\s*\n/);
   const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
-  const html = paras.map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`);
+  const link = (t: string) => t.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
+  const html = paras.map((p) => `<p>${link(esc(p)).replace(/\n/g, "<br>")}</p>`);
   if (meme) {
     const tracked = !!token && trackingOn();
     const src = tracked ? memeImageUrl(token!, meme.name) : meme.url;

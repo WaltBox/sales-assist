@@ -131,8 +131,9 @@ const VARIANTS: Record<string, string> = {
   // For an account that's never shown an open (Walt 10/6): the same voice, a plain ask, no talk of junk folders.
   landed: "I wanted to make sure this reached you. If you have anything coming up that I can put a price on, send it over. A rough list is fine and I'll take it from there.",
 };
-/** Said in every bump (10/6): the PDF rides along each time, so nobody has to dig for it. */
-export const ATTACHED_LINE = "I attached our line card again so it's easy to find.";
+/** Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away. */
+export const LINE_CARD_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
+export const ATTACHED_LINE = `I attached our line card again so it's easy to find. It's also here: ${LINE_CARD_URL}`;
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
   const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
   return `Hi ${first ?? "there"},\n\n${line}\n\n${ATTACHED_LINE}\n\n${repName}`;

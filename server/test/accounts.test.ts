@@ -114,7 +114,7 @@ test("rescue: the email is drafted in Close ahead of the call, a reply in the li
   assert.equal(draft.scheduleAt ?? null, null, "a draft, not scheduled");
   assert.equal(r.subject, "Re: Westgate Supply – line card");
   assert.equal(r.attachedLineCard, true, "attached again (10/6): buyers couldn't find it in the thread");
-  assert.equal(r.body, "Hi Rob,\n\nI wanted to make sure this reached you. I attached our line card again so it's easy to find.\n\nMind replying \"got it\" so I know it came through?\n\nWalt Boxwell");
+  assert.equal(r.body, "Hi Rob,\n\nI wanted to make sure this reached you. I attached our line card again so it's easy to find. It's also here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nMind replying \"got it\" so I know it came through?\n\nWalt Boxwell");
   assert.doesNotMatch(r.body, /[—–]/);
 
   // "Found it" goes into Close as a note the accounts page reads back.

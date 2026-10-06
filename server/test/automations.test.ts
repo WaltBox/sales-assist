@@ -139,7 +139,7 @@ test("an account that sends an RFQ is out of automatic emails for good (VGas, 9/
 test("the automatic bump: back to the top + any RFQs, a meme inline (never one they've had), no AI (9/30)", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const { bumpHtml, memeFor } = await import("../src/memes.js");
-  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy,\n\nI wanted to check in on this. If you have anything crossing your desk this week that I can put a price on, send it my way. A rough list is fine and I'll take it from there.\n\nI attached our line card again so it's easy to find.\n\nWalt Boxwell");
+  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy,\n\nI wanted to check in on this. If you have anything crossing your desk this week that I can put a price on, send it my way. A rough list is fine and I'll take it from there.\n\nI attached our line card again so it's easy to find. It's also here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nWalt Boxwell");
   // Six different asks for six bumps, none in email-speak.
   const six = Array.from({ length: 6 }, (_, i) => bumpBodyFor("Tammy", "Walt Boxwell", i));
   assert.equal(new Set(six).size, 6);
@@ -300,7 +300,7 @@ test("shot down, or marked Not Interested in Close after it was planned: the bum
 test("the Friday copy (10/2): pricing back Monday, plain ask, no hedging", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const body = bumpBodyFor("Dana", "Walt Boxwell", 0, "friday");
-  assert.equal(body, "Hi Dana,\n\nHappy Friday. Before the weekend, if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.\n\nI attached our line card again so it's easy to find.\n\nWalt Boxwell");
+  assert.equal(body, "Hi Dana,\n\nHappy Friday. Before the weekend, if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.\n\nI attached our line card again so it's easy to find. It's also here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nWalt Boxwell");
   assert.doesNotMatch(body, /no strings|no pressure|stack up|quotes back fast/i);
   assert.equal(bumpBodyFor("Dana", "Walt Boxwell", 0, null), bumpBodyFor("Dana", "Walt Boxwell", 0), "no variant: the usual rotation");
 });
