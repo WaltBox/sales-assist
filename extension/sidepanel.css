@@ -587,3 +587,5 @@ textarea { resize: vertical; min-height: 70px; }
 .ecount { font: inherit; font-family: var(--label); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: none; border: 0; border-bottom: 1.5px solid transparent; padding: 2px 0; cursor: pointer; }
 .ecount:hover { color: var(--ink); }
 .ecount.on { color: var(--ink); border-bottom-color: var(--red); }
+.elist.callnow .label { color: var(--red); }
+.elist.callnow .erow { border-color: var(--red); }
