@@ -1,7 +1,7 @@
 import { classifyOpen, lineCardAttachments, RFQ_IN_TAG, RFQ_TAG, taskTitle, type Deps } from "./assistant.js";
 import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
-import { bumpHtml, memeFor, rememberMeme, type Meme } from "./memes.js";
+import { bumpHtml, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts } from "./rules.js";
@@ -702,12 +702,14 @@ export async function prepareRescue(d: Deps, leadId: string, opts: { meme?: Meme
   const meme = opts.meme !== undefined ? opts.meme : await memeFor(d, leadId).catch(() => null);
   const attachments: Awaited<ReturnType<typeof lineCardAttachments>> = [];
   const subject = /^re:/i.test(card.subject ?? "") ? card.subject! : `Re: ${card.subject ?? "Westgate Supply – line card"}`;
+  const token = meme ? newToken() : null;
   const draft = await d.close.createDraftEmail(leadId, {
     contactId: card.contact_id ?? null, to: [to], subject, body, attachments,
     sender: d.rep.sender ?? null, emailAccountId: d.rep.emailAccountId ?? null, inReplyToId: card.id, threadId: card.thread_id ?? null,
-    html: meme ? bumpHtml(body, d.rep.name, meme) : null,
+    html: meme ? bumpHtml(body, d.rep.name, meme, token) : null,
   });
   if (meme) await rememberMeme(d, leadId, meme.name);
+  if (meme && token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme.name, emailId: draft.id });
   return { draftId: draft.id, to, subject, body, attachedLineCard: attachments.length > 0, meme: meme?.name ?? null };
 }
 

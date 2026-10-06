@@ -6,7 +6,7 @@ import { loadLeadContext, renderContext, type LeadContext } from "./context.js";
 import { businessDaysBetween, isoWithOffset, localParts, nextWeekdayAt, zonedTime } from "./rules.js";
 import { FollowUpSchema, type FollowUp } from "./schemas.js";
 import { logRejection, retryNote, ruleChecks, type Failure } from "./validate.js";
-import { bumpHtml, type Meme } from "./memes.js";
+import { bumpHtml, newToken, trackMeme, type Meme } from "./memes.js";
 
 // "Write a follow-up" (Walt 9/25): one tap drafts a short bump in Close.
 // It replies in the lead's existing thread when there is one (only a lead with
@@ -16,7 +16,7 @@ export class FollowUpError extends Error {}
 
 export type FollowUpResult =
   | { status: "warn"; warning: string }
-  | { status: "drafted"; draftId: string; to: string; subject: string; body: string; threaded: boolean; attachedLineCard: boolean; warnings: string[]; scheduledFor: string | null; meme?: string | null };
+  | { status: "drafted"; draftId: string; to: string; subject: string; body: string; threaded: boolean; attachedLineCard: boolean; warnings: string[]; scheduledFor: string | null; meme?: string | null; track?: string | null };
 
 /**
  * When an automatic bump goes out (Walt 10/6): a weekday, a random minute between 8:11 and 11:00 their time, so a
@@ -224,11 +224,14 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   const scheduledFor = !opts.schedule ? null
     : opts.schedule.now ? isoWithOffset(new Date(now.getTime() + (2 + opts.schedule.stagger) * 60 * 1000), tz)
     : sendSlot(tz, now, opts.schedule.stagger);
+  const meme = opts.template && threaded ? opts.template.meme : null;
+  const token = meme ? newToken() : null;
   const created = await d.close.createDraftEmail(leadId, {
     contactId: to.contactId, to: [to.email], subject, body, attachments,
     sender: d.rep.sender ?? `"${d.rep.name.replaceAll('"', "")}" <${d.rep.email}>`, emailAccountId: d.rep.emailAccountId ?? null,
     inReplyToId: latest?.id ?? null, threadId: latest?.thread_id ?? null, scheduleAt: scheduledFor,
-    html: opts.template && threaded && opts.template.meme ? bumpHtml(body, d.rep.name, opts.template.meme) : null,
+    html: meme ? bumpHtml(body, d.rep.name, meme, token) : null,
   });
-  return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor, meme: opts.template && threaded ? opts.template.meme?.name ?? null : null };
+  if (meme && token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme.name, emailId: created.id });
+  return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor, meme: meme?.name ?? null, track: token };
 }

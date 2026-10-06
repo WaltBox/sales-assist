@@ -19,7 +19,7 @@ import {
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { deleteMeme, listMemes, memeCounts, MemeError, memesSeen, memeStats, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
+import { deleteMeme, listMemes, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
@@ -52,6 +52,22 @@ export function createApp(appDeps: AppDeps) {
     app.use("/preview", express.static(path.resolve(ROOT, "..", "extension")));
   }
 
+  // The meme in a bump (10/6): the image and the link come through here so a load or a click is logged, then the
+  // image itself. No sign-in: the buyer's mail app and browser are the callers. An unknown token still gets the image.
+  app.get("/m/:token/:name", async (req, res) => {
+    const name = String(req.params.name);
+    if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
+    await logMemeEvent(String(req.params.token), "shown", req.header("user-agent") ?? null).catch(() => null);
+    res.setHeader("Cache-Control", "private, max-age=0, no-store");
+    res.redirect(302, memeUrl(name));
+  });
+  app.get("/m/:token/:name/view", async (req, res) => {
+    const name = String(req.params.name);
+    if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
+    const t = await logMemeEvent(String(req.params.token), "clicked", req.header("user-agent") ?? null).catch(() => null);
+    res.setHeader("Cache-Control", "private, max-age=0, no-store");
+    res.type("html").send(memeLanding({ name, url: memeUrl(name) }, t?.repName ?? "Walt", t?.repEmail ?? "walt@westgatesupply.com"));
+  });
   // The web app (the morning view); the side panel is the other half.
   // Always revalidate the web app's files: a stale app.js or app.css after a deploy is worse than one extra round trip.
   app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html", setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") }));

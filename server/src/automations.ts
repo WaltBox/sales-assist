@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { bumpBodyFor, FollowUpError, greetName, writeFollowUp } from "./followup.js";
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
-import { clearPick, listMemes, memeFor, memesSeen, type Meme } from "./memes.js";
+import { clearPick, listMemes, memeFor, memesSeen, memeTrack, type Meme } from "./memes.js";
 
 // Automatic bumps (Walt 9/26). Each weekday morning, every account whose next step is "bump"
 // gets a short reply in its thread, scheduled in Close for a random minute between 8:11 and 11am their time; Close sends it.
@@ -211,7 +211,7 @@ async function planDay(d: Deps, now: Date) {
         skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") });
         continue;
       }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -275,7 +275,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
       const r = await writeFollowUp(d, a.leadId, { force: true, schedule: { stagger: i * stagger, now: true }, template: { meme, nth, variant: opts.variant ?? null } });
       if (r.status === "warn") { skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") }); continue; }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, variant: opts.variant ?? null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? null, arm: await armFor(d, a.leadId, arms) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -515,6 +515,8 @@ export type SentEmail = {
   seen: { level: "opened" | "likely" | "unsure" | "unlikely"; chance: number; why: string };
   /** You already called them today: "reached" (a real conversation) or "tried" (no answer or voicemail). */
   calledToday: { at: string; reached: boolean } | null;
+  /** Our own tracking (10/6): when the meme image first loaded in their mail app, and when they followed the link. */
+  shown: string | null; clicked: string | null;
 };
 function seenGuess(a: Account | undefined, sent: boolean, at: string | null, opened: boolean, replied: boolean, rfq: boolean, now: Date): SentEmail["seen"] {
   if (!sent || !at) return { level: "unsure", chance: 0, why: "Not sent yet." };
@@ -535,7 +537,9 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
     accountsBoard(d, { maxAgeMs: 10 * 60_000 }).catch(() => ({ accounts: [] as Account[] })),
   ]);
   const byLead = new Map(board.accounts.map((a) => [a.leadId, a]));
-  return rows.filter((r) => r.status === "sent" || r.status === "scheduled").map((r) => {
+  const kept = rows.filter((r) => r.status === "sent" || r.status === "scheduled");
+  const tracks = new Map(await Promise.all(kept.filter((r) => r.track).map(async (r) => [r.track!, await memeTrack(r.track!)] as const)));
+  return kept.map((r) => {
     const a = byLead.get(r.leadId);
     const at = r.status === "sent" ? r.statusAt ?? r.createdAt : r.scheduledFor ?? r.createdAt;
     const after = (iso: string | null | undefined) => !!iso && !!at && new Date(iso).getTime() > new Date(at).getTime();
@@ -544,7 +548,9 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
     const rfq = !!a && !!a.rfq && r.status === "sent" && after(a.rfq.at);
     return {
       id: r.id, leadId: r.leadId, company: r.company, to: r.to, subject: r.subject, status: r.status, at, variant: r.variant ?? null, meme: r.meme ?? null,
-      opened, replied, rfq, seen: seenGuess(a, r.status === "sent", at, opened, replied, rfq, now),
+      opened: opened || !!(r.track && tracks.get(r.track)?.shown.length), replied, rfq,
+      seen: seenGuess(a, r.status === "sent", at, opened || !!(r.track && tracks.get(r.track)?.shown.length), replied, rfq, now),
+      shown: (r.track && tracks.get(r.track)?.shown[0]) ?? null, clicked: (r.track && tracks.get(r.track)?.clicked[0]) ?? null,
       calledToday: (() => {
         if (!a) return null;
         const today = new Date(now.toLocaleDateString("en-CA", { timeZone: d.rep.timeZone }) + "T00:00:00");

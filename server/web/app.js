@@ -1021,9 +1021,9 @@ function memeLibrary() {
         el("span", { class: "mono muted", title: "Sent: Close has sent it. Queued: scheduled in Close, not out yet.", text: [m.sent ? `sent ${m.sent}` : null, m.queued ? `queued ${m.queued}` : null].filter(Boolean).join(" · ") || "not used yet" }),
         el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
       ]),
-      m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks" }, [
-        ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq],
-      ].map(([k, v]) => el("span", { class: v ? "good" : "" }, [el("b", { class: "mono", text: `${Math.round((v / m.stats.sent) * 100)}%` }), ` ${k}`]))) : null,
+      m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks. Seen: the meme image loaded in their mail app. Clicked: they followed the link under it." }, [
+        ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq], ...(m.stats.tracked ? [["seen", m.stats.shown], ["clicked", m.stats.clicked]] : []),
+      ].map(([k, v]) => el("span", { class: v ? "good" : "" }, [el("b", { class: "mono", text: `${Math.round((v / (k === "seen" || k === "clicked" ? m.stats.tracked : m.stats.sent)) * 100)}%` }), ` ${k}`]))) : null,
     ]))),
   ]);
 }

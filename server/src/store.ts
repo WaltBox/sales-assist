@@ -31,6 +31,8 @@ export type Automation = {
   variant?: string | null; arm?: number | null;
   /** The meme in this bump (file name), so a company never gets the same one twice. */
   meme?: string | null;
+  /** The tracking token for the meme image and link in this bump (10/6), to read loads and clicks back. */
+  track?: string | null;
 };
 
 export interface Store {

@@ -74,6 +74,27 @@ test("meme results: opens, replies and RFQs within two weeks of the bump, credit
     { leadId: "l3", opens: { last: "2026-09-21T10:00:00Z" }, events: [{ at: "2026-09-22T10:00:00Z", kind: "reply" }], rfq: null },
   ];
   const st = await memeStats(d, accounts);
-  assert.deepEqual(st["b.jpg"], { sent: 1, opened: 1, replied: 1, rfq: 1 });
-  assert.deepEqual(st["a.jpg"], { sent: 3, opened: 1, replied: 0, rfq: 0 });
+  assert.deepEqual(st["b.jpg"], { sent: 1, opened: 1, replied: 1, rfq: 1, shown: 0, clicked: 0, tracked: 0 });
+  assert.deepEqual(st["a.jpg"], { sent: 3, opened: 1, replied: 0, rfq: 0, shown: 0, clicked: 0, tracked: 0 });
+});
+
+test("tracked memes (10/6): the image and the link go through our server; loads and clicks are logged against the token", async () => {
+  const { bumpHtml, trackMeme, logMemeEvent, memeTrack, memeLanding, memeImageUrl, memeViewUrl } = await import("../src/memes.js");
+  const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
+  const html = bumpHtml("Hi Tammy,\n\nI wanted to check in on this.\n\nWalt Boxwell", "Walt Boxwell", meme, "tok123");
+  assert.ok(html.includes(`src="${memeImageUrl("tok123", "forklift.jpg")}"`), "image through our server");
+  assert.ok(html.includes(`href="${memeViewUrl("tok123", "forklift.jpg")}"`), "link through our server");
+  assert.ok(!html.includes("supabase.co"), "nothing points straight at the bucket");
+  assert.ok(/There's a hilarious meme in here/.test(html));
+  // Without a token (older call sites), the bucket URL is used as before.
+  assert.ok(bumpHtml("Hi,\n\nx\n\nWalt Boxwell", "Walt Boxwell", meme).includes(meme.url));
+
+  await trackMeme({ token: "tok123", repId: "user_t", repName: "Walt Boxwell", repEmail: "walt@westgatesupply.com", leadId: "lead_t", meme: "forklift.jpg", emailId: "acti_t" });
+  assert.equal(await logMemeEvent("nope", "shown", null), null, "unknown token: ignored");
+  await logMemeEvent("tok123", "shown", "Mozilla/5.0 (GoogleImageProxy)");
+  await logMemeEvent("tok123", "clicked", "Mozilla/5.0 Safari");
+  const t = (await memeTrack("tok123"))!;
+  assert.equal(t.shown.length, 1); assert.equal(t.clicked.length, 1); assert.equal(t.agents.length, 2);
+  const page = memeLanding(meme, "Walt Boxwell", "walt@westgatesupply.com");
+  assert.ok(page.includes(meme.url) && page.includes("Send an RFQ") && page.includes("mailto:walt@westgatesupply.com"));
 });

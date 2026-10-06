@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { unzipSync } from "fflate";
@@ -125,16 +126,54 @@ export async function clearPick(d: Deps, leadId: string) {
   if (leadId in picks) { delete picks[leadId]; await store.putSetting(d.rep.closeUserId, "memePicks", picks).catch(() => {}); }
 }
 
-/** The email as HTML: the paragraphs, then the meme, then the name. */
-export function bumpHtml(body: string, repName: string, meme: Meme | null) {
+// ---------- tracked memes (Walt 10/6): the image and the link go through our server, so a load or a click is logged ----------
+
+/** One tracked email: who it went to and which meme; `emailId` is filled in once Close has created the email. */
+export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[] };
+const VIEWS_REP = "memeviews"; // the store's settings table, keyed by token under this fixed "rep"
+export const newToken = () => randomUUID().replace(/-/g, "");
+export const memeImageUrl = (token: string, name: string) => `${config.publicUrl}/m/${token}/${encodeURIComponent(name)}`;
+export const memeViewUrl = (token: string, name: string) => `${memeImageUrl(token, name)}/view`;
+
+export async function trackMeme(t: { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null }) {
+  const row: MemeTrack = { ...t, createdAt: new Date().toISOString(), shown: [], clicked: [], agents: [] };
+  await store.putSetting(VIEWS_REP, t.token, row).catch(() => undefined);
+}
+/** The image loaded ("shown") or the link was followed ("clicked"). Unknown tokens are ignored. */
+export async function logMemeEvent(token: string, kind: "shown" | "clicked", agent: string | null): Promise<MemeTrack | null> {
+  const row = await store.getSetting<MemeTrack>(VIEWS_REP, token).catch(() => null);
+  if (!row) return null;
+  const at = new Date().toISOString();
+  row[kind] = [...row[kind], at].slice(-50);
+  if (agent && !row.agents.includes(agent)) row.agents = [...row.agents, agent.slice(0, 120)].slice(-5);
+  await store.putSetting(VIEWS_REP, token, row).catch(() => undefined);
+  return row;
+}
+export async function memeTrack(token: string): Promise<MemeTrack | null> {
+  return store.getSetting<MemeTrack>(VIEWS_REP, token).catch(() => null);
+}
+
+/** The page the link opens: the meme, who it's from, and the ask. */
+export function memeLanding(meme: Meme, repName: string, repEmail: string) {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>From ${esc(repName)} at Westgate Supply</title>
+<style>body{margin:0;background:#e5e0d1;color:#111114;font-family:Arial,Helvetica,sans-serif}main{max-width:560px;margin:0 auto;padding:32px 16px}img{width:100%;height:auto;display:block;border:1px solid #111114;background:#fff}h1{font-size:18px;margin:0 0 12px;letter-spacing:.04em;text-transform:uppercase}p{font-size:16px;line-height:1.5}a.btn{display:inline-block;margin-top:8px;padding:12px 18px;background:#dc0025;color:#fff;text-decoration:none;font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:13px}small{color:#53524f}</style></head>
+<body><main><h1>Westgate Supply</h1><img src="${meme.url}" alt=""><p>That one's from ${esc(repName)}. If there's an RFQ on your desk, send it over and I'll price it.</p>
+<a class="btn" href="mailto:${esc(repEmail)}?subject=RFQ%20for%20Westgate">Send an RFQ</a><p><small>Pipe, valves, fittings, flanges, plate and bolting. Mill certs included, counts match.</small></p></main></body></html>`;
+}
+
+/** The email as HTML: the paragraphs, then the meme, then the name. With a token, the image and the link are tracked. */
+export function bumpHtml(body: string, repName: string, meme: Meme | null, token?: string | null) {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const paras = body.trim().split(/\n\s*\n/);
   const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
   const html = paras.map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`);
   if (meme) {
-    html.push(`<p><img src="${meme.url}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
+    const src = token ? memeImageUrl(token, meme.name) : meme.url;
+    const link = token ? memeViewUrl(token, meme.name) : meme.url;
+    html.push(`<p><img src="${src}" alt="" width="480" style="max-width:480px;width:100%;height:auto;border:0;display:block"></p>`);
     // A lot of mail apps hide images until the reader clicks "show": the link gets them the meme anyway (Walt 10/6).
-    html.push(`<p style="font-size:12px;color:#6b6b70">There's a meme in here. If it didn't come through, <a href="${meme.url}" style="color:#6b6b70">here it is</a>.</p>`);
+    html.push(`<p style="font-size:12px;color:#6b6b70">There's a hilarious meme in here. If it didn't come through, <a href="${link}" style="color:#6b6b70">here it is</a>.</p>`);
   }
   if (sig) html.push(`<p>${esc(sig)}</p>`);
   return html.join("");
@@ -232,19 +271,22 @@ export async function deleteMeme(name: string) {
  * or sent an RFQ within two weeks of getting it. Attribution is per bump: a reply after a bump counts for the meme
  * in that bump, and only the first bump before the reply gets it.
  */
-export type MemeStats = Record<string, { sent: number; opened: number; replied: number; rfq: number }>;
+export type MemeStats = Record<string, { sent: number; opened: number; replied: number; rfq: number; shown: number; clicked: number; tracked: number }>;
 export async function memeStats(d: Deps, accounts: Array<{ leadId: string; opens: { last: string | null }; events: Array<{ at: string; kind: string }>; rfq: { at: string } | null }>): Promise<MemeStats> {
   const DAY = 86_400_000;
   const out: MemeStats = {};
-  const row = (n: string) => (out[n] ??= { sent: 0, opened: 0, replied: 0, rfq: 0 });
+  const row = (n: string) => (out[n] ??= { sent: 0, opened: 0, replied: 0, rfq: 0, shown: 0, clicked: 0, tracked: 0 });
   const byLead = new Map(accounts.map((a) => [a.leadId, a]));
   const autos = (await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString())).filter((a) => a.meme && a.status === "sent" && a.statusAt);
   // Newest bump first per lead, so a reply is credited to the bump right before it.
   autos.sort((a, b) => b.statusAt!.localeCompare(a.statusAt!));
   const credited = new Set<string>();
+  const tracks = new Map(await Promise.all(autos.filter((a) => a.track).map(async (a) => [a.track!, await memeTrack(a.track!)] as const)));
   for (const au of autos) {
     const r = row(au.meme!);
     r.sent++;
+    const t = au.track ? tracks.get(au.track) : null;
+    if (t) { r.tracked++; if (t.shown.length) r.shown++; if (t.clicked.length) r.clicked++; }
     const a = byLead.get(au.leadId);
     if (!a) continue;
     const t0 = new Date(au.statusAt!).getTime(), t1 = t0 + 14 * DAY;

@@ -1714,7 +1714,7 @@ function renderEmails() {
   // What the counts in the header filter to when tapped (10/6: "I want to navigate this").
   const only = {
     all: () => true, sent: (e) => e.status === "sent", queued: (e) => e.status === "scheduled",
-    replied: (e) => e.replied || e.rfq, opened: (e) => e.opened || e.replied || e.rfq, reached: (e) => e.calledToday && e.calledToday.reached, tried: (e) => e.calledToday && !e.calledToday.reached,
+    replied: (e) => e.replied || e.rfq, opened: (e) => e.opened || e.replied || e.rfq || e.shown || e.clicked, clicked: (e) => e.clicked, reached: (e) => e.calledToday && e.calledToday.reached, tried: (e) => e.calledToday && !e.calledToday.reached,
   }[emails.show] || (() => true);
   const queued = queuedAll.filter(only), sent = sentAll.filter(only);
   const count = (k, label, n) => n ? el("button", { class: `ecount${emails.show === k ? " on" : ""}`, text: `${n} ${label}`, onclick: () => { emails.show = emails.show === k ? "all" : k; render(); } }) : null;
@@ -1726,7 +1726,10 @@ function renderEmails() {
     el("span", { class: "eflags" }, [
       e.calledToday ? el("span", { class: `chip3 ${e.calledToday.reached ? "good" : "warn"}`, title: e.calledToday.reached ? "You reached them today" : "You called today and didn't get them: still owed a call", text: `${e.calledToday.reached ? "Reached" : "Tried"} ${new Date(e.calledToday.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` }) : null,
       e.status === "scheduled" ? el("span", { class: "chip3 soft", text: "Queued" }) : null,
-      e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" }) : e.opened ? el("span", { class: "chip3 good", text: "Opened" })
+      e.rfq ? el("span", { class: "chip3 good", text: "RFQ" }) : e.replied ? el("span", { class: "chip3 good", text: "Replied" })
+        : e.clicked ? el("span", { class: "chip3 good", title: "They followed the meme link", text: `Clicked ${new Date(e.clicked).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` })
+        : e.shown ? el("span", { class: "chip3 good", title: "The meme image loaded in their mail app", text: `Seen ${new Date(e.shown).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` })
+        : e.opened ? el("span", { class: "chip3 good", text: "Opened" })
         : e.status === "sent" && e.seen ? el("span", { class: `chip3 seen-${e.seen.level}`, title: e.seen.why, text: { likely: `Likely opened · ${e.seen.chance}%`, unsure: `Can't tell · ${e.seen.chance}%`, unlikely: `Probably not · ${e.seen.chance}%`, opened: "Opened" }[e.seen.level] }) : null,
     ]),
   ]);
@@ -1735,7 +1738,7 @@ function renderEmails() {
       el("h1", { text: "Automatic emails" }),
       el("span", { class: "ecounts" }, [
         count("sent", "sent", sentAll.length), count("queued", "queued", queuedAll.length), count("opened", "opened", sentAll.filter((e) => e.opened || e.replied || e.rfq).length),
-        count("replied", "replied", sentAll.filter((e) => e.replied || e.rfq).length), count("reached", "reached today", shown.filter((e) => e.calledToday && e.calledToday.reached).length), count("tried", "tried today", shown.filter((e) => e.calledToday && !e.calledToday.reached).length),
+        count("replied", "replied", sentAll.filter((e) => e.replied || e.rfq).length), count("clicked", "clicked the meme", sentAll.filter((e) => e.clicked).length), count("reached", "reached today", shown.filter((e) => e.calledToday && e.calledToday.reached).length), count("tried", "tried today", shown.filter((e) => e.calledToday && !e.calledToday.reached).length),
         !sentAll.length && !queuedAll.length && emails.loading ? el("span", { class: "muted", text: "Loading…" }) : null,
       ]),
       el("button", { class: "link", text: emails.loading ? "Updating…" : emails.updatedAt ? `Updated ${emails.updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refresh` : "Refresh", onclick: () => loadEmails() }),
