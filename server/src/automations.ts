@@ -262,7 +262,8 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
   const wanted = opts.leadIds.map((id) => board.accounts.find((a) => a.leadId === id)).filter((a): a is NonNullable<typeof a> => !!a);
   for (const id of opts.leadIds) if (!wanted.some((a) => a.leadId === id)) skipped.push({ company: id, why: "Not on the accounts board." });
   const eligible = wanted.filter((a) => {
-    const why = a.rfq ? "RFQ received" : held.has(a.leadId) ? "On hold" : a.seen === "bounced" ? "Email bounced" : a.next.kind === "reply" ? "Their reply needs an answer first" : !a.contact.email ? "No email address" : null;
+    // A send you asked for by name goes even if they've replied (Walt 10/7): you're choosing to bump, not the planner.
+    const why = a.rfq ? "RFQ received" : held.has(a.leadId) ? "On hold" : a.seen === "bounced" ? "Email bounced" : !a.contact.email ? "No email address" : null;
     if (why) skipped.push({ company: a.company, why });
     return !why;
   });
