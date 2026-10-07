@@ -171,7 +171,8 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
   // Sent before or without a conversation (the pre-call screen, 9/29): say who we are first.
   const repFirst = d.rep.name.split(/\s+/)[0];
   const calledToday = opts.cold && (await d.close.calls({ leadId, since: new Date(Date.now() - 12 * 3600e3).toISOString() }).catch(() => [])).some((c) => c.direction === "outbound");
-  const intro = opts.cold && !referrer ? `I'm ${repFirst} with Westgate Supply${calledToday ? " and tried you by phone today" : ""}. ` : "";
+  // Only when there's been no call at all: once Walt has dialed them, he's introduced himself (Walt 10/7).
+  const intro = opts.cold && !referrer && !calledToday ? `I'm ${repFirst} with Westgate Supply. ` : "";
   // The line card as text too (Walt 10/7): the PDF is attached, but a buyer finds us later by searching their inbox
   // for a product word, and only words in the subject and body are searchable everywhere.
   const families = familiesFromText(buys.join(" "), lead.description ?? null);

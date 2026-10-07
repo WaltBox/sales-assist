@@ -126,7 +126,11 @@ test("send line card now: ready on the call screen, sent once to the address you
 
   // Not on a call yet (the pre-call screen): who we are first, and addresses to pick from (DMG, 9/29).
   const cold = await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod"], cold: true });
-  assert.match(cold.body, /^Hi Rob,\n\nI'm Walt with Westgate Supply( and tried you by phone today)?\. Here's our line card\./);
+  assert.match(cold.body, /^Hi Rob,\n\nI'm Walt with Westgate Supply\. Here's our line card\./);
+  // Called them today (10/7): he's already introduced himself, so the email doesn't.
+  const dialed = new FakeClose({ calls: [roddaCall({ id: "acti_today", date_created: new Date().toISOString() })] });
+  const after = await lineCardFor({ ...d, close: dialed }, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod"], cold: true });
+  assert.match(after.body, /^Hi Rob,\n\nHere's our line card\./);
   assert.ok(pre.suggestions.length >= 1, JSON.stringify(pre.suggestions));
 
   // Emailing someone who wasn't on the call: say who sent you (Colton → Mykala, 9/28).
