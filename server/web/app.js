@@ -19,6 +19,8 @@ const state = {
   heatCard: null, // line-card filter on the heat map: "opened" | "landed" | "bounced" | null
   heatPot: null, // RFQ-potential filter on the heat map: "steady" | "project" | "occasional" | "unknown" | null
   heatToday: null, // what's happened today on the heat map: "none" | "emailed" | "called" | "reached" | "wrote" | null
+  heatQ: "", // search on the heat map: company, contact, email
+  cool: {}, // leadId -> cooling state for the drawer ({ until, why } | null | "loading")
   potBusy: false, // reading sites / saving an answer
   potOpen: {}, // leadId -> the "why" behind the potential is open in the drawer
   lib: null, // the meme library: { memes, busy, msg, rename: { name, value } }
@@ -538,7 +540,9 @@ function heatRows() {
   const rows = all.slice().sort((a, b) => b.warmth.bucket === a.warmth.bucket
     ? (POT_RANK[potTier(a)] - POT_RANK[potTier(b)] || b.warmth.score - a.warmth.score || a.company.localeCompare(b.company))
     : b.warmth.score - a.warmth.score);
-  return rows.filter((a) => (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot) && matchesToday(a));
+  const q = state.heatQ.trim().toLowerCase();
+  const hit = (a) => !q || `${a.company} ${a.contact.name || ""} ${a.contact.email || ""}`.toLowerCase().includes(q);
+  return rows.filter((a) => hit(a) && (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot) && matchesToday(a));
 }
 
 async function readSites(leadIds) {
@@ -569,6 +573,7 @@ function heatPage() {
   return el("section", { class: `heat${pick ? " drawer-open" : ""}` }, [
     el("div", { class: "head pagehead" }, [
       el("h1", { class: "ptitle", text: "Heat map" }),
+      el("input", { class: "heatq", type: "search", placeholder: "Find an account, a name, an email", value: state.heatQ, oninput: (e) => { state.heatQ = e.target.value; state.heatPick = null; renderKeepFocus(".heatq"); } }),
       el("span", { class: "muted small3", text: `${all.filter((a) => cardState(a) !== "bounced").length} got the line card and haven't sent an RFQ yet` }),
     ]),
     el("div", { class: "heatsum" }, ["hot", "warm", "cool", "cold"].map((k) => el("button", {
@@ -659,6 +664,39 @@ function storyFor(a) {
   return out;
 }
 
+// Re-render without losing the caret in a text box.
+function renderKeepFocus(sel) {
+  const pos = document.querySelector(sel)?.selectionStart ?? null;
+  render();
+  const box = document.querySelector(sel);
+  if (box) { box.focus(); if (pos != null) box.setSelectionRange(pos, pos); }
+}
+
+// Cooling periods from the drawer (10/7): out of the automatic emails for 30 or 90 days, or for good; put back any time.
+function coolingBlock(a) {
+  const c = state.cool[a.leadId];
+  if (c === undefined) { state.cool[a.leadId] = "loading"; api(`/api/leads/${a.leadId}/hold`).then((r) => { state.cool[a.leadId] = r.cooling; render(); }).catch(() => { state.cool[a.leadId] = null; render(); }); }
+  const set = async (days, on = true) => {
+    state.cool[a.leadId] = "loading"; render();
+    try { const r = await api(`/api/leads/${a.leadId}/hold`, { hold: on, days, why: on ? "cooled off from the heat map" : null }); state.cool[a.leadId] = on ? { until: r.until, why: "cooled off from the heat map" } : null; }
+    catch (e) { state.error = e.message; state.cool[a.leadId] = null; }
+    render(); load(true);
+  };
+  const on = c && c !== "loading";
+  return el("div", { class: `dr-cool${on ? " on" : ""}` }, [
+    el("span", { class: "label", text: "Emails" }),
+    c === "loading" ? el("span", { class: "sub2", text: "…" })
+      : on ? el("span", { class: "sub2", text: c.until ? `Cooling off until ${shortDate(c.until)}${c.why ? ` · ${c.why}` : ""}` : `On hold${c.why ? ` · ${c.why}` : ""}` })
+        : el("span", { class: "sub2", text: "In the two-day sequence" }),
+    on ? el("button", { class: "btn small", text: "Put back", onclick: () => set(null, false) })
+      : el("span", { class: "askrow" }, [
+        el("button", { class: "btn small", text: "Cool off 30d", onclick: () => set(30) }),
+        el("button", { class: "btn small", text: "90d", onclick: () => set(90) }),
+        el("button", { class: "linkbtn small3", text: "for good", onclick: () => set(null) }),
+      ]),
+  ]);
+}
+
 // The drawer on the right: one lead at a time, Previous / Next walk the map in order (← → on the keyboard too).
 function heatDrawer(a, rows) {
   const i = rows.findIndex((r) => r.leadId === a.leadId);
@@ -681,6 +719,7 @@ function heatDrawer(a, rows) {
       t.emailed ? el("span", { class: "chip3 soft", text: "Emailed today" }) : null,
       t.wrote ? el("span", { class: "chip3 good", text: "Wrote back today" }) : null,
     ]); })(),
+    coolingBlock(a),
     el("div", { class: "dr-story" }, [
       el("div", { class: "label", text: "Where it stands" }),
       el("p", {}, storyFor(a).join(" ")),
@@ -697,8 +736,8 @@ function heatDrawer(a, rows) {
     el("ul", { class: "hp-why" }, w.why.map((t) => el("li", { class: t.startsWith("-") ? "bad" : t.startsWith("fades") ? "fade" : "", text: t }))),
     el("p", { class: "sub2", text: w.lastSignal ? `Last sign of life ${shortDate(w.lastSignal)} (${daysAgo(w.lastSignal)}d ago)` : "No sign of life since the line card" }),
     touchStrip(a),
-    el("div", { class: "label dr-h", text: "Recent" }),
-    el("ol", { class: "timeline dr-ev" }, a.events.slice(0, 6).map((e) => el("li", { class: `ev ${e.kind}` }, [
+    el("div", { class: "label dr-h", text: `History · ${a.events.length}` }),
+    el("ol", { class: "timeline dr-ev" }, a.events.map((e) => el("li", { class: `ev ${e.kind}` }, [
       el("span", { class: "ic", "aria-hidden": "true", text: EVENT_ICON[e.kind] || "•" }),
       el("span", { class: "when mono", text: shortDate(e.at) }),
       el("span", { class: "what", text: e.text }),

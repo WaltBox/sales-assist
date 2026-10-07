@@ -295,7 +295,7 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .dr-story p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
 .dr-story .dr-do { margin-top: 8px; font-weight: 600; }
 .dr-h { margin-top: 10px; color: var(--muted); }
-.dr-ev { display: flex; flex-direction: column; gap: 6px; }
+.dr-ev { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; padding-right: 4px; }
 .dr-ev .ev { font-size: 13px; }
 .dr-nav { margin-top: auto; padding-top: 16px; display: flex; gap: 8px; justify-content: space-between; }
 .dr-nav .btn { flex: 1; text-align: center; text-decoration: none; }
@@ -487,3 +487,8 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .chip3.soft { color: var(--muted); }
 .cardk.d-reached b, .cardk.d-wrote b { color: var(--green); }
 .cardk.d-called b, .cardk.d-emailed b { color: var(--amber); }
+.heatq { flex: 1; min-width: 200px; max-width: 420px; padding: 8px 10px; font: inherit; font-size: 14px; border: 1.5px solid var(--ink-line); background: var(--white); }
+.heatq:focus { outline: none; border-color: var(--ink); }
+.dr-cool { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1.5px dashed var(--ink-line); }
+.dr-cool.on { border-style: solid; border-color: var(--amber); }
+.dr-cool .askrow { margin: 0; }
