@@ -5,7 +5,8 @@ import { classifyOpen, lineCardAttachments, type Deps } from "./assistant.js";
 import { stripDashes } from "./benchmark.js";
 import { INTRO_SUBJECT } from "./validate.js";
 import { bumpHtml, memeFor, rememberMeme, type Meme } from "./memes.js";
-import { renderShort } from "./content/lineCard.js";
+import { renderPlainText, renderShort, renderVendorRow } from "./content/lineCard.js";
+import { config } from "./config.js";
 import { callUsWhen, familiesFromText, lineCardSubject, withSignatureLine } from "./linecardflow.js";
 
 // "Send line card now" (Walt 9/26): on the call screen, the line card email is ready the moment the
@@ -108,7 +109,11 @@ export function bumpBody(first: string | null, rep: string) {
 }
 
 /** Who it goes to (the contact to ask for, else the first one with an email) and the email itself. */
-export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string | null; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null } = {}) {
+/** How they want it, asked on the call (Walt 10/7): just the PDF, the short text, the whole card written out, or a vendor-list line. */
+export const ON_CALL_FORMATS = ["standard", "full_text", "pdf_only", "vendor_row"] as const;
+export type OnCallFormat = (typeof ON_CALL_FORMATS)[number];
+
+export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string | null; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null } = {}) {
   const lead = await d.close.lead(leadId);
   const withEmail = lead.contacts.filter((c) => c.emails.length);
   const byName = opts.askFor ? withEmail.find((c) => c.name.toLowerCase().split(/\s+/)[0] === opts.askFor!.toLowerCase().split(/\s+/)[0]) : undefined;
@@ -170,18 +175,24 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
   // The line card as text too (Walt 10/7): the PDF is attached, but a buyer finds us later by searching their inbox
   // for a product word, and only words in the subject and body are searchable everywhere.
   const families = familiesFromText(buys.join(" "), lead.description ?? null);
+  const format: OnCallFormat = opts.format ?? "standard";
+  const repCard = { name: d.rep.name, email: d.rep.email, phone: d.rep.phone ?? config.company.phone };
+  // What they asked for on the call: the PDF alone, the short text, the whole card, or a line for their vendor list.
+  const block: string[] = format === "pdf_only" ? ["It's attached as a PDF."]
+    : format === "full_text" ? [`${callUsWhen(buys, families)} It's attached as a PDF, and written out below so you can paste it into your notes or search your email for it later:`, renderPlainText({ phone: config.company.phone })]
+    : format === "vendor_row" ? [`${callUsWhen(buys, families)} It's attached as a PDF. Here's one line you can paste straight into your vendor list, and the short version under it so it's easy to search for later:`, renderVendorRow(repCard), renderShort(repCard)]
+    : [`${callUsWhen(buys, families)} It's all in the PDF, and here it is in plain text so it's easy to search for later:`, renderShort(repCard)];
   const body = withSignatureLine(stripDashes([
     `Hi ${first ?? "there"},`,
     referrer ? `${referrer} suggested I send this your way. ${card}` : `${intro}${card}`,
-    `${callUsWhen(buys, families)} It's all in the PDF, and here it is in plain text so it's easy to search for later:`,
-    renderShort({ name: d.rep.name, email: d.rep.email }),
+    ...block,
     "Shoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.",
     d.rep.name,
   ].join("\n\n")));
   if (!prior) subject = lineCardSubject({ words: buys, families, seed: leadId });
   return {
     // A meme only when the rep picks one in the side panel (10/2), above the name; the PDF is still attached.
-    to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, body,
+    to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, body, format,
     html: opts.meme ? bumpHtml(body, d.rep.name, opts.meme) : null as string | null, meme: opts.meme?.name ?? null as string | null, memeUrl: opts.meme?.url ?? null,
     attach: true, check, suggestions, nameGuessed,
     reply: prior ? { id: prior.id, threadId: prior.thread_id ?? null, subject: prior.subject ?? "" } : null,
@@ -190,10 +201,10 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
 }
 
 /** Send it now: one email, to the address the rep confirmed on the call, line card attached. */
-export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null }) {
+export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null }) {
   const to = req.to.trim();
   if (!EMAIL.test(to)) throw new LineCardError(`"${to}" doesn't look like an email address.`);
-  const email = await lineCardFor(d, leadId, { to, name: req.name, referredBy: req.referredBy, askFor: req.askFor, buys: req.buys, cold: req.cold, meme: req.meme });
+  const email = await lineCardFor(d, leadId, { to, name: req.name, referredBy: req.referredBy, askFor: req.askFor, buys: req.buys, cold: req.cold, meme: req.meme, format: req.format });
   // A domain that doesn't exist can only bounce, so don't send it. A near-miss of their website only warns.
   if (email.check.problem === "no_domain") throw new LineCardError(email.check.message ?? "That email domain doesn't exist.");
   // Someone new (Ethan at Titan, 9/29: "send it to me and I'll share it with the PMs"): add them as a contact

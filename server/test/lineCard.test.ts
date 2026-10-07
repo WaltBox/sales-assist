@@ -163,3 +163,25 @@ test("no em or en dash in any renderer output; the vCard NOTE has the full text"
   const note = renderVcf(rep).replace(/\r\n /g, "").split("\r\n").find((l) => l.startsWith("NOTE:"))!;
   assert.ok(note.includes("Hastelloy C-276") && note.includes("Xylan 1424") && note.includes("Studs and stud bolts: A193 B7"));
 });
+
+test("on the call (10/7): the rep picks how they want it, and the send is built in that shape", async () => {
+  const { lineCardFor, mailDns } = await import("../src/linecard.js");
+  const { demoLlm, FakeClose } = await import("../src/demo.js");
+  const { DEMO_LEAD_ID, DEMO_USER_ID } = await import("../src/fixtures.js");
+  mailDns.resolveMx = (async () => [{ exchange: "mx.example.com", priority: 10 }]) as never;
+  const d = { close: new FakeClose(), llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: "America/Los_Angeles" } };
+  const get = (format: "standard" | "full_text" | "pdf_only" | "vendor_row") => lineCardFor(d as never, DEMO_LEAD_ID, { to: "renee@roddaelectric.com", name: "Renee", buys: ["Threaded rod", "Beam clamps"], format });
+  const pdf = await get("pdf_only");
+  assert.ok(pdf.body.includes("Here's our line card. We do threaded rod, beam clamps, plus a lot more.\n\nIt's attached as a PDF.\n\nShoot me a quick"));
+  assert.ok(!pdf.body.includes("What we carry:") && !pdf.body.includes("Product lines:"));
+  const full = await get("full_text");
+  assert.ok(full.body.includes(renderPlainText()) && !full.body.includes("What we carry:"));
+  const row = await get("vendor_row");
+  assert.ok(row.body.includes(renderVendorRow(rep)) && row.body.includes(renderShort(rep)));
+  const std = await get("standard");
+  assert.ok(std.body.includes(renderShort(rep)) && !std.body.includes("Product lines:"));
+  for (const e of [pdf, full, row, std]) {
+    assert.ok(e.body.endsWith(SIGNATURE_TEXT) && e.subject.startsWith("Westgate Supply: threaded rod, beam clamps") && !LOCATION_WORDS.test(e.body) && !PHONE.test(e.body), e.format);
+    assert.equal(count(e.body, /\bPDF\b/g), 1, `${e.format}: PDF once`);
+  }
+});

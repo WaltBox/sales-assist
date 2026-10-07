@@ -325,7 +325,7 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/automations/meme", authed, route((req, d) => pickMeme(d, z.string().min(3).max(100).parse(req.body?.lead_id), req.body?.meme === null ? null : z.string().min(1).max(200).parse(req.body?.meme))));
   app.post("/api/automations/:id/skip", authed, route((req, d) => skipAutomation(d, z.string().min(3).max(100).parse(req.params.id))));
   // "Send line card now": the email is ready on the call screen; it goes out while they're on the phone.
-  const LineCardReq = z.object({ to: z.string().max(200).optional().nullable(), name: z.string().max(80).optional().nullable(), referred_by: z.string().max(80).optional().nullable(), ask_for: z.string().max(120).optional().nullable(), buys: z.array(z.string().max(80)).max(12).optional(), cold: z.boolean().optional(), meme: z.string().max(200).nullable().optional() });
+  const LineCardReq = z.object({ to: z.string().max(200).optional().nullable(), name: z.string().max(80).optional().nullable(), referred_by: z.string().max(80).optional().nullable(), ask_for: z.string().max(120).optional().nullable(), buys: z.array(z.string().max(80)).max(12).optional(), cold: z.boolean().optional(), meme: z.string().max(200).nullable().optional(), format: z.enum(["standard", "full_text", "pdf_only", "vendor_row"]).optional().nullable() });
   // The meme picked in the side panel (10/2): a name from the memes folder, one this company hasn't had.
   const pickedMeme = async (d: Deps, lead: string, name: string | null | undefined) => {
     if (name === undefined) return undefined;
@@ -337,11 +337,11 @@ export function createApp(appDeps: AppDeps) {
   };
   app.post("/api/leads/:leadId/linecard/preview", authed, route(async (req, d) => {
     const b = LineCardReq.parse(req.body ?? {});
-    return lineCardFor(d, leadId(req), { to: b.to ?? null, name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme) });
+    return lineCardFor(d, leadId(req), { to: b.to ?? null, name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme), format: b.format ?? null });
   }));
   app.post("/api/leads/:leadId/linecard/send", authed, route(async (req, d) => {
     const b = LineCardReq.parse(req.body ?? {});
-    return sendLineCard(d, leadId(req), { to: b.to ?? "", name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme) });
+    return sendLineCard(d, leadId(req), { to: b.to ?? "", name: b.name ?? null, referredBy: b.referred_by ?? null, askFor: b.ask_for ?? null, buys: b.buys, cold: b.cold, meme: await pickedMeme(d, leadId(req), b.meme), format: b.format ?? null });
   }));
   // Checked a few times after a send, so a bounce shows on the call screen while they're still on the phone.
   app.get("/api/leads/:leadId/linecard/bounce", authed, route((req, d) =>

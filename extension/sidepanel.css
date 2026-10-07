@@ -598,3 +598,9 @@ textarea { resize: vertical; min-height: 70px; }
 
 /* line card email format (10/7) */
 .lcpick select.lcformat { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--ink-line); border-radius: 6px; background: var(--paper); color: inherit; }
+
+/* how they want the line card (10/7) */
+.lcformats { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 8px; }
+.lcformats .lcfrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.lcformats .lcf { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--ink-line); background: var(--paper); color: inherit; cursor: pointer; }
+.lcformats .lcf.on { background: var(--red); border-color: var(--red); color: #fff; }

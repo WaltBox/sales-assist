@@ -854,7 +854,7 @@ async function loadLineCard(st) {
   const b = st.brief || {};
   st.lc = { ...(st.lc || {}), loading: true };
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys });
+    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "standard" });
     const first = r.name && !/main|office|purchasing/i.test(r.name) ? r.name : "";
     st.lc = { ...st.lc, loading: false, preview: r, to: st.lc.to || r.to, name: st.lc.name ?? first };
   } catch (e) {
@@ -869,7 +869,7 @@ async function sendLineCardNow(st) {
   st.lc.error = null;
   render();
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys });
+    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "standard" });
     st.lc.sent = r;
     watchBounce(st, r);
   } catch (e) {
@@ -1069,6 +1069,9 @@ function lineCardAsk(st, after = false) {
       after ? null : el("p", { class: "lcquote", text: already
         ? `"I sent it over earlier. I'll send it again right now so it's at the top of your inbox. Mind firing back a quick 'got it'?"`
         : `"I'll send it right now from ${from}. Mind firing back a quick 'got it' when you see it? Sometimes it lands in junk."` }),
+      // Ask how they want it (Walt 10/7): some only want the PDF, some keep a contact per vendor, some a vendor list.
+      already ? null : el("p", { class: "lcquote", text: `"How do you keep track of vendors? I can send just the PDF, write the whole line card out in the email, or give you one line for your vendor list."` }),
+      already ? null : formatPicker(st, lc),
       // Name and email are both editable: the person on the phone isn't always who's on file (Walt 9/28).
       el("div", { class: "lcfields" }, [
         el("label", { class: "lcfield lcname" }, [
@@ -1110,6 +1113,19 @@ function lineCardAsk(st, after = false) {
       lc.error ? el("p", { class: "err", text: lc.error }) : null,
       checks || (already ? el("div", { class: "lcchecks" }, [gotItBox(st, "They got it (not in spam)")]) : null),
     ]),
+  ]);
+}
+
+// How they want it (Walt 10/7): picked on the call, the email is rebuilt in that shape before it's sent.
+const LC_FORMATS = [["standard", "Short text", "the PDF plus the short card as text"], ["full_text", "Full text", "the whole card written out, for their notes"], ["pdf_only", "PDF only", "just the attachment"], ["vendor_row", "Vendor list line", "one line to paste into their vendor list, plus the short card"]];
+function formatPicker(st, lc) {
+  const cur = lc.format || "standard";
+  const pick = (id) => { st.lc = { ...(st.lc || {}), format: id }; loadLineCard(st); render(); };
+  const help = (LC_FORMATS.find((f) => f[0] === cur) || LC_FORMATS[0])[2];
+  return el("div", { class: "lcformats" }, [
+    el("span", { class: "label", text: "Send as" }),
+    el("div", { class: "lcfrow" }, LC_FORMATS.map(([id, label]) => el("button", { class: `lcf${id === cur ? " on" : ""}`, text: label, onclick: () => pick(id) }))),
+    el("span", { class: "lcmeta", text: help }),
   ]);
 }
 
