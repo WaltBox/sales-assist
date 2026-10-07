@@ -1106,7 +1106,8 @@ function lineCardAsk(st, after = false) {
       already ? null : memeChooser(st, lc),
       el("button", { class: "send lcsend", disabled: lc.sending || lc.loading || !lc.to || !!(pv && pv.to === lc.to && pv.check && pv.check.problem === "no_domain"), text: lc.sending ? "Sending…" : already && after ? "Send follow-up now" : already ? "Send it again" : "Send line card now", onclick: () => sendLineCardNow(st) }),
       el("div", { class: "lcfoot" }, [
-        pv ? el("details", { class: "lcprev" }, [el("summary", { text: pv.reply ? "Preview · reply in the same thread" : "Preview email" }), el("p", { class: "rbody", text: `${pv.subject}\n\n${pv.body}` }), pv.memeUrl ? el("img", { class: "lcmemeprev", src: pv.memeUrl, alt: "" }) : null]) : el("span"),
+        // The preview stays open across re-renders (a format pick, a meme pick) once it's been opened (Walt 10/7).
+        pv ? el("details", { class: "lcprev", open: !!lc.previewOpen, ontoggle: (e) => { st.lc = { ...(st.lc || {}), previewOpen: e.target.open }; } }, [el("summary", { text: pv.reply ? "Preview · reply in the same thread" : "Preview email" }), el("p", { class: "rbody", text: `${pv.subject}\n\n${pv.body}` }), pv.memeUrl ? el("img", { class: "lcmemeprev", src: pv.memeUrl, alt: "" }) : null]) : el("span"),
         already ? el("button", { class: "lclink", text: "Send to someone else", onclick: () => sendToSomeoneElse(st) }) : null,
       ]),
       lc.another && !lc.to ? el("p", { class: "lcmeta", text: "Type their email and first name. They get the line card as a new email, and they're added as a contact in Close." }) : null,
