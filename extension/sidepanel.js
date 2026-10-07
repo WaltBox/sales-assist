@@ -872,7 +872,7 @@ async function loadLineCard(st) {
   const b = st.brief || {};
   st.lc = { ...(st.lc || {}), loading: true };
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "standard" });
+    const r = await api(`/api/leads/${st.leadId}/linecard/preview`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to || null, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "pdf_only" });
     const first = r.name && !/main|office|purchasing/i.test(r.name) ? r.name : "";
     st.lc = { ...st.lc, loading: false, preview: r, to: st.lc.to || r.to, name: st.lc.name ?? first };
   } catch (e) {
@@ -887,7 +887,7 @@ async function sendLineCardNow(st) {
   st.lc.error = null;
   render();
   try {
-    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "standard" });
+    const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "pdf_only" });
     st.lc.sent = r;
     watchBounce(st, r);
   } catch (e) {
@@ -1183,9 +1183,9 @@ function lineCardAsk(st, after = false) {
 }
 
 // How they want it (Walt 10/7): picked on the call, the email is rebuilt in that shape before it's sent.
-const LC_FORMATS = [["standard", "Short text", "the PDF plus the short card as text"], ["full_text", "Full text", "the whole card written out, for their notes"], ["pdf_only", "PDF only", "just the attachment"], ["vendor_row", "Vendor list line", "one line to paste into their vendor list, plus the short card"]];
+const LC_FORMATS = [["pdf_only", "PDF only", "just the attachment"], ["standard", "Short text", "the PDF plus the short card as text"], ["full_text", "Full text", "the whole card written out, for their notes"], ["vendor_row", "Vendor list line", "one line to paste into their vendor list, plus the short card"]];
 function formatPicker(st, lc) {
-  const cur = lc.format || "standard";
+  const cur = lc.format || "pdf_only"; // PDF only by default (Walt 10/7); the text versions when they ask
   const pick = (id) => { st.lc = { ...(st.lc || {}), format: id }; loadLineCard(st); render(); };
   const help = (LC_FORMATS.find((f) => f[0] === cur) || LC_FORMATS[0])[2];
   return el("div", { class: "lcformats" }, [
