@@ -18,6 +18,9 @@ const state = {
   heatOnly: null, // a bucket to show alone on the heat map, or null for all
   heatCard: null, // line-card filter on the heat map: "opened" | "landed" | "bounced" | null
   heatPot: null, // RFQ-potential filter on the heat map: "steady" | "project" | "occasional" | "unknown" | null
+  heatFresh: {}, // heat map bands showing the accounts touched in the last two business days (hidden by default, Walt 10/7)
+  memeNow: {}, // per lead: a one-off meme email fired from the drawer or the accounts page (Walt 10/7)
+  heatPms: false, // heat map: only accounts where the PMs or subs order their own materials (Walt 10/7)
   heatToday: null, // what's happened today on the heat map: "none" | "emailed" | "called" | "reached" | "wrote" | null
   heatQ: "", // search on the heat map: company, contact, email
   acctQ: "", // search on the accounts page
@@ -182,7 +185,7 @@ function topBar() {
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
       k === "rfqs" && state.board ? el("span", { class: "navc mono", text: state.board.accounts.filter((a) => a.rfq).length }) : null,
-      k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => !a.rfq && a.warmth && a.warmth.bucket === "hot").length }) : null,
+      k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth && a.warmth.bucket === "hot").length }) : null,
     ]))),
     el("div", { class: "who" }, [
       line ? el("button", {
@@ -512,6 +515,8 @@ function openInCloseTab(leadId) {
 }
 
 // What you did last, and what's happened today (Walt 10/7): from the account's own events.
+// The objection Walt hears most (10/7): the PMs or subs order their own, so the main office isn't the buyer.
+const pmsBuy = (a) => { const w = a.potential && a.potential.profile && a.potential.profile.heard && a.potential.profile.heard.works_through; return !!w && (w.value === "PM" || w.value === "sub"); };
 const TODAY_F = {
   none: ["Nothing yet", "No call, no email, nothing from them today."],
   emailed: ["Emailed", "An email went to them today (automatic or by hand)."],
@@ -520,6 +525,24 @@ const TODAY_F = {
   wrote: ["They wrote back", "A reply or an RFQ came in today."],
 };
 const isToday = (iso) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
+// Quiet time (Walt 10/7): how many business days since anyone touched the account, either side. Someone called or
+// emailed today sits out of the way; nobody who's gone two business days without a word is allowed to hide.
+const HAS_RFQ_STATUS = /rfq|quot|won|customer|order/i;
+const QUIET_DUE_DAYS = 2;
+function lastTouchAt(a) {
+  const y = lastYou(a);
+  return [y ? y.at : null, a.warmth && a.warmth.lastSignal, a.touches && a.touches.lastTalk, a.lastIn, a.cardSentAt].filter(Boolean).sort().pop() || null;
+}
+function businessDaysSince(iso) {
+  if (!iso) return 99;
+  const from = new Date(iso); from.setHours(0, 0, 0, 0);
+  const to = new Date(); to.setHours(0, 0, 0, 0);
+  let n = 0;
+  for (let d = new Date(from); d < to; d.setDate(d.getDate() + 1)) { const w = d.getDay(); if (w !== 0 && w !== 6) n++; }
+  return n;
+}
+const quietDays = (a) => businessDaysSince(lastTouchAt(a));
+const isDue = (a) => quietDays(a) >= QUIET_DUE_DAYS;
 function lastYou(a) {
   const mine = a.events.filter((e) => e.kind === "call" || e.kind === "email" || e.kind === "line_card").sort((x, y) => y.at.localeCompare(x.at));
   const e = mine[0];
@@ -542,14 +565,15 @@ function matchesToday(a) {
 }
 
 function heatRows() {
-  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
+  // Nobody with an RFQ in (detected, tapped, or marked RFQ Received / Quoted / Won in Close) belongs here (Walt 10/7): the map is for getting the first one.
+  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth);
   // Hottest first; inside a warmth band, the accounts worth the most come first.
   const rows = all.slice().sort((a, b) => b.warmth.bucket === a.warmth.bucket
     ? (POT_RANK[potTier(a)] - POT_RANK[potTier(b)] || b.warmth.score - a.warmth.score || a.company.localeCompare(b.company))
     : b.warmth.score - a.warmth.score);
   const q = state.heatQ.trim().toLowerCase();
   const hit = (a) => !q || `${a.company} ${a.contact.name || ""} ${a.contact.email || ""}`.toLowerCase().includes(q);
-  return rows.filter((a) => hit(a) && (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot) && matchesToday(a));
+  return rows.filter((a) => hit(a) && (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot) && (!state.heatPms || pmsBuy(a)) && matchesToday(a));
 }
 
 async function readSites(leadIds) {
@@ -603,6 +627,13 @@ function heatPage() {
       all.some((a) => !a.potential) ? el("button", { class: "linkbtn", disabled: state.potBusy, text: state.potBusy ? "Reading their sites…" : `Read ${all.filter((a) => !a.potential).length} sites now`, onclick: () => readSites(null) }) : null,
     ]),
     el("div", { class: "heatcard" }, [
+      el("span", { class: "label", text: "Who buys" }),
+      el("button", {
+        class: `cardk b-pms${state.heatPms ? " on" : ""}`, title: "They said the project managers or subcontractors order their own materials. Tapped on the call screen, or heard on a call.",
+        onclick: () => { state.heatPms = !state.heatPms; state.heatPick = null; render(); },
+      }, [el("b", { class: "mono", text: all.filter(pmsBuy).length }), "PMs / subs buy"]),
+    ]),
+    el("div", { class: "heatcard" }, [
       el("span", { class: "label", text: "Today" }),
       ...Object.keys(TODAY_F).map((k) => el("button", {
         class: `cardk d-${k}${state.heatToday === k ? " on" : ""}`, title: TODAY_F[k][1],
@@ -610,11 +641,14 @@ function heatPage() {
       }, [el("b", { class: "mono", text: all.filter((a) => { const t = todayState(a); return k === "none" ? !t.emailed && !t.called && !t.wrote : t[k]; }).length }), TODAY_F[k][0]])),
     ]),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" }) : null,
-    el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up. Everyone stays in the two-day email sequence until you cool them off by hand." }),
-    ...buckets.map((k) => el("div", { class: `heatband w-${k}` }, [
-      el("div", { class: "heatlbl" }, [el("span", { class: "label", text: HEAT[k][0] }), el("span", { class: "mono muted", text: by[k].length }), el("span", { class: "muted small3 why", text: HEAT[k][1] })]),
-      by[k].length ? el("div", { class: "tiles" }, by[k].map((a) => el("button", {
-        class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}`,
+    el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up. Anyone contacted in the last two business days is tucked away under its band; anyone quiet for two days or more is always showing. Everyone stays in the two-day email sequence until you cool them off by hand." }),
+    ...buckets.map((k) => { const due = by[k].filter(isDue), fresh = by[k].filter((a) => !isDue(a)), showFresh = !!state.heatFresh[k]; return el("div", { class: `heatband w-${k}` }, [
+      el("div", { class: "heatlbl" }, [el("span", { class: "label", text: HEAT[k][0] }), el("span", { class: "mono muted", text: due.length }), el("span", { class: "muted small3 why", text: HEAT[k][1] }),
+        // Touched in the last two business days: out of the way until asked for (Walt 10/7).
+        fresh.length ? el("button", { class: "linkbtn fresht", text: showFresh ? `hide the ${fresh.length} contacted in the last ${QUIET_DUE_DAYS} days` : `+${fresh.length} contacted in the last ${QUIET_DUE_DAYS} days`, onclick: () => { state.heatFresh[k] = !showFresh; render(); } }) : null,
+      ]),
+      due.length || (showFresh && fresh.length) ? el("div", { class: "tiles" }, [...due, ...(showFresh ? fresh : [])].map((a) => el("button", {
+        class: `tile w-${a.warmth.bucket} t-${potTier(a)}${pick && pick.leadId === a.leadId ? " on" : ""}${isDue(a) ? "" : " fresh"}`,
         style: `--heat:${shade(a).toFixed(2)}`,
         title: `${a.company} · ${a.warmth.score} · ${POT[potTier(a)][0]}\nLine card sent ${shortDate(a.cardSentAt)}: ${cardText(a)}`,
         // One click opens the drawer here, nothing else (Walt 10/6). "Open in Close" in the drawer is the only thing that touches Close.
@@ -629,9 +663,10 @@ function heatPage() {
           el("span", { class: "sc mono", text: a.warmth.score }),
           potTier(a) !== "unknown" ? el("span", { class: "tier", text: POT[potTier(a)][0] }) : null,
           a.warmth.lastSignal ? el("span", { class: "ago", title: "Days since their last sign of life", text: `them · ${daysAgo(a.warmth.lastSignal)}d` }) : null,
+          el("span", { class: `quiet${isDue(a) ? " due" : ""}`, title: "Business days since anyone touched this account, you or them", text: quietDays(a) >= 99 ? "never touched" : `quiet ${quietDays(a)}d` }),
         ]),
-      ]))) : el("p", { class: "empty small3", text: "Nobody here." }),
-    ])),
+      ]))) : el("p", { class: "empty small3", text: fresh.length ? `Nobody waiting. ${fresh.length} contacted in the last ${QUIET_DUE_DAYS} days.` : "Nobody here." }),
+    ]); }),
     pick ? heatDrawer(pick, rows) : null,
   ]);
 }
@@ -679,7 +714,31 @@ function renderKeepFocus(sel) {
   if (box) { box.focus(); if (pos != null) box.setSelectionRange(pos, pos); }
 }
 
-// Cooling periods from the drawer (10/7): out of the automatic emails for 30 or 90 days, or for good; put back any time.
+// Cooling periods (10/7): how long they're out of the automatic emails, picked each time (Walt: a week for some, a month for others).
+const COOL_OPTIONS = [[7, "1 week"], [14, "2 weeks"], [30, "1 month"], [90, "3 months"], [null, "for good"]];
+// Cooling periods from the drawer (10/7): out of the automatic emails for the period picked, or for good; put back any time.
+// "Fire them a meme" (Walt 10/7): search the account, one tap, and a bump with a meme they haven't had goes out in
+// the next couple of minutes, in their thread with the PDF, like the automatic ones. Skips the gap rule: this is on purpose.
+function memeNowBlock(a) {
+  const m = state.memeNow[a.leadId] || {};
+  const fire = async () => {
+    state.memeNow[a.leadId] = { busy: true }; render();
+    try {
+      const r = await api("/api/automations/send-now", { lead_ids: [a.leadId], stagger: 0 });
+      const row = r.planned && r.planned[0];
+      state.memeNow[a.leadId] = row ? { sent: { to: row.to, meme: row.meme, at: row.scheduledFor } } : { error: (r.skipped && r.skipped[0] && r.skipped[0].why) || "Nothing went out." };
+    } catch (e) { state.memeNow[a.leadId] = { error: e.message }; }
+    render(); load(true);
+  };
+  return el("div", { class: "dr-cool memenow" }, [
+    el("span", { class: "label", text: "Meme" }),
+    m.sent ? el("span", { class: "sub2 good", text: `Sent to ${m.sent.to}${m.sent.meme ? ` with ${m.sent.meme.replace(/\.[a-z0-9]+$/i, "")}` : ""}${m.sent.at ? `, goes ${new Date(m.sent.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}.` })
+      : m.error ? el("span", { class: "sub2 bad", text: m.error })
+      : el("span", { class: "sub2", text: "A bump with a meme they haven't had, in their thread, out in a couple of minutes." }),
+    m.sent ? null : el("button", { class: "btn small", disabled: !!m.busy, text: m.busy ? "Sending…" : "Send a meme email now", onclick: fire }),
+  ]);
+}
+
 function coolingBlock(a) {
   const c = state.cool[a.leadId];
   if (c === undefined) { state.cool[a.leadId] = "loading"; api(`/api/leads/${a.leadId}/hold`).then((r) => { state.cool[a.leadId] = r.cooling; render(); }).catch(() => { state.cool[a.leadId] = null; render(); }); }
@@ -696,11 +755,7 @@ function coolingBlock(a) {
       : on ? el("span", { class: "sub2", text: c.until ? `Cooling off until ${shortDate(c.until)}${c.why ? ` · ${c.why}` : ""}` : `On hold${c.why ? ` · ${c.why}` : ""}` })
         : el("span", { class: "sub2", text: "In the two-day sequence" }),
     on ? el("button", { class: "btn small", text: "Put back", onclick: () => set(null, false) })
-      : el("span", { class: "askrow" }, [
-        el("button", { class: "btn small", text: "Cool off 30d", onclick: () => set(30) }),
-        el("button", { class: "btn small", text: "90d", onclick: () => set(90) }),
-        el("button", { class: "linkbtn small3", text: "for good", onclick: () => set(null) }),
-      ]),
+      : el("span", { class: "askrow" }, [el("span", { class: "sub2", text: "Cool off for" }), ...COOL_OPTIONS.map(([days, label]) => el("button", { class: days ? "btn small" : "linkbtn small3", text: label, onclick: () => set(days) }))]),
   ]);
 }
 
@@ -727,6 +782,7 @@ function heatDrawer(a, rows) {
       t.wrote ? el("span", { class: "chip3 good", text: "Wrote back today" }) : null,
     ]); })(),
     coolingBlock(a),
+    memeNowBlock(a),
     el("div", { class: "dr-story" }, [
       el("div", { class: "label", text: "Where it stands" }),
       el("p", {}, storyFor(a).join(" ")),
@@ -905,6 +961,7 @@ function accountRow(a) {
   return [row, el("div", { class: "detail" }, [
     touchStrip(a),
     coolingBlock(a),
+    memeNowBlock(a),
     el("p", { class: "why" }, a.next.detail),
     a.next.rescue ? rescueSteps(a) : null,
     gotItButton(a),
@@ -1028,7 +1085,7 @@ async function reloadAutos() {
 // ---------- the meme library (Walt 10/5): upload a file or a zip, rename, retire ----------
 async function loadLibrary() {
   state.lib = { ...(state.lib || {}), busy: true };
-  try { const r = await api("/api/memes"); state.lib = { memes: r.memes, busy: false, msg: state.lib.msg || null, rename: null }; }
+  try { const r = await api("/api/memes"); state.lib = { memes: r.memes, tracking: !!r.tracking, busy: false, msg: state.lib.msg || null, rename: null }; }
   catch (e) { state.lib = { memes: [], busy: false, msg: e.message, rename: null }; }
   render();
 }
@@ -1150,7 +1207,8 @@ function memeLibrary() {
         el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
       ]),
       m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks. Seen: the meme image loaded in their mail app. Clicked: they followed the link under it." }, [
-        ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq], ...(m.stats.tracked ? [["seen", m.stats.shown], ["clicked", m.stats.clicked]] : []),
+        // Seen and clicked only once tracking is on (a Westgate domain): until then they'd read 0% and crowd the card.
+        ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq], ...(lib.tracking && m.stats.tracked ? [["seen", m.stats.shown], ["clicked", m.stats.clicked]] : []),
       ].map(([k, v]) => el("span", { class: v ? "good" : "" }, [el("b", { class: "mono", text: `${Math.round((v / (k === "seen" || k === "clicked" ? m.stats.tracked : m.stats.sent)) * 100)}%` }), ` ${k}`]))) : null,
     ]))),
   ]);
@@ -1233,9 +1291,7 @@ function mailRow(m) {
     el("span", { class: "next", text: m.label }),
     el("span", { class: `mstatus ${m.status}`, text: STATUS_TEXT[m.status] || m.status }),
     el("div", { class: "acts" }, [
-      m.future ? el("button", { class: "btn small", text: "Cool off 30d", title: "Out of the automatic emails for 30 days, then back in on its own", onclick: (e) => hold(e, true, 30) }) : null,
-      m.future ? el("button", { class: "btn small", text: "90d", title: "Out for 90 days", onclick: (e) => hold(e, true, 90) }) : null,
-      m.future ? el("button", { class: "linkbtn small3", text: "for good", title: "Out until you put them back", onclick: (e) => hold(e, true, null) }) : null,
+      ...(m.future ? [el("span", { class: "muted small3", text: "Cool off" }), ...COOL_OPTIONS.map(([days, label]) => el("button", { class: days ? "btn small" : "linkbtn small3", text: label, title: days ? `Out of the automatic emails for ${label}, then back in on their own` : "Out until you put them back", onclick: (e) => hold(e, true, days) }))] : []),
       m.heldRow ? el("button", { class: "btn small", text: "Put back", onclick: (e) => hold(e, false) }) : null,
       m.status === "scheduled" ? el("button", {
         class: "btn small", text: "Skip",

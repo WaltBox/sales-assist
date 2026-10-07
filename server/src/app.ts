@@ -19,7 +19,7 @@ import {
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { deleteMeme, listMemes, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, uploadMemes, type MemeStats } from "./memes.js";
+import { deleteMeme, listMemes, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
@@ -312,7 +312,7 @@ export function createApp(appDeps: AppDeps) {
     const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
     const counts = await memeCounts(d);
     const stats = await accountsBoard(d).then((b) => memeStats(d, b.accounts)).catch(() => ({} as MemeStats));
-    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name]?.sent ?? 0, queued: counts[m.name]?.queued ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes" };
+    return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name]?.sent ?? 0, queued: counts[m.name]?.queued ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes", tracking: trackingOn() };
   }));
   // The meme library (Walt 10/5): upload an image or a zip of them, rename (every record follows), retire.
   app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req) => {

@@ -278,7 +278,7 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .tile.w-cool { --c: 0, 25, 57; }
 .tile.w-cold { --c: 83, 82, 79; }
 .tile .co { font-size: 12.5px; font-weight: 600; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tile .foot { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
+.tile .foot { margin-top: auto; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .tile .sc { font-size: 13px; font-weight: 700; }
 .tile .ago { margin-left: auto; font-size: 11px; opacity: 0.85; }
 .tile:hover, .tile.on { border-color: var(--ink); }
@@ -472,7 +472,8 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .staging .row { display: flex; gap: 8px; }
 .memecard.dupe { border-color: var(--red); }
 .memecard .rename { width: calc(100% - 12px); }
-.memecard .mstats { display: flex; gap: 10px; padding: 0 8px 8px; font-size: 11.5px; color: var(--muted); }
+.memecard .mstats { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 0 8px 8px; font-size: 11.5px; color: var(--muted); }
+.memecard .mstats span { white-space: nowrap; }
 .memecard .mstats b { font-size: 12.5px; color: var(--ink); }
 .memecard .mstats .good b { color: var(--green); }
 
@@ -492,3 +493,12 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .dr-cool { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1.5px dashed var(--ink-line); }
 .dr-cool.on { border-style: solid; border-color: var(--amber); }
 .dr-cool .askrow { margin: 0; }
+
+/* quiet time on the heat map (10/7) */
+.tile .quiet { font-family: var(--label); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .75; flex-basis: 100%; }
+.tile .quiet.due { opacity: 1; font-weight: 700; }
+.tile.fresh { opacity: .45; }
+.tile.fresh:hover, .tile.fresh.on { opacity: 1; }
+.heatlbl .fresht { margin-left: auto; font-size: 12px; }
+.memenow .good { color: var(--green); }
+.memenow .bad { color: var(--red); }

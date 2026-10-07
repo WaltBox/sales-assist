@@ -933,6 +933,56 @@ function rfqButton(st) {
   ]);
 }
 
+// "Cool off" (Walt 10/7): out of the automatic emails for a period picked each time (a week for some, a month for
+// others), or for good; back in on their own when it ends, or sooner with Put back.
+const COOL_OPTIONS = [[7, "1 week"], [14, "2 weeks"], [30, "1 month"], [90, "3 months"], [null, "for good"]];
+function coolOffButton(st) {
+  const set = async (days, on = true) => {
+    st.coolPick = false;
+    try { const r = await api(`/api/leads/${st.leadId}/hold`, { hold: on, days, why: on ? "asked for fewer emails" : null }); st.cooling = on ? { until: r.until } : null; } catch (e) { st.error = e.message; }
+    render();
+  };
+  if (st.cooling) return el("button", { class: "btn small cooling", text: `Cooling off${st.cooling.until ? ` until ${new Date(st.cooling.until).toLocaleDateString([], { month: "short", day: "numeric" })}` : ""}`, title: "Out of the automatic emails. Tap to put them back in.", onclick: () => set(null, false) });
+  if (!st.coolPick) return el("button", { class: "btn small", text: "Cool off", title: "Out of the automatic emails for a while (they asked for fewer); pick how long", onclick: () => { st.coolPick = true; render(); } });
+  return el("span", { class: "coolpick" }, [
+    el("span", { class: "muted small", text: "Cool off for" }),
+    ...COOL_OPTIONS.map(([days, label]) => el("button", { class: "btn small", text: label, onclick: () => set(days) })),
+    el("button", { class: "link", text: "Cancel", onclick: () => { st.coolPick = false; render(); } }),
+  ]);
+}
+
+// "PMs / subs buy" (Walt 10/7): the objection he hears most. The project managers or subcontractors order their
+// own materials, so the person on the phone isn't the buyer. One tap saves it as the purchasing answer (they buy
+// through PMs) with a [Purchasing] note in Close, so the heat map can filter on it and the next call knows.
+function pmsBuyButton(st) {
+  const r = st.pmsBuy || {};
+  const heard = st.purch && st.purch.heard && st.purch.heard.works_through;
+  const already = heard && (heard.value === "PM" || heard.value === "sub");
+  if (r.saved || (already && !r.open)) return el("div", { class: "rfqin saved pms" }, [el("i", { class: "dot" }),
+    el("span", { text: r.saved ? "Saved: the PMs and subs order their own. Next call, ask for the PM names and whether you can send the line card to them directly." : "On file: the PMs and subs order their own." }),
+  ]);
+  if (!r.open) return el("button", { class: "btn small pmsbtn", text: "PMs / subs buy", title: "The project managers or subcontractors order their own materials. Saves it to Close so it's tracked and filterable.", onclick: () => { st.pmsBuy = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("pms-note"); if (i) i.focus(); }, 0); } });
+  const save = async () => {
+    const who = (st.pmsBuy.note || "").trim();
+    st.pmsBuy = { ...r, busy: true, error: null }; render();
+    try {
+      const res = await api(`/api/leads/${st.leadId}/purchasing`, { answers: { works_through: "PM", cycle_notes: `The project managers and subs order their own materials.${who ? ` ${who}` : ""}` } });
+      st.purch = { ...(st.purch || {}), heard: res.heard, ask: res.ask };
+      st.pmsBuy = { saved: true };
+    } catch (e) { st.pmsBuy = { ...r, busy: false, error: e.message }; }
+    if (st === S) render();
+  };
+  return el("div", { class: "rfqin open pms" }, [
+    el("p", { class: "label", text: "PMs / subs buy their own" }),
+    el("input", { id: "pms-note", type: "text", value: r.note || "", placeholder: "Who are they? Names, or how to reach them (optional)", oninput: (e) => { st.pmsBuy = { ...st.pmsBuy, note: e.target.value }; }, onkeydown: (e) => { if (e.key === "Enter") save(); } }),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn small primary", disabled: !!r.busy, text: r.busy ? "Saving…" : "Save", onclick: save }),
+      el("button", { class: "btn small", text: "Cancel", onclick: () => { st.pmsBuy = null; render(); } }),
+    ]),
+    r.error ? el("p", { class: "bad small", text: r.error }) : null,
+  ]);
+}
+
 // "Shot down" (Walt 10/5): they said no. The lead goes to Not Interested in Close with a note, its open callbacks
 // are marked done, and it leaves the calls and the automatic emails. Two steps (tap, then save) so a slip doesn't
 // close an account; Undo puts the status back.
@@ -954,11 +1004,8 @@ function shotDownButton(st) {
   const open = () => { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); };
   if (!r.open) return el("div", { class: "shotwrap" }, [
     el("button", { class: "btn small shotbtn", text: "Shot down", title: "They're not interested: no more calls or automatic emails", onclick: open }),
-    el("button", { class: `btn small${st.cooling ? " cooling" : ""}`, text: st.cooling ? "Cooling off" : "Cool off", title: st.cooling ? `Out of the automatic emails${st.cooling.until ? ` until ${new Date(st.cooling.until).toLocaleDateString()}` : ""}. Tap to put them back in.` : "Out of the automatic emails for 30 days (they asked for fewer); back in on their own after", onclick: async () => {
-      const on = !st.cooling;
-      try { const r = await api(`/api/leads/${st.leadId}/hold`, { hold: on, days: on ? 30 : null, why: on ? "asked for fewer emails" : null }); st.cooling = on ? { until: r.until } : null; } catch (e) { st.error = e.message; }
-      render();
-    } }),
+    pmsBuyButton(st),
+    coolOffButton(st),
     r.undone ? el("span", { class: "muted small", text: `Undone: back to ${r.undone}. The callbacks it cleared stay done, so tap an outcome to set a new one.` }) : null,
   ]);
   const save = async () => {
