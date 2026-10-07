@@ -225,7 +225,8 @@ async function pickOutcome(outcome) {
       try {
         const res = await api(`/api/leads/${st.leadId}/purchasing`, { answers: { works_through: "PM", cycle_notes: `The project managers and subs order their own materials.${who ? ` ${who}` : ""}` } });
         st.purch = { ...(st.purch || {}), heard: res.heard, ask: res.ask };
-        st.pmsBuy = { saved: true };
+        st.pmsBuy = { saved: true, status: res.status || null };
+        if (res.status && st.header) st.header.status = res.status;
       } catch (e) { st.pmsBuy = { error: e.message }; }
       render();
     }
@@ -976,7 +977,7 @@ function pmsBuyButton(st) {
   const heard = st.purch && st.purch.heard && st.purch.heard.works_through;
   const already = heard && (heard.value === "PM" || heard.value === "sub");
   if (r.saved || (already && !r.open)) return el("div", { class: "rfqin saved pms" }, [el("i", { class: "dot" }),
-    el("span", { text: r.saved ? "Saved: the PMs and subs order their own. Next call, ask for the PM names and whether you can send the line card to them directly." : "On file: the PMs and subs order their own." }),
+    el("span", { text: r.saved ? `Saved: the PMs and subs order their own.${r.status ? ` Status → ${r.status}.` : ""} Next call, ask for the PM names and whether you can send the line card to them directly.` : "On file: the PMs and subs order their own." }),
   ]);
   if (r.error) return el("span", { class: "bad small", text: `Couldn't save PMs / subs buy: ${r.error}` });
   if (!r.open) return null; // it's a result tile now (10/7); this row only shows what it saved

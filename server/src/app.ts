@@ -375,8 +375,14 @@ export function createApp(appDeps: AppDeps) {
     }
     const prev = (await loadProfiles(d.rep.closeUserId))[id]?.heard ?? null;
     const potential = await recordPurchasing(d, id, confirmAnswers(prev, given, quotes, (d.now?.() ?? new Date()).toISOString()), { note: true, replace: true });
+    // "PMs / subs buy" (Walt 10/7): the lead's status in Close becomes his "project managers" status, so it's tracked there too.
+    let status: string | null = null;
+    if (given.works_through === "PM" || given.works_through === "sub") {
+      const pm = (await d.close.leadStatuses().catch(() => [])).find((x) => /project manager/i.test(x.label));
+      if (pm) { await d.close.updateLeadStatus(id, pm.id).catch(() => undefined); status = pm.label; }
+    }
     bustBoard(d);
-    return { heard: potential.profile.heard, ask: potential.ask, tier: potential.tier };
+    return { heard: potential.profile.heard, ask: potential.ask, tier: potential.tier, status };
   }));
   app.post("/api/leads/:leadId/rfq-received", authed, route((req, d) => markRfqReceived(d, leadId(req), typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null)));
   // Where an RFQ stands, set by the rep ("With pricing · Berni has it"): a [RFQ status] note in Close.
