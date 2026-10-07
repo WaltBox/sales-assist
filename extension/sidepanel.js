@@ -214,6 +214,23 @@ async function pickOutcome(outcome) {
   const st = S;
   const prev = st.outcome;
   if (st.shotDown && st.shotDown.saved) return; // shot down: no callback to set
+  // Shot down is a result tile now (10/7): it opens the same two-step save (note, then Not Interested in Close).
+  if (outcome === "shot_down") { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); return; }
+  // "PMs / subs buy" (10/7): a reached call, plus the purchasing answer saved to Close (they buy through PMs).
+  if (outcome === "pms_buy") {
+    await pickOutcome("reached_buyer");
+    if (st.outcome && st.outcome.picked === "reached_buyer" && !st.outcome.error) {
+      st.outcome.picked = "pms_buy";
+      const who = (drafts[`note:${st.leadId}`] || "").trim();
+      try {
+        const res = await api(`/api/leads/${st.leadId}/purchasing`, { answers: { works_through: "PM", cycle_notes: `The project managers and subs order their own materials.${who ? ` ${who}` : ""}` } });
+        st.purch = { ...(st.purch || {}), heard: res.heard, ask: res.ask };
+        st.pmsBuy = { saved: true };
+      } catch (e) { st.pmsBuy = { error: e.message }; }
+      render();
+    }
+    return;
+  }
   // Tapped the wrong one (Walt 9/29): "Change" re-opens the buttons, and the new pick replaces what the first saved.
   if (prev && !(prev.changing && !prev.busy && outcome !== prev.picked)) return;
   const r0 = prev && prev.result;
@@ -961,7 +978,8 @@ function pmsBuyButton(st) {
   if (r.saved || (already && !r.open)) return el("div", { class: "rfqin saved pms" }, [el("i", { class: "dot" }),
     el("span", { text: r.saved ? "Saved: the PMs and subs order their own. Next call, ask for the PM names and whether you can send the line card to them directly." : "On file: the PMs and subs order their own." }),
   ]);
-  if (!r.open) return el("button", { class: "btn small pmsbtn", text: "PMs / subs buy", title: "The project managers or subcontractors order their own materials. Saves it to Close so it's tracked and filterable.", onclick: () => { st.pmsBuy = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("pms-note"); if (i) i.focus(); }, 0); } });
+  if (r.error) return el("span", { class: "bad small", text: `Couldn't save PMs / subs buy: ${r.error}` });
+  if (!r.open) return null; // it's a result tile now (10/7); this row only shows what it saved
   const save = async () => {
     const who = (st.pmsBuy.note || "").trim();
     st.pmsBuy = { ...r, busy: true, error: null }; render();
@@ -1003,7 +1021,6 @@ function shotDownButton(st) {
   ]);
   const open = () => { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); };
   if (!r.open) return el("div", { class: "shotwrap" }, [
-    el("button", { class: "btn small shotbtn", text: "Shot down", title: "They're not interested: no more calls or automatic emails", onclick: open }),
     pmsBuyButton(st),
     coolOffButton(st),
     r.undone ? el("span", { class: "muted small", text: `Undone: back to ${r.undone}. The callbacks it cleared stay done, so tap an outcome to set a new one.` }) : null,
@@ -1650,6 +1667,9 @@ const OUTCOMES = [
   ["got_name", "Got a name", "callback in 2 days, other half of day"],
   ["voicemail", "Voicemail", "callback in 2 days, other half of day"],
   ["no_answer", "No answer", "callback · other half of day"],
+  // Call results too (Walt 10/7): the objection he hears most, and the no.
+  ["pms_buy", "PMs / subs buy", "reached · they order through PMs or subs"],
+  ["shot_down", "Shot down", "not interested · no more calls or emails"],
 ];
 
 function renderEnded() {
@@ -1674,7 +1694,7 @@ function renderEnded() {
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
     // Send the line card from here once you've hung up, instead of staying on the call (Walt 9/29).
-    !down && (!o || o.picked === "reached_buyer" || o.picked === "got_name") ? el("div", { class: "afterlc" }, [lineCardAsk(st, true)]) : null,
+    !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? el("div", { class: "afterlc" }, [lineCardAsk(st, true)]) : null,
     !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),
       followUpBlock(st.leadId, true),
