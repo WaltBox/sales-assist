@@ -446,4 +446,13 @@ test("bumpDue (10/5): the two-day cadence runs even with a callback on the books
   // They wrote back after the last email: answer first.
   const reply = { id: "em_r", lead_id: lead.id, status: "inbox", direction: "incoming", subject: "RE: line card", date_created: "2026-10-05T10:00:00Z", sender: to, to: ["walt@westgatesupply.com"], attachments: [], thread_id: "th1" };
   assert.equal(build([card(), reply]).bumpDue, false);
+  // "Got it, thanks." (Matt McDaniel, 10/7) is an acknowledgment, not a conversation: the sequence keeps going.
+  const ack = { ...reply, id: "em_ack", body_text: "Got it, thanks.\n\nOn Fri, Oct 2, 2026 at 9:20 AM Walt Boxwell <walt@westgatesupply.com> wrote:\n> Hi Matt!\n> Happy Friday" };
+  const acked = build([card(), ack]);
+  assert.equal(acked.bumpDue, true);
+  assert.equal(acked.next.kind, "bump");
+  assert.equal(acked.seen, "replied", "still counts as a reply for warmth");
+  const real = { ...reply, id: "em_real", body_text: "Thanks. When are you around to talk this week?\n\n> Hi Matt" };
+  assert.equal(build([card(), real]).bumpDue, false);
+  assert.equal(build([card(), real]).next.kind, "reply");
 });

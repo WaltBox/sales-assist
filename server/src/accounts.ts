@@ -62,6 +62,22 @@ export function rfqInBody(subject: string | null | undefined, body: string | nul
   return /\b(item|part)(\s*#|\s+no\.?)?\b[\s\S]{0,60}\bdescription\b/i.test(own) && /\b(qty|quantity|ordered|each|ea)\b/i.test(own);
 }
 
+/**
+ * An acknowledgment, not a conversation (Walt 10/7): "Got it, thanks." on its own, under 15 words, no question, no
+ * file, nothing about pricing or a list. It counts as a reply for warmth, but it doesn't pause the automatic emails:
+ * we don't stop until the RFQ.
+ */
+export function isAck(e: { body_text?: string | null; attachments?: unknown; subject?: string | null }): boolean {
+  const own = (e.body_text ?? "").split(/\r?\n/).filter((l) => !/^\s*>/.test(l)).join("\n")
+    .split(/\bOn .{5,120}?wrote:|^-{2,}\s*Original Message|^From:\s|^Sent from my/m)[0].replace(/\s+/g, " ").trim();
+  if (!own) return false;
+  if (theirFiles(e.attachments).length) return false;
+  const words = own.split(" ").filter(Boolean).length;
+  return words <= 15 && !own.includes("?")
+    && /\b(got it|thanks|thank you|received|ok|okay|sounds good|noted|will do|appreciate|perfect|great|awesome)\b/i.test(own)
+    && !/\b(rfq|quote|pric|send|call|list|spec|order|need|looking|interested|remove|unsubscribe|stop)/i.test(own);
+}
+
 export function rfqStatus(rfq: { at: string; files: string[]; quotedAt: string | null }, lastIn: string | null, marks: Array<{ note: string; date_created: string }>, handoff: { at: string; who: string } | null = null): RfqStatus {
   const auto: RfqStatus = isPurchaseOrder(rfq.files) ? { stage: "Order in", waitingOn: "westgate", since: rfq.at, note: null, manual: false }
     : !rfq.quotedAt && handoff ? { stage: "With pricing", waitingOn: "westgate", since: handoff.at, note: `${handoff.who} has it`, manual: false }
@@ -455,7 +471,9 @@ export function buildAccount(x: {
   const liveTasks = x.tasks.filter((t) => !staleTasks.includes(t));
   const seen: Seen = replies.length ? "replied" : bounce ? "bounced" : confirmed ? "confirmed" : person.length ? "opened" : maybe.length ? "maybe" : "not_opened";
   const lastOut = outgoing.map(at).pop() ?? t0;
-  const lastIn = replies.map(at).pop() ?? null;
+  // "Got it, thanks." isn't a reply that needs an answer (Walt 10/7, Matt McDaniel): the sequence doesn't stop for it.
+  // (The bulk list carries no text; the body of a reply with no file was fetched into bounceBodies above.)
+  const lastIn = replies.filter((e) => !isAck({ ...e, body_text: e.body_text ?? x.bounceBodies?.get(e.id) ?? null })).map(at).pop() ?? null;
   const rfqPromised = x.notes.some((n) => n.note.includes(RFQ_TAG));
   // An RFQ is an email from them with a real file; a quote is ours back with a file or "quote"/"pricing" in the subject.
   const windowStart = new Date(new Date(t0).getTime() - 3 * DAY).toISOString();
