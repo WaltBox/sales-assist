@@ -95,8 +95,11 @@ export async function memeFor(d: Deps, leadId: string, ctx?: { memes: Meme[]; se
   // the results compare. First by how often it's been dealt in this wave (the shared tally), then by how many
   // companies it's gone to overall, ties at random. A brand-new meme joins the rotation; it doesn't take over a wave.
   const now = ctx ? (ctx.dealt ??= new Map<string, number>()) : new Map<string, number>();
+  // "Ever" counts what's gone out AND what's already reserved for a coming bump (10/7: without the reservations,
+  // the meme with the fewest sends won every small round of reservations and piled up 56 deep).
   const ever = new Map<string, number>();
   for (const names of (ctx?.seen ?? (await memesSeen(d))).values()) for (const n of names) ever.set(n, (ever.get(n) ?? 0) + 1);
+  for (const [lead, name] of Object.entries(picks)) if (name && lead !== leadId && !seen.has(name)) ever.set(name, (ever.get(name) ?? 0) + 1);
   const key = (m: Meme) => (now.get(m.name) ?? 0) * 1e6 + (ever.get(m.name) ?? 0);
   const low = Math.min(...fresh.map(key));
   const pool = fresh.filter((m) => key(m) === low);
