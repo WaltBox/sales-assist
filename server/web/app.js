@@ -20,6 +20,7 @@ const state = {
   heatPot: null, // RFQ-potential filter on the heat map: "steady" | "project" | "occasional" | "unknown" | null
   heatToday: null, // what's happened today on the heat map: "none" | "emailed" | "called" | "reached" | "wrote" | null
   heatQ: "", // search on the heat map: company, contact, email
+  acctQ: "", // search on the accounts page
   cool: {}, // leadId -> cooling state for the drawer ({ until, why } | null | "loading")
   potBusy: false, // reading sites / saving an answer
   potOpen: {}, // leadId -> the "why" behind the potential is open in the drawer
@@ -323,13 +324,15 @@ const SEEN = {
 const EVENT_ICON = { auto: "⟳", line_card: "✉", email: "✉", reply: "↩", rfq: "★", quote: "$", opened: "◉", filter: "⚠", call: "☎", note: "✎" };
 
 function accountsSection() {
-  const all = (state.board && state.board.accounts) || [];
+  const q = (state.acctQ || "").trim().toLowerCase();
+  const hit = (a) => !q || `${a.company} ${a.contact.name || ""} ${a.contact.email || ""} ${a.contact.phone || ""}`.toLowerCase().includes(q);
+  const all = ((state.board && state.board.accounts) || []).filter(hit);
   const head = () => el("div", { class: "gr gh" }, ["Account", "Phone", "Line card", "Goal", "Last activity", ""].map((h) => el("span", { class: "label", text: h })));
   const groups = SECTIONS.map(([k, title, sub]) => {
     const rows = all.filter((a) => a.section === k);
     if (!rows.length) return null;
     const later = k === "later" || k === "today" || k === "rest"; // collapsed until you open them
-    const shut = later && !state.showSect[k];
+    const shut = later && !state.showSect[k] && !q; // a search shows every match, whatever section it's in
     return el("div", { class: `sect sect-${k}` }, [
       el("div", { class: "secthead", onclick: later ? () => { state.showSect[k] = !state.showSect[k]; render(); } : null }, [
         el("h3", {}, [title, el("span", { class: "c mono", text: rows.length })]),
@@ -341,9 +344,13 @@ function accountsSection() {
   }).filter(Boolean);
   const needs = all.filter((a) => !["later", "today", "rest", "rfq"].includes(a.section)).length;
   return el("section", {}, [
-    el("div", { class: "head" }, [el("h2", { text: "Accounts" })]),
+    el("div", { class: "head" }, [
+      el("h2", { text: "Accounts" }),
+      el("input", { class: "heatq", type: "search", placeholder: "Find an account, a name, an email, a number", value: state.acctQ || "", oninput: (e) => { state.acctQ = e.target.value; renderKeepFocus(".heatq"); } }),
+      q ? el("span", { class: "muted small3", text: `${all.length} match${all.length === 1 ? "" : "es"} · click a row for its history` }) : null,
+    ]),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
-      : !all.length ? el("p", { class: "empty", text: "None here." })
+      : !all.length ? el("p", { class: "empty", text: q ? "No account matches that." : "None here." })
         : el("div", { class: "sects" }, [rfqNote(all), needs ? null : el("p", { class: "empty", text: "Nothing needs you right now." }), ...groups]),
   ]);
 }
@@ -897,6 +904,7 @@ function accountRow(a) {
   if (!open) return [row];
   return [row, el("div", { class: "detail" }, [
     touchStrip(a),
+    coolingBlock(a),
     el("p", { class: "why" }, a.next.detail),
     a.next.rescue ? rescueSteps(a) : null,
     gotItButton(a),
