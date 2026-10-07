@@ -64,14 +64,26 @@ const personOf = (addr) => { const m = String(addr || "").match(/^\s*"?([^"<]+?)
 
 // ---------- load ----------
 
+// A call that dies on a cold hosted instance (a bare 502, 10/7) is tried again before it counts as failed.
+async function apiRetry(path, tries = 3) {
+  for (let i = 1; ; i++) {
+    try { return await api(path); }
+    catch (e) { if (i >= tries || e.message === "Signed out" || !/Error 50\d|502|503|504/.test(e.message)) throw e; await new Promise((r) => setTimeout(r, 1500 * i)); }
+  }
+}
 async function load(fresh = false) {
   state.error = null;
   render();
-  const results = await Promise.allSettled([api("/api/me"), api("/api/stats/today"), api(`/api/accounts${fresh ? "?fresh=1" : ""}`), api("/api/automations"), api(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`)]);
-  const [me, today, board, autos, rfqLine] = results.map((r) => (r.status === "fulfilled" ? r.value : null));
-  Object.assign(state, { me, today, board, autos, rfqLine });
+  // The board first, on its own, so the pages draw even if a stats call hiccups; then the rest together.
+  const me = await apiRetry("/api/me").catch((e) => { if (e.message !== "Signed out") state.error = e.message; return null; });
+  const board = await apiRetry(`/api/accounts${fresh ? "?fresh=1" : ""}`).catch((e) => { if (e.message !== "Signed out") state.error = e.message; return null; });
+  Object.assign(state, { me, board });
+  render();
+  const results = await Promise.allSettled([apiRetry("/api/stats/today"), apiRetry("/api/automations"), apiRetry(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`)]);
+  const [today, autos, rfqLine] = results.map((r) => (r.status === "fulfilled" ? r.value : null));
+  Object.assign(state, { today, autos, rfqLine });
   const failed = results.find((r) => r.status === "rejected");
-  if (failed && failed.reason.message !== "Signed out") state.error = failed.reason.message;
+  if (failed && failed.reason.message !== "Signed out" && !state.error) state.error = failed.reason.message;
   render();
 }
 
