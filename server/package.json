@@ -15,7 +15,8 @@
     "push-reps": "tsx --env-file-if-exists=.env scripts/push-reps.ts",
     "close-webhook": "tsx --env-file-if-exists=.env scripts/close-webhook.ts",
     "push-store": "tsx --env-file-if-exists=.env scripts/push-store.ts",
-    "potential": "tsx --env-file-if-exists=.env scripts/potential.ts"
+    "potential": "tsx --env-file-if-exists=.env scripts/potential.ts",
+    "vcf": "tsx scripts/vcf.ts"
   },
   "keywords": [],
   "author": "",

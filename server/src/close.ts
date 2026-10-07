@@ -257,9 +257,9 @@ export class CloseClient {
   }
 
   /** Rewrite a draft's body (text and HTML) and attachments. Drafts only; never sends. */
-  updateDraft(id: string, patch: { body: string; attachments: CloseAttachment[] }) {
+  updateDraft(id: string, patch: { body: string; attachments: CloseAttachment[]; subject?: string }) {
     const html = patch.body.split(/\n\s*\n/).map((p) => `<p>${p.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`).join("");
-    return this.request<{ id: string; status: string }>("PUT", `/activity/email/${encodeURIComponent(id)}/`, { body_text: patch.body, body_html: html, attachments: patch.attachments });
+    return this.request<{ id: string; status: string }>("PUT", `/activity/email/${encodeURIComponent(id)}/`, { body_text: patch.body, body_html: html, attachments: patch.attachments, ...(patch.subject ? { subject: patch.subject } : {}) });
   }
 
   /** Send a draft now. Only when the rep clicks Send in the side panel during the rescue call. */

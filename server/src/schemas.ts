@@ -182,3 +182,5 @@ export const ApplyRequest = z.object({
   proposals: ProposalsSchema,
   rating: Rating.nullable().optional(),
 });
+
+export const LineCardFormatRequest = z.object({ format: z.enum(["standard", "full_text", "niche", "contact_card", "vendor_row", "gatekeeper", "setup_packet", "pdf_only"]) });

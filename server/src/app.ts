@@ -15,7 +15,7 @@ import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
 import {
-  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, sweep, waitingFor,
+  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, setLineCardFormat, sweep, waitingFor,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
@@ -26,7 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, writeFollowUp } from "./followup.js";
-import { AfterCallRequest, ApplyRequest, ChatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
+import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
   reps: Map<string, Rep>;
@@ -468,6 +468,8 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/queue/:id/discard", authed, route(async (req, d) => discardItem(d, queueId(req))));
   app.post("/api/queue/:id/note", authed, route(async (req, d) => noteItem(d, queueId(req), String(req.body?.note ?? "").slice(0, 1000))));
   app.post("/api/queue/:id/rebuild", authed, route(async (req, d) => rebuildItem(d, queueId(req))));
+  // Another format for the line card email (10/7): recomposed, the transcript isn't read again.
+  app.post("/api/queue/:id/linecard", authed, route(async (req, d) => setLineCardFormat(d, queueId(req), LineCardFormatRequest.parse(req.body).format)));
   app.get("/api/queue/:id/transcript", authed, route((req, d) => itemTranscript(d, queueId(req))));
   app.post("/api/queue/:id/chat", authed, route((req, d) => chatItem(d, queueId(req), QueueChatRequest.parse(req.body))));
 

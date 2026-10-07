@@ -5,6 +5,8 @@ import { classifyOpen, lineCardAttachments, type Deps } from "./assistant.js";
 import { stripDashes } from "./benchmark.js";
 import { INTRO_SUBJECT } from "./validate.js";
 import { bumpHtml, memeFor, rememberMeme, type Meme } from "./memes.js";
+import { renderShort } from "./content/lineCard.js";
+import { callUsWhen, familiesFromText, lineCardSubject, withSignatureLine } from "./linecardflow.js";
 
 // "Send line card now" (Walt 9/26): on the call screen, the line card email is ready the moment the
 // buyer says "send it over", so it goes out while they're still on the phone and the rep can ask for the
@@ -141,7 +143,7 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
   const lastCard = priorCards[0];
   const cardOpened = lastCard ? (lastCard.opens ?? []).filter((o) => o.opened_by && !/@westgatesupply\.com$/i.test(o.opened_by)).some((o) => classifyOpen(o, when(lastCard)) === "person") : false;
   const base = (prior?.subject ?? "").replace(/^(re:\s*)+/i, "").trim();
-  const subject = prior ? `Re: ${base || INTRO_SUBJECT}` : INTRO_SUBJECT;
+  let subject = prior ? `Re: ${base || INTRO_SUBJECT}` : INTRO_SUBJECT;
 
   // They already have the line card: a short bump in the same thread, no attachment (Walt 9/26).
   // The first email, with the card, sits right under it.
@@ -165,12 +167,18 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
   const repFirst = d.rep.name.split(/\s+/)[0];
   const calledToday = opts.cold && (await d.close.calls({ leadId, since: new Date(Date.now() - 12 * 3600e3).toISOString() }).catch(() => [])).some((c) => c.direction === "outbound");
   const intro = opts.cold && !referrer ? `I'm ${repFirst} with Westgate Supply${calledToday ? " and tried you by phone today" : ""}. ` : "";
-  const body = stripDashes([
+  // The line card as text too (Walt 10/7): the PDF is attached, but a buyer finds us later by searching their inbox
+  // for a product word, and only words in the subject and body are searchable everywhere.
+  const families = familiesFromText(buys.join(" "), lead.description ?? null);
+  const body = withSignatureLine(stripDashes([
     `Hi ${first ?? "there"},`,
     referrer ? `${referrer} suggested I send this your way. ${card}` : `${intro}${card}`,
+    `${callUsWhen(families)} It's all in the PDF, and here it is in plain text so it's easy to search for later:`,
+    renderShort(),
     "Shoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.",
     d.rep.name,
-  ].join("\n\n"));
+  ].join("\n\n")));
+  if (!prior) subject = lineCardSubject({ words: buys, families, seed: leadId });
   return {
     // A meme only when the rep picks one in the side panel (10/2), above the name; the PDF is still attached.
     to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, body,

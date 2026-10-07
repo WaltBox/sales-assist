@@ -1963,6 +1963,7 @@ function renderItem() {
     ]) : null,
     it.state === "saved" ? null : el("div", { class: "qhead" }, [el("p", { class: "label", text: "Proposed for Close" }), el("span", { class: "muted", text: `${countProps(p)} items` })]),
     it.state === "saved" ? null : reviewList(p, iv.off, iv.open, fromStatus),
+    lineCardBlock(it, iv),
     purchasingReview(it, iv),
     it.coaching && (it.coaching.nice || it.coaching.next) ? el("section", { class: "coach" }, [
       el("p", { class: "label", text: "Coaching" }),
@@ -2063,6 +2064,37 @@ function purchasingCard(st) {
 }
 
 /** On the post-call card: what the transcript said about their purchasing, for a one-tap confirm or a fix. */
+// ---------- "send us a line card" (Walt 10/7): the format the email takes, picked from how they file vendors ----------
+// The email carries the line card as text so a buyer finds us later by searching their inbox, contacts or vendor
+// list for a product word. The app recommends a format from the call; changing it recomposes the draft without
+// re-reading the transcript, and updates the draft already in Close.
+function lineCardBlock(it, iv) {
+  const lc = it.lineCard;
+  if (!lc) return null;
+  const hard = (lc.problems || []).filter((p) => p.hard);
+  const soft = (lc.problems || []).filter((p) => !p.hard);
+  const sel = el("select", { class: "lcformat", disabled: !!iv.lcBusy, onchange: async (ev) => {
+    iv.lcBusy = true; iv.error = null; render();
+    try {
+      const upd = await api(`/api/queue/${it.id}/linecard`, { format: ev.target.value });
+      const i = queue.items.findIndex((x) => x.id === it.id);
+      if (i >= 0) queue.items[i] = upd;
+    } catch (err) { iv.error = err.message; }
+    iv.lcBusy = false; render();
+  } }, (lc.formats || []).map((f) => el("option", { value: f.id, selected: f.id === lc.format, text: f.label })));
+  const help = (lc.formats || []).find((f) => f.id === lc.format);
+  const r = lc.request || {};
+  return el("section", { class: "card lcpick" }, [
+    el("p", { class: "label", text: "Line card email" }),
+    el("p", { style: "margin-top:6px" }, [el("strong", { text: `${r.requester && r.requester.name ? r.requester.name : "They"} asked for the line card` }), lc.to ? el("span", { class: "muted", text: ` · ${lc.to}` }) : null]),
+    r.filingEvidence ? el("p", { class: "muted", style: "margin-top:2px", text: `How they file vendors: “${r.filingEvidence}”` }) : null,
+    el("div", { class: "row", style: "margin-top:8px;align-items:center;gap:8px" }, [el("span", { class: "muted", text: "Format" }), sel, iv.lcBusy ? el("span", { class: "muted", text: "Rewriting…" }) : null]),
+    el("p", { class: "muted", style: "margin-top:4px", text: lc.reason || (help ? help.help : "") }),
+    hard.length ? el("div", { class: "flag", style: "margin-top:8px" }, [el("strong", { text: "Not saved: " }), hard.map((p) => p.problem).join(" "), " Pick another format."]) : null,
+    soft.length ? el("p", { class: "muted", style: "margin-top:4px", text: soft.map((p) => p.problem).join(" ") }) : null,
+  ]);
+}
+
 function purchasingReview(it, iv) {
   const got = it.purchasing && Object.keys(it.purchasing).length ? it.purchasing : null;
   if (!got || iv.purchDone) return got && iv.purchDone ? el("section", { class: "card purch" }, [el("p", { class: "label", text: "Purchasing cycle" }), el("p", { class: "muted", style: "margin-top:6px", text: "Confirmed and saved as a [Purchasing] note in Close." })]) : null;

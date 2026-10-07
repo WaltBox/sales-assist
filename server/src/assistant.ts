@@ -40,7 +40,7 @@ export function tagNote(p: Pick<Proposals, "note">, tag: string, fallback: strin
 
 export type Close = Pick<CloseClient,
   "smartViewLeads" | "me" | "lead" | "leadName" | "callOutcomes" | "leadStatuses" | "leadCustomFields" | "calls" | "call" | "notes" | "openTasks" | "task" | "openTasksFor" | "email" | "sendDraft" | "unschedule" | "deleteEmail" | "savedSearches" | "createSavedSearch" | "updateSavedSearch" | "updateLead" | "createLeadCustomField" |
-  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createDraftEmail" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
+  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createDraftEmail" | "updateDraft" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
 export type Llm = typeof structured;
 export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText; siteEmails?: (url: string | null | undefined) => Promise<string[]>; sitePages?: (url: string | null | undefined) => Promise<Array<{ url: string; text: string }>> };
 

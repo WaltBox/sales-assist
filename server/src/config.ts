@@ -66,6 +66,9 @@ export const config = {
   // (drafts are never sent). AUTO_SAVE=0 goes back to approving each call in the panel.
   autoSave: process.env.AUTO_SAVE !== "0",
   lineCardTemplateId: process.env.LINE_CARD_TEMPLATE_ID ?? "tmpl_h0xbgrP8EjkmKlb5zMD8gKpHzfd8khSxYt2EpqoTeLA",
+  // The product keyword line under the sign-off of every line card email (Walt 10/7), so a buyer's inbox search
+  // finds us by product word. SIGNATURE_KEYWORDS=0 once the line is pasted into the Close signature instead.
+  signatureKeywords: process.env.SIGNATURE_KEYWORDS !== "0",
   // Bump when the brief format changes so old cached briefs are ignored. v10: openers always name 3-4 specific products.
   // v11: two short sentences, no "[crews] use for" clause (Walt 9/28).
   // v12: PVF first, with a flag and the old pitch as the alternative when they likely don't buy PVF (Walt 10/5).

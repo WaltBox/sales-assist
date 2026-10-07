@@ -198,7 +198,7 @@ export function applyBenchmarkTask(p: Proposals, ctx: LeadContext, name: string 
 }
 
 /** Line card emails ask for a quick "got it" reply (Walt 9/26): it tells us the email didn't land in junk, and a reply keeps the thread out of spam. */
-export const GOT_IT_LINE = 'Mind replying "got it" when this comes through? Just want to make sure it didn\'t land in junk.';
+export const GOT_IT_LINE = 'Mind replying "got it" when this comes through?';
 
 type Email = NonNullable<Proposals["email"]>;
 

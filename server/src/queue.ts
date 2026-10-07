@@ -12,6 +12,7 @@ import { store } from "./store.js";
 import { extractPurchasing, type Purchasing } from "./purchasing.js";
 import { recordPurchasing } from "./potential.js";
 import { markReached } from "./dialviews.js";
+import { detectLineCardRequest, draftLineCardEmail, recordLineCardSend, type EmailFormat, type LineCardState } from "./linecardflow.js";
 
 const shortDate = (d: Date, tz: string) => new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric", day: "numeric" }).format(d);
 import type { Proposals, QuickOutcome } from "./schemas.js";
@@ -55,6 +56,8 @@ export type QueueItem = {
   dialOnly?: boolean;
   /** What the buyer said about their purchasing cycle on this call (each with their words), for the rep to confirm. */
   purchasing?: Purchasing | null;
+  /** They asked for the line card (10/7): what was heard, the format picked and why, so the panel can switch it. */
+  lineCard?: LineCardState | null;
 };
 
 // Every step logs its start and end, so a call that "did nothing" can be traced (Walt 9/26).
@@ -516,8 +519,23 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     const purchasingP: Promise<Purchasing | null> = transcript && call && !["no-answer", "busy", "vm-left", "vm-answer", "blocked"].includes(call.disposition ?? "")
       ? step(it, "purchasing cycle", () => extractPurchasing(d, it.company, transcript, call.date_created)).catch((err) => { it.warnings.push(`Couldn't read the purchasing answers: ${(err as Error).message}`); return null; })
       : Promise.resolve(null);
+    // "Send us a line card" (Walt 10/7): read alongside the email draft; when they asked, the line card email
+    // (the card as searchable text, in the format that fits how they file vendors) replaces the generic draft.
+    const lead = await d.close.lead(it.leadId).catch(() => null);
+    const lineCardP = transcript && call && !["no-answer", "busy", "vm-left", "vm-answer", "blocked"].includes(call.disposition ?? "")
+      ? step(it, "line card request", () => detectLineCardRequest(d, { company: it.company, transcript: transcript ?? "", description: lead?.description ?? null, state: lead?.addresses?.[0]?.state ?? null, contacts: (lead?.contacts ?? []).map((c) => ({ name: c.name, email: c.emails[0]?.email ?? null })) }))
+        // They asked: the line card email is written while the generic draft is still being written, so the wait is the same.
+        .then((req) => (req ? step(it, "line card email", () => draftLineCardEmail(d, { leadId: it.leadId, company: it.company, transcript: transcript ?? "", req })) : null))
+        .catch((err) => { it.warnings.push(`Couldn't write the line card email: ${(err as Error).message}`); return null; })
+      : Promise.resolve(null);
     const extras = await step(it, "write email", () => afterCallExtras(d, it.leadId, { ...req, callback, benchmark: core.benchmark, benchmark_agreed: core.benchmark_agreed, next_one: core.next_one_promised, referral: core.referral }));
     const p: Proposals = { ...core.proposals, email: extras.email };
+    const lc = await lineCardP;
+    it.lineCard = lc?.state ?? null;
+    if (lc) {
+      if (lc.email) p.email = lc.email;
+      it.warnings.push(...lc.warnings);
+    }
     // Sent the line card during the call ("Send line card now")? Then don't draft a second one.
     if (p.email && call) {
       const sentOnCall = (await d.close.leadEmails(it.leadId).catch(() => [])).find((e) => e.direction === "outgoing" && ["sent", "outbox"].includes(e.status)
@@ -532,7 +550,7 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     if (it.savedStatus) p.status = null;
     // Shot down while this was building (Walt 10/5): they said no, so no callback, status change or email.
     // The note and any contacts from the call are still saved.
-    const statusNow = (await d.close.lead(it.leadId).catch(() => null))?.status_label ?? null;
+    const statusNow = (await d.close.lead(it.leadId).catch(() => null))?.status_label ?? lead?.status_label ?? null;
     if (isOutStatus(statusNow) && (p.tasks.length || p.status || p.email)) {
       p.tasks = [];
       p.status = null;
@@ -617,6 +635,8 @@ async function autoSave(d: Deps, it: QueueItem, p: Proposals) {
   try {
     const r = await applyProposals(d, it.leadId, p, (it.rating as never) ?? null);
     it.applied = r.results;
+    const savedEmail = r.results.find((x) => x.kind === "email" && x.ok);
+    if (savedEmail && it.lineCard && p.email) await recordLineCardSend(d, { leadId: it.leadId, format: it.lineCard.format, filing: it.lineCard.request.filingMethod, at: new Date().toISOString(), emailId: savedEmail.id ?? null }).catch(() => undefined);
     it.warnings.push(...r.warnings);
     for (const x of r.results) if (!x.ok) alert(it, "error", `Close rejected "${x.label}": ${x.error ?? "unknown error"}`);
     const failed = new Set(r.results.filter((x) => !x.ok).map((x) => x.kind));
@@ -718,6 +738,33 @@ export async function chatItem(d: Deps, id: string, req: { message: string; hist
   if (it.state === "done") it.state = "ready";
   await save(it);
   return { reply: r.reply, item: it };
+}
+
+/**
+ * Another format for the line card email (10/7): recomposed from the opener already written, so the transcript
+ * isn't read again. A draft already in Close is updated in place.
+ */
+export async function setLineCardFormat(d: Deps, id: string, format: EmailFormat) {
+  const it = await getItem(d, id);
+  if (!it.lineCard) throw new QueueError("This call didn't ask for a line card.");
+  const call = it.callId ? await d.close.call(it.callId).catch(() => null) : null;
+  const transcript = transcriptText(call?.recording_transcript) ?? "";
+  const r = await draftLineCardEmail(d, { leadId: it.leadId, company: it.company, transcript, req: it.lineCard.request, format, opener: it.lineCard.opener });
+  it.lineCard = r.state;
+  it.warnings = it.warnings.filter((w) => !/^Line card email/.test(w)).concat(r.warnings);
+  if (r.email) {
+    it.proposals = { ...(it.proposals ?? { note: null, contacts: [], contact_updates: [], tasks: [], status: null, email: null }), email: r.email };
+    const saved = (it.applied ?? []).find((x) => x.kind === "email" && x.ok && x.id);
+    if (it.state === "saved" && saved?.id) {
+      const { lineCardAttachments } = await import("./assistant.js");
+      const attachments = await lineCardAttachments(d).catch(() => []);
+      await d.close.updateDraft(saved.id, { body: r.email.body, subject: r.email.subject, attachments });
+      saved.label = `Draft email to ${r.email.to.map((x) => x.name).join(", ")} with line card (${r.state.format.replace("_", " ")})`;
+      await recordLineCardSend(d, { leadId: it.leadId, format, filing: it.lineCard.request.filingMethod, at: new Date().toISOString(), emailId: saved.id }).catch(() => undefined);
+    } else if (it.state === "done") it.state = "ready";
+  }
+  await save(it);
+  return it;
 }
 
 /** The transcript for the review screen, straight from Close. */

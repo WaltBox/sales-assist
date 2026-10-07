@@ -180,3 +180,17 @@ Copying the attachments this way keeps the body fully custom. Passing `template_
 **When to attach:** any email where the prospect asked for a line card, or where the body says the line card is attached. Do not attach on plain follow-ups or RFQ replies unless they asked.
 
 **If the attachment step fails:** the draft summary in the queue must say **"LINE CARD NOT ATTACHED"** so Walt adds it before sending.
+
+---
+
+## 8. "Send us a line card": text first, PDF second (founder, 10/7)
+
+Buyers find vendors later by searching their inbox, their contacts, or their vendor list for a product word. A PDF attachment is searchable in none of those reliably (Gmail indexes PDF text, classic Outlook only when its indexer is healthy, contact notes never). Text in the subject and body is the record. So:
+
+- **Every line card email carries the line card as text.** The short version (all 12 families, 3 to 5 key specs each, under 300 words) by default; the whole card line by line when the buyer keeps a contact per vendor or asked for it written out; only their families in full when they named specific items. All of it renders from `server/src/content/lineCard.ts`. Nothing else in the code hardcodes product text.
+- **A keyword subject:** `Westgate Supply: {2 to 3 product words they said}, {2 fixed words}`, under 70 characters. Gatekeeper: `Westgate Supply line card for {company}: fasteners, gaskets`.
+- **The signature line** under Walt's name on line card emails (not on bumps): `Westgate Supply supplies fasteners, studs, nuts, gaskets, flanges, pipe, fittings, plate, bar and structural steel in carbon, stainless, alloy, duplex, nickel alloys and titanium. Warehouses: Oakland CA, Houston TX, Burbank IL. westgatesupply.com/linecard`
+- **Mirror how they file vendors.** Contact per vendor: full text (plus the .vcf when it's on the template). Spreadsheet or ERP: one pipe-separated line they can paste. Gatekeeper: ask them to forward it to whoever buys materials, with the short card so the forwarded email is searchable for the real buyer. "Send your W-9": the short card plus the vendor setup lines.
+- **Ask on every call: "How do you keep track of vendors?"** The answer picks the format.
+- **The ask stays plain.** "Send me your next list or RFQ and I'll price it." Never a benchmark or old-RFQ line, never "no pressure".
+- The PDF is still attached on the first email and on every bump (founder, 10/6).

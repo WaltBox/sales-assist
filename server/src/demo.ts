@@ -2,6 +2,7 @@ import type { Close, Llm } from "./assistant.js";
 import type { CloseCall, CloseLead, CloseTask, LeadEmail } from "./close.js";
 import { customFields, DEMO_USER_ID, roddaCall, roddaLead, statuses } from "./fixtures.js";
 import { AfterCallExtrasSchema, AfterCallSchema, BriefSchema, ChatSchema, FollowUpSchema, type Proposals } from "./schemas.js";
+import { LineCardRequestSchema, OpenerSchema } from "./linecardflow.js";
 import { PurchasingSchema } from "./purchasing.js";
 import { isoWithOffset, nextWeekdayAt, suggestCallback } from "./rules.js";
 import { EmailReviewSchema } from "./validate.js";
@@ -134,6 +135,7 @@ export class FakeClose implements Close {
     { url: "https://example.test/Westgate_Supply_Line_Card.pdf", filename: "Westgate_Supply_Line_Card.pdf", content_type: "application/pdf", size: 41014 },
   ];
   async emailTemplateAttachments() { return this.templateAttachments; }
+  async updateDraft(id: string, patch: { body: string; attachments: unknown[]; subject?: string }) { this.writes.push({ op: "email-update", id, body: { id, ...patch } } as never); return { id, status: "draft" }; }
   sentWithOpens: LeadEmail[] = [];
   async leadEmails(leadId?: string) { return this.sentWithOpens.length ? this.sentWithOpens : (this.sentEmails.filter((e) => e.lead_id === leadId) as unknown as LeadEmail[]); }
   async phoneNumbers() { return [{ number: "+17372582165", user_id: DEMO_USER_ID, label: null }, { number: "+17372349440", user_id: "user_someoneelse", label: "Berni" }]; }
@@ -275,6 +277,22 @@ function canned(schema: unknown, task: string): unknown {
       outcome: "conversation", outcome_label: "Reached purchasing", rfq_promised: true, no_current_rfq: false, benchmark_agreed: false, asked_specific_callback: false, soft_yes: false, next_one_promised: false, referral_gatekeeper: "", referral_recipient: "", referral_said: "", referral_back_when: "",
       summary: "Rob Roy is on leave until Oct 12. Renee is covering purchasing, reads his inbox, and gets orders daily. She said \"we always need that stuff\" and will look at tomorrow's orders for us.",
       proposals: demoProposals(),
+    };
+  }
+  // "Send us a line card" (10/7): Renee asked for it, to Rob's address, nothing said about how they file vendors.
+  if (schema === LineCardRequestSchema) {
+    return {
+      requested: true,
+      requester: { name: "Rob Roy", email: "rob@roddaelectric.com", title: "Purchasing Manager", isGatekeeper: false },
+      forwardTo: null, filingMethod: "unknown", filingEvidence: null,
+      productTerms: ["threaded rod", "anchors", "beam clamps"], specificItems: [], openNeed: null, pastBenchmark: false,
+      wantsFullText: false, wantsPdfOnly: false, wantsSetupPacket: false, confidence: 0.9,
+    };
+  }
+  if (schema === OpenerSchema) {
+    return {
+      opener: "I spoke with Renee this afternoon while you're out, and she suggested I send this your way. She mentioned your crews go through threaded rod, anchors and beam clamps every day, so I put our line card below and attached it as a PDF.",
+      nextStep: "Send over any list in whatever format is easiest and I'll price it.",
     };
   }
   if (schema === AfterCallExtrasSchema) {

@@ -17,7 +17,7 @@ type Email = NonNullable<Proposals["email"]>;
 
 // 1. Identity: Walt works for Westgate. Westgate is never the thing he called, reached, or buys from.
 const CALL_VERB = String.raw`(?:called|call|calling|phoned|contacted|contact|contacting|reached(?:\s+out)?(?:\s+to)?|reach(?:ing)?\s+out\s+to|spoke\s+(?:with|to)|speak(?:ing)?\s+(?:with|to)|talked\s+(?:with|to)|emailed|heard\s+(?:back\s+)?from|(?:am|was|have\s+been)\s+a\s+customer\s+of|buy\s+from|bought\s+from|order(?:ed)?\s+from)`;
-const IDENTITY = [
+export const IDENTITY = [
   new RegExp(String.raw`\bI(?:'ve|'d|\s+have|\s+had|\s+just|\s+recently|\s+also)*\s+${CALL_VERB}\s+(?:(?:the\s+)?(?:team|folks|people|office)\s+(?:at|over\s+at)\s+)?Westgate\b`, "i"),
   /\bat Westgate,? I\b/i,
   /\bI(?:'m|\s+am|\s+was|'ve\s+been|\s+have\s+been)\s+(?:a\s+)?(?:long-?time\s+|loyal\s+|happy\s+)?customer\s+of\s+Westgate\b/i,

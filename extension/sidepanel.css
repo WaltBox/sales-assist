@@ -595,3 +595,6 @@ textarea { resize: vertical; min-height: 70px; }
 .elist.answer .label { color: var(--green); }
 .elist.answer .erow { border-color: var(--green); }
 .esearch { padding: 8px 10px; font-size: 14px; }
+
+/* line card email format (10/7) */
+.lcpick select.lcformat { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--ink-line); border-radius: 6px; background: var(--paper); color: inherit; }
