@@ -475,3 +475,15 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .memecard .mstats { display: flex; gap: 10px; padding: 0 8px 8px; font-size: 11.5px; color: var(--muted); }
 .memecard .mstats b { font-size: 12.5px; color: var(--ink); }
 .memecard .mstats .good b { color: var(--green); }
+
+/* Last contact by you, on the tile and in the drawer (10/7). */
+.tile .you { font-size: 10.5px; opacity: .9; }
+.tile .you.touched { opacity: 1; text-decoration: underline; }
+.tile .you.reached { opacity: 1; font-weight: 700; }
+.dr-touch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 13.5px; }
+.chip3 { display: inline-flex; align-items: center; font-size: 12px; padding: 2px 8px; border: 1px solid var(--ink-line); background: var(--white); }
+.chip3.good { color: var(--green); border-color: rgba(11, 107, 47, .45); }
+.chip3.warn { color: var(--amber); border-color: rgba(138, 90, 0, .45); }
+.chip3.soft { color: var(--muted); }
+.cardk.d-reached b, .cardk.d-wrote b { color: var(--green); }
+.cardk.d-called b, .cardk.d-emailed b { color: var(--amber); }

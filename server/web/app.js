@@ -18,6 +18,7 @@ const state = {
   heatOnly: null, // a bucket to show alone on the heat map, or null for all
   heatCard: null, // line-card filter on the heat map: "opened" | "landed" | "bounced" | null
   heatPot: null, // RFQ-potential filter on the heat map: "steady" | "project" | "occasional" | "unknown" | null
+  heatToday: null, // what's happened today on the heat map: "none" | "emailed" | "called" | "reached" | "wrote" | null
   potBusy: false, // reading sites / saving an answer
   potOpen: {}, // leadId -> the "why" behind the potential is open in the drawer
   lib: null, // the meme library: { memes, busy, msg, rename: { name, value } }
@@ -489,13 +490,43 @@ function openInCloseTab(leadId) {
   }, 400);
 }
 
+// What you did last, and what's happened today (Walt 10/7): from the account's own events.
+const TODAY_F = {
+  none: ["Nothing yet", "No call, no email, nothing from them today."],
+  emailed: ["Emailed", "An email went to them today (automatic or by hand)."],
+  called: ["Called", "You dialed them today, reached or not."],
+  reached: ["Reached", "You had a real conversation with them today."],
+  wrote: ["They wrote back", "A reply or an RFQ came in today."],
+};
+const isToday = (iso) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
+function lastYou(a) {
+  const mine = a.events.filter((e) => e.kind === "call" || e.kind === "email" || e.kind === "line_card").sort((x, y) => y.at.localeCompare(x.at));
+  const e = mine[0];
+  return e ? { kind: e.kind === "call" ? "call" : "email", at: e.at } : null;
+}
+function todayState(a) {
+  const ev = a.events.filter((e) => isToday(e.at));
+  const reached = !!a.touches.lastTalk && isToday(a.touches.lastTalk);
+  return {
+    emailed: ev.some((e) => e.kind === "email" || e.kind === "line_card"),
+    called: ev.some((e) => e.kind === "call"), reached,
+    wrote: ev.some((e) => e.kind === "reply" || e.kind === "rfq"),
+  };
+}
+function matchesToday(a) {
+  if (!state.heatToday) return true;
+  const t = todayState(a);
+  if (state.heatToday === "none") return !t.emailed && !t.called && !t.wrote;
+  return !!t[state.heatToday];
+}
+
 function heatRows() {
   const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
   // Hottest first; inside a warmth band, the accounts worth the most come first.
   const rows = all.slice().sort((a, b) => b.warmth.bucket === a.warmth.bucket
     ? (POT_RANK[potTier(a)] - POT_RANK[potTier(b)] || b.warmth.score - a.warmth.score || a.company.localeCompare(b.company))
     : b.warmth.score - a.warmth.score);
-  return rows.filter((a) => (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot));
+  return rows.filter((a) => (!state.heatOnly || a.warmth.bucket === state.heatOnly) && (!state.heatCard || cardState(a) === state.heatCard) && (!state.heatPot || potTier(a) === state.heatPot) && matchesToday(a));
 }
 
 async function readSites(leadIds) {
@@ -547,6 +578,13 @@ function heatPage() {
       }, [el("b", { class: "mono", text: all.filter((a) => potTier(a) === k).length }), POT[k][0]])),
       all.some((a) => !a.potential) ? el("button", { class: "linkbtn", disabled: state.potBusy, text: state.potBusy ? "Reading their sites…" : `Read ${all.filter((a) => !a.potential).length} sites now`, onclick: () => readSites(null) }) : null,
     ]),
+    el("div", { class: "heatcard" }, [
+      el("span", { class: "label", text: "Today" }),
+      ...Object.keys(TODAY_F).map((k) => el("button", {
+        class: `cardk d-${k}${state.heatToday === k ? " on" : ""}`, title: TODAY_F[k][1],
+        onclick: () => { state.heatToday = state.heatToday === k ? null : k; state.heatPick = null; render(); },
+      }, [el("b", { class: "mono", text: all.filter((a) => { const t = todayState(a); return k === "none" ? !t.emailed && !t.called && !t.wrote : t[k]; }).length }), TODAY_F[k][0]])),
+    ]),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" }) : null,
     el("p", { class: "muted small3", text: "Everyone here was sent the line card. The goal is an RFQ. Colour is warmth (how they're responding); size is RFQ potential (how much they buy). Big and dark: work these now. Big and grey: worth warming up. Everyone stays in the two-day email sequence until you cool them off by hand." }),
     ...buckets.map((k) => el("div", { class: `heatband w-${k}` }, [
@@ -560,10 +598,13 @@ function heatPage() {
       }, [
         el("span", { class: "co", text: a.company }),
         el("span", { class: `card c-${cardState(a)}` }, [el("i", { "aria-hidden": "true" }), `sent ${shortDate(a.cardSentAt)}`]),
+        (() => { const y = lastYou(a); const t = todayState(a); return el("span", { class: `you${t.reached ? " reached" : t.called || t.emailed ? " touched" : ""}` }, [
+          t.reached ? "reached today" : t.called ? "called today" : t.emailed ? "emailed today" : y ? `you · ${y.kind} ${shortDate(y.at)}` : "no touch yet",
+        ]); })(),
         el("span", { class: "foot" }, [
           el("span", { class: "sc mono", text: a.warmth.score }),
           potTier(a) !== "unknown" ? el("span", { class: "tier", text: POT[potTier(a)][0] }) : null,
-          a.warmth.lastSignal ? el("span", { class: "ago", text: `${daysAgo(a.warmth.lastSignal)}d` }) : null,
+          a.warmth.lastSignal ? el("span", { class: "ago", title: "Days since their last sign of life", text: `them · ${daysAgo(a.warmth.lastSignal)}d` }) : null,
         ]),
       ]))) : el("p", { class: "empty small3", text: "Nobody here." }),
     ])),
@@ -621,6 +662,13 @@ function heatDrawer(a, rows) {
     el("a", { class: "dr-co", href: closeLead(a.leadId), target: "westgate-close", text: a.company, onclick: (e) => { e.preventDefault(); openInCloseTab(a.leadId); } }),
     el("div", { class: "sub2 dr-who", text: [c.name, c.email].filter(Boolean).join(" · ") }),
     c.phone ? el("a", { class: "mono tel dr-tel", href: `tel:${c.phone}`, text: prettyPhone(c.phone) }) : null,
+    (() => { const y = lastYou(a); const t = todayState(a); return el("div", { class: "dr-touch" }, [
+      el("span", { class: "label", text: "Last contact" }),
+      el("span", { text: y ? `You · ${y.kind === "call" ? "called" : "emailed"} ${shortDate(y.at)} (${daysAgo(y.at)}d ago)` : "You haven't reached out yet" }),
+      t.reached ? el("span", { class: "chip3 good", text: "Reached today" }) : t.called ? el("span", { class: "chip3 warn", text: "Called today" }) : null,
+      t.emailed ? el("span", { class: "chip3 soft", text: "Emailed today" }) : null,
+      t.wrote ? el("span", { class: "chip3 good", text: "Wrote back today" }) : null,
+    ]); })(),
     el("div", { class: "dr-story" }, [
       el("div", { class: "label", text: "Where it stands" }),
       el("p", {}, storyFor(a).join(" ")),
