@@ -12,6 +12,8 @@ const Rep = z.object({
   email: z.string(),
   close_api_key: z.string(),
   timezone: z.string().default("America/Los_Angeles"),
+  // The rep's direct line, for the vCard and the vendor row. The model never writes a phone number (Walt 10/7).
+  phone: z.string().nullable().optional(),
 });
 export type Rep = z.infer<typeof Rep>;
 
@@ -69,6 +71,10 @@ export const config = {
   // The product keyword line under the sign-off of every line card email (Walt 10/7), so a buyer's inbox search
   // finds us by product word. SIGNATURE_KEYWORDS=0 once the line is pasted into the Close signature instead.
   signatureKeywords: process.env.SIGNATURE_KEYWORDS !== "0",
+  // The only phone number an email may carry (Walt 10/7): the company line, on the header's Website line, only when set.
+  company: { phone: process.env.COMPANY_PHONE?.trim() || null },
+  // westgatesupply.com/linecard goes on the signature line once the page exists.
+  linecardPageLive: process.env.LINECARD_PAGE_LIVE === "1",
   // Bump when the brief format changes so old cached briefs are ignored. v10: openers always name 3-4 specific products.
   // v11: two short sentences, no "[crews] use for" clause (Walt 9/28).
   // v12: PVF first, with a flag and the old pitch as the alternative when they likely don't buy PVF (Walt 10/5).

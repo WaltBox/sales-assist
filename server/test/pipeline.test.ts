@@ -116,7 +116,7 @@ test("send line card now: ready on the call screen, sent once to the address you
   const pre = await lineCardFor(d, DEMO_LEAD_ID, { askFor: "Rob", buys: ["Threaded rod", "Anchors", "Beam clamps"] });
   assert.equal(pre.to, "", "no email on file for Rob yet: you type the one they give you");
   // Sent while they're on the phone: short and casual, like it was typed on the call (9/28).
-  assert.ok(pre.body.startsWith("Hi Rob,\n\nHere's our line card. We do threaded rod, anchors, beam clamps, plus a lot more.\n\nCall us when you need "), pre.body);
+  assert.ok(pre.body.startsWith("Hi Rob,\n\nHere's our line card. We do threaded rod, anchors, beam clamps, plus a lot more.\n\nCall us when you need: "), pre.body);
   // The card as text too (10/7): every family named, the keyword line under the name, so their inbox search finds us.
   assert.ok(pre.body.includes("\n\nWhat we carry:\nStuds and stud bolts:") && pre.body.includes("Specialty hardware:"), "the short text line card is in the body");
   assert.ok(pre.body.includes("Shoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.\n\nWalt Boxwell\n\nWestgate Supply supplies fasteners,"), pre.body);

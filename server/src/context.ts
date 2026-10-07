@@ -7,7 +7,7 @@ import {
   phoneFlags, prospectTimeZone, siteDomain, suggestCallback, tzLabel, type LocalTime,
 } from "./rules.js";
 
-export type RepInfo = { name: string; email: string; closeUserId: string; timeZone: string; sender?: string | null; emailAccountId?: string | null };
+export type RepInfo = { name: string; email: string; closeUserId: string; timeZone: string; sender?: string | null; emailAccountId?: string | null; phone?: string | null };
 
 export type Facts = {
   leadId: string;

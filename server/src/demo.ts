@@ -285,15 +285,13 @@ function canned(schema: unknown, task: string): unknown {
       requested: true,
       requester: { name: "Rob Roy", email: "rob@roddaelectric.com", title: "Purchasing Manager", isGatekeeper: false },
       forwardTo: null, filingMethod: "unknown", filingEvidence: null,
+      transcriptFacts: ["Renee is covering purchasing while Rob is out", "they buy threaded rod, anchors, fasteners and enclosures daily"],
       productTerms: ["threaded rod", "anchors", "beam clamps"], specificItems: [], openNeed: null, pastBenchmark: false,
       wantsFullText: false, wantsPdfOnly: false, wantsSetupPacket: false, confidence: 0.9,
     };
   }
   if (schema === OpenerSchema) {
-    return {
-      opener: "I spoke with Renee this afternoon while you're out, and she suggested I send this your way. She mentioned your crews go through threaded rod, anchors and beam clamps every day, so I put our line card below and attached it as a PDF.",
-      nextStep: "Send over any list in whatever format is easiest and I'll price it.",
-    };
+    return { opener: "I spoke with Renee this afternoon while you're out, and she suggested I send this your way. She mentioned your crews go through threaded rod, anchors and beam clamps every day." };
   }
   if (schema === AfterCallExtrasSchema) {
     return {

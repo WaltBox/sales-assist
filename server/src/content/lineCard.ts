@@ -22,97 +22,83 @@ export type ProductFamily = {
   items: string[];
   /** The 3 to 5 that go in the short version. */
   key: string[];
-  /** "Call us when" triggers that point at this family, in Walt's words. */
-  triggers: string[];
 };
 
 export const COMPANY = {
   name: "Westgate Supply",
   tagline: "national supplier of fasteners, PVF (pipe, valves, fittings), gaskets, flanges and metals",
+  /** What we supply, for the email header: no "national", no locations (Walt 10/7: nothing about where we are, ever). */
+  lines: "fasteners, PVF (pipe, valves, fittings), gaskets, flanges and metals",
   website: "westgatesupply.com",
   lineCardPage: "westgatesupply.com/linecard",
   lineCardPdf: "https://westgatesupply.com/brand/westgate-line-card.pdf",
   quotes: "sales@westgatesupply.com",
-  phone: "(832) 957-1722",
   hq: { street: "580 Howard Street", city: "San Francisco", state: "CA", zip: "94105", country: "USA" },
   warehouses: ["Oakland, CA", "Houston, TX", "Burbank, IL"] as const,
   terms: ["No minimum order", "Full traceability", "Certified test reports (MTRs) to ASTM, ASME, ANSI, ISO, DIN, NACE and PED"],
   quoteLine: "We quote RFQs, line lists and fabrication drawings, any quantity, certs attached.",
 };
-export type Warehouse = (typeof COMPANY.warehouses)[number];
 
 export const FAMILIES: ProductFamily[] = [
   {
     id: "studs", name: "Studs and stud bolts",
     items: ["A193 B7", "A193 B7M", "A193 B16", "A320 L7", "A320 L7M", "A320 L43", "A193 B8", "A193 B8M", "A453 660", "NACE MR0175 sour service grades", "double end", "tap end", "continuous thread", "flange bolt-up"],
     key: ["A193 B7", "B7M", "A320 L7", "B8M", "NACE sour service"],
-    triggers: ["flange bolt-up", "sour service fasteners", "stud bolts with MTRs"],
   },
   {
     id: "nuts", name: "Nuts",
     items: ["A194 2H", "A194 2HM", "A194 4", "A194 7", "A194 7M", "A194 8", "A194 8M", "duplex 2205", "heavy hex", "finished hex", "jam", "lock", "stover", "nylon insert"],
     key: ["A194 2H", "2HM", "8M", "heavy hex", "lock nuts"],
-    triggers: ["heavy hex nuts by the keg", "duplex or stainless nuts"],
   },
   {
     id: "washers", name: "Washers and Belleville springs",
     items: ["F436", "flat", "heavy", "structural", "custom OD", "Belleville spring washers", "flange washers"],
     key: ["F436", "structural", "Belleville spring washers"],
-    triggers: ["Belleville washers for a flange", "custom OD washers"],
   },
   {
     id: "bolts", name: "Bolts and screws",
     items: ["heavy hex", "12 point", "flange bolts", "A193", "A320", "A325", "A490", "F3125", "B7", "B7M", "B16", "B8", "B8M", "socket head cap screws", "machine screws", "set screws"],
     key: ["heavy hex", "A325", "A490", "F3125", "socket head cap screws"],
-    triggers: ["structural bolts for a steel job", "a bolt list nobody wants to quote"],
   },
   {
     id: "threaded_rod", name: "Threaded rod and custom machining",
     items: ["continuous thread rod", "cut lengths", "metric", "8UN", "UNC", "UNF", "ACME", "spindles", "shafts", "machined parts to drawing"],
     key: ["continuous thread rod", "cut lengths", "metric", "machined parts to drawing"],
-    triggers: ["threaded rod by the bundle", "a machined part to a drawing"],
   },
   {
     id: "u_bolts", name: "Bent bolts, U-bolts and pipe supports",
     items: ["U-bolts rolled to pipe size", "L bolts", "J bolts", "anchor bolts", "pipe clamps", "beam clamps", "hangers", "saddles", "slide plates"],
     key: ["U-bolts to pipe size", "anchor bolts", "pipe clamps", "beam clamps", "hangers"],
-    triggers: ["odd size U-bolts", "anchor bolts to a drawing", "pipe supports for a rack"],
   },
   {
     id: "gaskets", name: "Gaskets and sealing",
     items: ["spiral wound", "ring joint (RTJ)", "CG", "CGI", "kammprofile", "sheet gaskets", "flange insulation kits", "ASME B16.20"],
     key: ["spiral wound", "ring joint (RTJ)", "kammprofile", "sheet gaskets", "flange insulation kits"],
-    triggers: ["spiral wound gaskets for a turnaround", "flange insulation kits"],
   },
   {
     id: "flanges", name: "Flanges and blinds",
     items: ["weld neck (RFWN)", "slip on (RFSO)", "blind", "orifice", "spectacle blinds", "Class 150 to 2500", "A105", "LF2", "F304", "F316", "F51", "nickel alloys"],
     key: ["weld neck", "slip on", "blind", "Class 150 to 2500", "A105 and stainless"],
-    triggers: ["flanges in a hurry", "spectacle blinds", "stainless or duplex flanges"],
   },
   {
     id: "pipe_fittings", name: "Pipe, tube and fittings",
     items: ["butt weld fittings ASME B16.9", "forged fittings 3000# and 6000#", "olets", "pipe and tube", "carbon through duplex", "MTRs included"],
     key: ["butt weld fittings", "forged fittings 3000# and 6000#", "olets", "pipe and tube", "carbon through duplex"],
-    triggers: ["a line list for pipe and fittings", "olets and forged fittings", "pipe with MTRs"],
   },
   {
     id: "plate_bar", name: "Plate, bar and structural",
     items: ["round bar", "flat bar", "hex bar", "plate", "sheet", "angle", "channel", "beam", "HSS tube", "skid frames"],
     key: ["plate", "round and flat bar", "angle", "channel", "beam", "HSS tube"],
-    triggers: ["plate and bar for a fab job", "structural steel for a skid"],
   },
   {
     id: "expansion", name: "Expansion joints and protection",
     items: ["rubber", "EPDM", "PTFE", "metallic expansion joints", "flange protectors", "pipe caps", "thread protectors"],
     key: ["rubber and PTFE expansion joints", "metallic expansion joints", "flange protectors", "pipe caps"],
-    triggers: ["expansion joints", "flange protectors and pipe caps"],
   },
   {
     id: "specialty", name: "Specialty hardware",
     items: ["orifice plates", "threaded inserts", "helicoils", "pins", "rivets", "stainless nameplates and tags"],
     key: ["orifice plates", "threaded inserts", "helicoils", "nameplates and tags"],
-    triggers: ["orifice plates", "stainless tags and nameplates"],
   },
 ];
 
@@ -141,8 +127,15 @@ export const KEYWORDS: string[] = [
   "alloy", "duplex", "Inconel", "Monel", "Hastelloy", "titanium", "Xylan", "galvanized", "MRO", "plant maintenance", "industrial supply", "hardware",
 ];
 
-/** The line under the sign-off on every line card email (Walt 10/7): a two-line reply from Walt is still findable by product word. */
-export const SIGNATURE_LINE = `Westgate Supply supplies fasteners, studs, nuts, gaskets, flanges, pipe, fittings, plate, bar and structural steel in carbon, stainless, alloy, duplex, nickel alloys and titanium. Warehouses: Oakland CA, Houston TX, Burbank IL. ${COMPANY.lineCardPage}`;
+/**
+ * The line under the sign-off on every line card email (Walt 10/7): a two-line reply from Walt is still findable by
+ * product word. No locations. The page link only once the page is live (config.linecardPageLive).
+ */
+export const SIGNATURE_TEXT = "Westgate Supply supplies fasteners, studs, nuts, gaskets, flanges, pipe, fittings, plate, bar and structural steel in carbon, stainless, alloy, duplex, nickel alloys and titanium.";
+export function signatureLine(pageLive = false): string {
+  return pageLive ? `${SIGNATURE_TEXT} ${COMPANY.lineCardPage}` : SIGNATURE_TEXT;
+}
+export const isSignatureLine = (s: string) => s === SIGNATURE_TEXT || s === `${SIGNATURE_TEXT} ${COMPANY.lineCardPage}`;
 
 /** Short family words for subjects and the vendor row, in print order. */
 export const FAMILY_WORDS: Record<ProductFamilyId, string> = {
@@ -155,11 +148,12 @@ export const familyById = (id: ProductFamilyId) => FAMILIES.find((f) => f.id ===
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 export const wordCount = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
-function companyLines(): string[] {
+export type RenderOpts = { phone?: string | null };
+/** The 4 header lines of the email block. Phone only from config; never a location (the HQ and warehouses stay in the data for the website). */
+function companyLines(opts: RenderOpts = {}): string[] {
   return [
-    `${COMPANY.name}: ${COMPANY.tagline}.`,
-    `Website: ${COMPANY.website}. Quotes: ${COMPANY.quotes}. Phone: ${COMPANY.phone}.`,
-    `Warehouses: ${COMPANY.warehouses.join("; ")}. HQ: ${COMPANY.hq.street}, ${COMPANY.hq.city}, ${COMPANY.hq.state}.`,
+    `${COMPANY.name}: ${COMPANY.lines}.`,
+    `Website: ${COMPANY.website}. Quotes: ${COMPANY.quotes}.${opts.phone ? ` Phone: ${opts.phone}.` : ""}`,
     `${COMPANY.terms.join(". ")}.`,
     COMPANY.quoteLine,
   ];
@@ -169,9 +163,9 @@ function companyLines(): string[] {
  * The whole card as lines of text: one "Family: items" line per family, materials and coatings one line each, the
  * keywords last. No bullets, no tabs, no em or en dashes, so it pastes clean into a contact note or a spreadsheet cell.
  */
-export function plainTextLines(): string[] {
+export function plainTextLines(opts: RenderOpts = {}): string[] {
   return [
-    ...companyLines(),
+    ...companyLines(opts),
     "",
     "Product lines:",
     ...FAMILIES.map((f) => `${f.name}: ${f.items.join(", ")}`),
@@ -185,13 +179,13 @@ export function plainTextLines(): string[] {
     `Search keywords: ${KEYWORDS.join(", ")}`,
   ];
 }
-export function renderPlainText(): string {
-  return plainTextLines().join("\n");
+export function renderPlainText(opts: RenderOpts = {}): string {
+  return plainTextLines(opts).join("\n");
 }
 
 /** The same lines as unstyled paragraphs, for the HTML half of an email. */
-export function renderHtml(): string {
-  return plainTextLines().filter((l) => l !== "").map((l) => `<p>${esc(l)}</p>`).join("");
+export function renderHtml(opts: RenderOpts = {}): string {
+  return plainTextLines(opts).filter((l) => l !== "").map((l) => `<p>${esc(l)}</p>`).join("");
 }
 
 /**
@@ -204,7 +198,7 @@ export function renderShort(rep: RepCard = { name: "Walt Boxwell", email: "walt@
     ...FAMILIES.map((f) => `${f.name}: ${f.key.join(", ")}`),
     `Materials: carbon, alloy, stainless, duplex and super duplex, nickel alloys (Inconel, Monel, Hastelloy), copper alloys, titanium.`,
     `Coatings: hot dip galvanized, zinc, Xylan, PTFE, phosphate, black oxide, cadmium and more, to operator specs.`,
-    `Warehouses: ${COMPANY.warehouses.join(", ")}. No minimum order. MTRs with every order.`,
+    `No minimum order. MTRs with every order.`,
     `Rep: ${rep.name}, ${rep.email}. Website: ${COMPANY.website}. Quotes: ${COMPANY.quotes}.`,
     `Keywords: ${KEYWORDS.join(", ")}.`,
   ].join("\n");
@@ -227,7 +221,7 @@ export type RepCard = { name: string; email: string; phone?: string | null; titl
 /** One line for a vendor spreadsheet or ERP vendor list: pipes between columns, no tabs. */
 export function renderVendorRow(rep: RepCard): string {
   const categories = FAMILY_IDS.map((id) => FAMILY_WORDS[id]).join(", ");
-  return [COMPANY.name, rep.name, rep.email, rep.phone ?? COMPANY.phone, categories, COMPANY.warehouses.join(", "), COMPANY.website].join(" | ");
+  return [COMPANY.name, rep.name, rep.email, rep.phone ?? null, categories, COMPANY.website].filter((x): x is string => !!x).join(" | ");
 }
 
 /** vCard 3.0 for the buyer who keeps a contact per vendor: the whole card in NOTE, lines folded at 75 octets. */
@@ -243,10 +237,9 @@ export function renderVcf(rep: RepCard): string {
     `ORG:${vesc(COMPANY.name)}`,
     `TITLE:${vesc(rep.title ?? "Sales")}`,
     `EMAIL;TYPE=INTERNET,WORK:${rep.email}`,
-    `TEL;TYPE=WORK,VOICE:${rep.phone ?? COMPANY.phone}`,
+    ...(rep.phone ? [`TEL;TYPE=WORK,VOICE:${rep.phone}`] : []),
     `URL:https://${COMPANY.website}`,
-    `ADR;TYPE=WORK:;;${vesc(COMPANY.hq.street)};${vesc(COMPANY.hq.city)};${COMPANY.hq.state};${COMPANY.hq.zip};${COMPANY.hq.country}`,
-    `NOTE:${vesc(renderPlainText())}`,
+    `NOTE:${vesc(renderPlainText({ phone: rep.phone }))}`,
     "END:VCARD",
   ];
   return lines.map(fold).join("\r\n") + "\r\n";
@@ -315,14 +308,4 @@ export const INDUSTRY_FAMILIES: Array<{ match: RegExp; families: ProductFamilyId
 export function familiesForIndustry(industry: string | null | undefined): ProductFamilyId[] {
   const hit = industry ? INDUSTRY_FAMILIES.find((r) => r.match.test(industry)) : null;
   return hit ? hit.families : ["studs", "flanges", "gaskets", "pipe_fittings"];
-}
-
-/** The warehouse closest to a state (no geocoding: a state is as fine as the lead record gets reliably). */
-export function nearestWarehouse(state: string | null | undefined): Warehouse {
-  const s = (state ?? "").trim().toUpperCase();
-  const west = new Set(["CA", "OR", "WA", "NV", "AZ", "ID", "UT", "HI", "AK", "MT", "WY", "CO", "NM"]);
-  const south = new Set(["TX", "LA", "OK", "AR", "MS", "AL", "KS", "MO", "TN", "FL", "GA", "NE", "SD", "ND"]);
-  if (west.has(s)) return "Oakland, CA";
-  if (south.has(s)) return "Houston, TX";
-  return "Burbank, IL";
 }

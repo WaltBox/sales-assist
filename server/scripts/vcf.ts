@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { renderVcf } from "../src/content/lineCard.js";
 
-const rep = { name: process.env.REP_NAME ?? "Walt Boxwell", email: process.env.REP_EMAIL ?? "walt@westgatesupply.com", phone: process.env.REP_PHONE ?? null, title: "Sales" };
+const rep = { name: process.env.REP_NAME ?? "Walt Boxwell", email: process.env.REP_EMAIL ?? "walt@westgatesupply.com", phone: process.env.REP_PHONE ?? process.env.COMPANY_PHONE ?? null, title: "Sales" };
 mkdirSync("assets", { recursive: true });
 const file = `assets/${rep.name.replace(/\s+/g, "-")}.vcf`.replace("assets/", "assets/Westgate-Supply-");
 writeFileSync(file, renderVcf(rep));

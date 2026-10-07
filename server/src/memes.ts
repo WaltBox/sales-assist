@@ -1,4 +1,4 @@
-import { SIGNATURE_LINE } from "./content/lineCard.js";
+import { isSignatureLine } from "./content/lineCard.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -173,7 +173,7 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const paras = body.trim().split(/\n\s*\n/);
   // The keyword line (10/7) sits under the name; a meme goes above both.
-  const keywords = paras[paras.length - 1] === SIGNATURE_LINE ? paras.pop()! : null;
+  const keywords = isSignatureLine(paras[paras.length - 1]) ? paras.pop()! : null;
   const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
   const link = (t: string) => t.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
   const html = paras.map((p) => `<p>${link(esc(p)).replace(/\n/g, "<br>")}</p>`);

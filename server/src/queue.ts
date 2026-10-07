@@ -523,7 +523,7 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     // (the card as searchable text, in the format that fits how they file vendors) replaces the generic draft.
     const lead = await d.close.lead(it.leadId).catch(() => null);
     const lineCardP = transcript && call && !["no-answer", "busy", "vm-left", "vm-answer", "blocked"].includes(call.disposition ?? "")
-      ? step(it, "line card request", () => detectLineCardRequest(d, { company: it.company, transcript: transcript ?? "", description: lead?.description ?? null, state: lead?.addresses?.[0]?.state ?? null, contacts: (lead?.contacts ?? []).map((c) => ({ name: c.name, email: c.emails[0]?.email ?? null })) }))
+      ? step(it, "line card request", () => detectLineCardRequest(d, { company: it.company, transcript: transcript ?? "", description: lead?.description ?? null, contacts: (lead?.contacts ?? []).map((c) => ({ name: c.name, email: c.emails[0]?.email ?? null })) }))
         // They asked: the line card email is written while the generic draft is still being written, so the wait is the same.
         .then((req) => (req ? step(it, "line card email", () => draftLineCardEmail(d, { leadId: it.leadId, company: it.company, transcript: transcript ?? "", req })) : null))
         .catch((err) => { it.warnings.push(`Couldn't write the line card email: ${(err as Error).message}`); return null; })

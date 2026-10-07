@@ -173,8 +173,8 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
   const body = withSignatureLine(stripDashes([
     `Hi ${first ?? "there"},`,
     referrer ? `${referrer} suggested I send this your way. ${card}` : `${intro}${card}`,
-    `${callUsWhen(families)} It's all in the PDF, and here it is in plain text so it's easy to search for later:`,
-    renderShort(),
+    `${callUsWhen(buys, families)} It's all in the PDF, and here it is in plain text so it's easy to search for later:`,
+    renderShort({ name: d.rep.name, email: d.rep.email }),
     "Shoot me a quick \"got it\" when you see this. Send over an RFQ or a materials list and I'll price it.",
     d.rep.name,
   ].join("\n\n")));

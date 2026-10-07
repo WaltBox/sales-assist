@@ -186,6 +186,7 @@ export function createApp(appDeps: AppDeps) {
         name, email: rep.email || me.email, closeUserId: me.id, timeZone: rep.timezone || me.last_used_timezone || "America/Los_Angeles",
         sender: account ? `"${(account.sender?.name || name).replaceAll('"', "")}" <${account.sender?.email || account.email}>` : null,
         emailAccountId: account?.id ?? null,
+        phone: rep.phone ?? null,
       };
       repInfoCache.set(rep.token, info);
     }
