@@ -876,9 +876,15 @@ function rfqsPage() {
   const firstIn = (n) => new Set(days.slice(-n).flatMap((dd) => dd.accounts.filter((x) => x.first).map((x) => x.leadId)));
   const newToday = firstIn(1), newWeek = firstIn(7);
   const pick = state.rfqFilter || "all";
+  // Companies the RFQ count found that aren't on the accounts board (no line card from the app, 10/8: 7 counted, 4
+  // listed): a plain row from the count, so every one counted is listed.
+  const onBoard = new Set(sorted.map((a) => a.leadId));
+  const offBoard = new Map();
+  for (const dd of days) for (const x of dd.accounts) if (!onBoard.has(x.leadId)) offBoard.set(x.leadId, { leadId: x.leadId, company: x.company, how: x.how, day: offBoard.get(x.leadId)?.day ?? dd.day });
+  const extras = [...offBoard.values()].filter((x) => pick === "today" ? newToday.has(x.leadId) : pick === "week" ? newWeek.has(x.leadId) : true);
   const rows = pick === "today" ? sorted.filter((a) => newToday.has(a.leadId)) : pick === "week" ? sorted.filter((a) => newWeek.has(a.leadId)) : sorted;
   const chip = (k, label, n) => el("button", { class: `cardk${pick === k ? " on" : ""}`, onclick: () => { state.rfqFilter = k; render(); } }, [el("b", { class: "mono", text: n }), label]);
-  const filters = el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("all", "All RFQs", sorted.length), chip("today", "First RFQ today", newToday.size), chip("week", "First RFQ this week", newWeek.size)]);
+  const filters = el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("all", "All RFQs", sorted.length + offBoard.size), chip("today", "First RFQ today", newToday.size), chip("week", "First RFQ this week", newWeek.size)]);
   const fresh = new Set([...newWeek]);
   return el("section", {}, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "RFQs" })]),
@@ -886,10 +892,20 @@ function rfqsPage() {
     filters,
     el("p", { class: "muted small3", text: "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
-      : !rows.length ? el("p", { class: "empty", text: pick === "today" ? "No first-time RFQs today yet." : pick === "week" ? "No first-time RFQs this week yet." : "No RFQs yet." })
+      : !rows.length && !extras.length ? el("p", { class: "empty", text: pick === "today" ? "No first-time RFQs today yet." : pick === "week" ? "No first-time RFQs this week yet." : "No RFQs yet." })
         : el("div", { class: "grid rfqgrid" }, [
           el("div", { class: "gr gh" }, ["Account", "RFQ", "Status", "Waiting on", ""].map((h) => el("span", { class: "label", text: h }))),
           ...rows.flatMap((a) => rfqRow(a, fresh.has(a.leadId))),
+          ...extras.map((x) => el("div", { class: "gr" }, [
+            el("div", { class: "acct" }, [
+              el("a", { class: "co", href: closeLead(x.leadId), target: "_blank", rel: "noopener", text: x.company }),
+              el("span", { class: "sub2" }, [fresh.has(x.leadId) ? el("span", { class: "newbadge", text: "First RFQ" }) : null, "Not on the line card board"]),
+            ]),
+            el("div", { class: "rfqin" }, [el("span", { class: "mono", text: dayLabel(x.day) }), el("span", { class: "files", text: x.how === "file" ? "Came with a file" : x.how === "email" ? "In the email" : "Marked in Close" })]),
+            el("div", {}, [el("span", { class: "rfqst", text: "RFQ in" }), el("span", { class: "sub2", text: "open it in Close for the thread" })]),
+            el("span", { class: "waiting" }, [el("i", { "aria-hidden": "true" }), "Check in Close"]),
+            el("div", { class: "acts" }, [el("a", { class: "btn small", href: closeLead(x.leadId), target: "_blank", rel: "noopener", text: "Open" })]),
+          ])),
         ]),
   ]);
 }
