@@ -84,11 +84,50 @@ export type LeadEmail = {
   attachments?: Array<{ filename?: string; content_type?: string }> | null;
 };
 
+/** A simple counting gate: at most `max` callers inside at once, the rest wait their turn. */
+class Gate {
+  private inside = 0;
+  private waiting: Array<() => void> = [];
+  constructor(private max: number) {}
+  async enter() {
+    if (this.inside < this.max) { this.inside++; return; }
+    await new Promise<void>((r) => this.waiting.push(r));
+  }
+  leave() {
+    const next = this.waiting.shift();
+    if (next) next(); else this.inside--;
+  }
+}
+const gates = new Map<string, Gate>();
+
 export class CloseClient {
   constructor(private apiKey: string) {}
 
   private async request<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
-    const res = await fetch(`${config.closeBaseUrl}${path}`, {
+    // At most a few calls in flight per API key (10/8): a page load, the morning run and the checks all share one
+    // Close rate limit, and firing 30 at once got 429s ("Couldn't load everything").
+    const gate = gates.get(this.apiKey) ?? new Gate(5);
+    gates.set(this.apiKey, gate);
+    await gate.enter();
+    let res: Response;
+    try {
+      res = await this.fetchOnce(method, path, body);
+    } finally {
+      gate.leave();
+    }
+    if (res.status === 429 && attempt < 6) {
+      // Close says how long to wait (Retry-After, or rate_reset in the body); else back off 1, 2, 4… seconds.
+      const said = Number(res.headers.get("retry-after") ?? NaN);
+      const reset = Number(((await res.json().catch(() => null)) as { error?: { rate_reset?: number } } | null)?.error?.rate_reset ?? NaN);
+      const wait = [said, reset].find((x) => Number.isFinite(x) && x > 0) ?? 2 ** attempt;
+      await new Promise((r) => setTimeout(r, Math.min(Math.max(wait, 0.5), 15) * 1000 + Math.random() * 300));
+      return this.request(method, path, body, attempt + 1);
+    }
+    return this.read<T>(method, path, res);
+  }
+
+  private fetchOnce(method: string, path: string, body?: unknown) {
+    return fetch(`${config.closeBaseUrl}${path}`, {
       method,
       headers: {
         authorization: `Basic ${Buffer.from(`${this.apiKey}:`).toString("base64")}`,
@@ -98,11 +137,9 @@ export class CloseClient {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(20000),
     });
-    if (res.status === 429 && attempt < 3) {
-      const wait = Number(res.headers.get("retry-after") ?? 1);
-      await new Promise((r) => setTimeout(r, Math.min(Math.max(wait, 0.5), 10) * 1000));
-      return this.request(method, path, body, attempt + 1);
-    }
+  }
+
+  private async read<T>(method: string, path: string, res: Response): Promise<T> {
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new CloseError(`Close ${method} ${path.split("?")[0]} failed (${res.status}): ${text.slice(0, 300)}`, res.status);
