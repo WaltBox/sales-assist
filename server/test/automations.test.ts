@@ -109,7 +109,7 @@ test("coming up: who gets an automatic email and when, if nothing changes; Hold 
   const harbor = f.find((x) => x.company === "Harbor Fabrication");
   assert.ok(harbor, "not-opened accounts are in the sequence too (10/5)");
   assert.equal(harbor!.label, "Bump (not confirmed)");
-  assert.match(harbor!.preview ?? "", /got to you|made it over|got buried|Sending this back over/);
+  assert.match(harbor!.preview ?? "", /RFQ/);
   assert.doesNotMatch(harbor!.preview ?? "", /junk/);
 
   await holdAccount(d, crest!.leadId, true);
@@ -144,8 +144,9 @@ test("the automatic bump: back to the top + any RFQs, a meme inline (never one t
   assert.equal(new Set(six).size, 6, "six different asks");
   for (const b of six) assert.doesNotMatch(b, /circl|top of your inbox|no strings|no pressure|stack up|quotes back fast|junk|spam/i);
   assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there!/);
-  // Never opened: rotating lines, never the same note twice in a row.
-  assert.notEqual(bumpBodyFor("Tammy", "Walt Boxwell", 0, "landed"), bumpBodyFor("Tammy", "Walt Boxwell", 1, "landed"));
+  // Never opened: the same bumps as everyone (10/8), never "did this reach you".
+  assert.match(bumpBodyFor("Tammy", "Walt Boxwell", 2, "landed"), /I'd love the chance to work with you guys\. Got any RFQs I can take a crack at\?/);
+  for (let i = 0; i < 6; i++) assert.doesNotMatch(bumpBodyFor("Tammy", "Walt Boxwell", i, "landed"), /made it|reach(ed)? you|got to you|buried|one more time/i);
   const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const html = bumpHtml(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Walt Boxwell", meme);
   assert.match(html, /^<p>Hi Tammy!<\/p><p>Just wanted to bump this up.*<\/p><p>Line card's attached too, or you can grab it here: <a href="[^"]+">[^<]+<\/a><\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p[^>]*>There's a hilarious meme in here\. If it didn't come through, <a href="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*>here it is<\/a>\.<\/p><p>Thanks,<br>Walt Boxwell<\/p>$/, "inline, with a link under it for mail apps that hide images, before the name");
@@ -383,7 +384,7 @@ test("unconfirmed accounts (10/5, 10/6): in the sequence with the plain ask, and
   if (mesa.bumpDue) {
     assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
     assert.equal(m!.variant, "landed");
-    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /got to you|made it over|got buried|Sending this back over/.test(e.body));
+    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /RFQ/.test(e.body));
     assert.ok(email, "the bump is the plain ask");
   }
 });

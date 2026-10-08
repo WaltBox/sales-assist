@@ -106,7 +106,7 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
 const BUMP_LINES = [
   // Walt (10/8): "It needs to just sound more like me... this industry is less professional." Short, friendly, his words.
   "Just wanted to bump this up. I'd really love to take a look at any RFQs you've got going on.",
-  "Hope your week's going good! Got anything you're pricing out right now? I'd love a shot at it.",
+  "Hope your week's going good! I'd love the chance to work with you guys. Got any RFQs I can take a crack at?",
   "Bumping this back up for you. If there's an RFQ or a list on your desk, send it my way and I'll get you pricing.",
   "Me again! Any RFQs going out this week? I'd love to get you a number on it.",
   "Just checking in. Got anything coming up on pipe, fittings or bolting? Send it over and I'll price it out.",
@@ -133,13 +133,9 @@ const VARIANTS: Record<string, string[]> = {
     "Just wanted to bump this message before the week ends. I'd really love to check out any RFQs you've got going on.",
     "Happy Friday! Before the weekend hits, got any RFQs I can take a look at?",
   ],
-  // Never opened: a few different ways, so nobody gets the same note twice in a row (no junk-folder talk).
-  landed: [
-    "Wanted to make sure this one got to you. Got any RFQs going on right now? I'd love to take a look.",
-    "Not sure this made it over, so here it is one more time. Anything you're pricing out right now?",
-    "Just bumping this up in case it got buried. I'd really love to check out any RFQs you've got.",
-    "Hope all's good! Sending this back over. If you've got a list or an RFQ, send it my way and I'll price it.",
-  ],
+  // Never opened (Walt 10/8): no "did this reach you". We know we're emailing them again; the point is to stay at
+  // the top of their inbox and sound eager to earn their business. His pick:
+  landed: ["Hope your week's going good! I'd love the chance to work with you guys. Got any RFQs I can take a crack at?"],
 };
 /** Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away. */
 export const LINE_CARD_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
