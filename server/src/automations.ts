@@ -331,6 +331,16 @@ export async function syncAutomations(d: Deps) {
       await store.putAutomation({ ...a, status: "failed", statusAt: now.toISOString(), note: "Close couldn't send it. Check it in Close." });
       continue;
     }
+    // Last guard before it goes (10/8): another email to this lead today, scheduled earlier or already sent, wins.
+    const day = (iso: string | null | undefined) => (iso ? localDay(new Date(iso), d.rep.timeZone) : "");
+    const myDay = day(a.scheduledFor ?? a.createdAt);
+    const sibling = rows.find((r) => r.id !== a.id && r.leadId === a.leadId && day(r.status === "sent" ? r.statusAt ?? r.scheduledFor : r.scheduledFor ?? r.createdAt) === myDay
+      && (r.status === "sent" || (r.status === "scheduled" && ((r.scheduledFor ?? "") < (a.scheduledFor ?? "") || ((r.scheduledFor ?? "") === (a.scheduledFor ?? "") && r.id < a.id)))));
+    if (sibling && !TEST_LEAD_NAME.test(a.company)) {
+      await d.close.unschedule(a.id).catch(() => {});
+      await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: a second email to this lead the same day (${sibling.id}).` });
+      continue;
+    }
     // Still scheduled: if it's about to go, make sure nothing changed.
     const sendAt = a.scheduledFor ? new Date(a.scheduledFor).getTime() : 0;
     const checked = a.checkedAt ? new Date(a.checkedAt).getTime() : 0;

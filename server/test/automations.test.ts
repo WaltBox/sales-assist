@@ -427,3 +427,28 @@ test("cooling periods (10/6): out of the sequence until the date, back in on the
   assert.equal(await coolingFor(d, crest.leadId), null);
   assert.ok(close.writes.some((w) => w.op === "note" && /Back in the automatic emails/.test((w.body as { note: string }).note)));
 });
+
+test("never two in a day (10/8): two morning plans at once write one wave, and a same-day second email is pulled before it sends", async () => {
+  const { close, d } = setup("user_twice");
+  await setAutomations(d, true);
+  // Two server copies planning the same morning, at the same moment (the hosted one and the Mac one, 10/8).
+  const at = { ...d, now: () => new Date("2026-10-08T14:05:00Z") }; // Thursday 7:05am Pacific
+  process.env.PLAN_MORNING = "1";
+  const [r1, r2] = await Promise.all([morningRun(at), morningRun(at)]);
+  const planned = [...(r1?.planned ?? []), ...(r2?.planned ?? [])];
+  const perLead = new Map<string, number>();
+  for (const p of planned) perLead.set(p.leadId, (perLead.get(p.leadId) ?? 0) + 1);
+  assert.ok(planned.length > 0, "one of them planned");
+  assert.ok([...perLead.values()].every((n) => n === 1), `nobody planned twice: ${JSON.stringify([...perLead])}`);
+  assert.ok(!r1 || !r2 || !r1.planned.length || !r2.planned.length, "only one copy wrote the wave");
+  // And if a second one slips in anyway, the pre-send check pulls the later one.
+  const [c] = planned;
+  const dupAt = new Date(new Date(c.scheduledFor!).getTime() + 4 * 60_000).toISOString();
+  close.writes.push({ op: "email", id: "acti_dup_same_day", body: { leadId: c.leadId, to: [c.to], subject: c.subject, body: "x", scheduleAt: dupAt } } as never);
+  await store.putAutomation({ ...c, id: "acti_dup_same_day", scheduledFor: dupAt, createdAt: new Date().toISOString(), checkedAt: null });
+  await syncAutomations({ ...d, now: () => new Date(new Date(c.scheduledFor!).getTime() - 20 * 60_000) });
+  const view = await automationsView(d);
+  assert.equal(view.other.find((x) => x.id === "acti_dup_same_day")?.status, "stopped", "the later one is pulled back");
+  assert.ok(view.upcoming.some((x) => x.id === c.id), "the first one still goes");
+  delete process.env.PLAN_MORNING;
+});

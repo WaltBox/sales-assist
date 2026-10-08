@@ -512,7 +512,9 @@ export function createApp(appDeps: AppDeps) {
       for (const rep of await allReps().catch(() => [])) {
         const d = await depsFor(rep).catch(() => null);
         if (!d) continue;
-        await morningRun(d).catch((err) => console.error(`morning run ${rep.email}:`, (err as Error).message));
+        // Only the hosted server plans the morning (10/8: the Mac copy planned too, 90 seconds after it, and 80 leads
+        // got two emails). PLAN_MORNING=1 turns it on for a copy that runs alone.
+        if (process.env.VERCEL || process.env.PLAN_MORNING === "1") await morningRun(d).catch((err) => console.error(`morning run ${rep.email}:`, (err as Error).message));
         await ensureRescueDrafts(d).catch((err) => console.error(`rescue drafts ${rep.email}:`, (err as Error).message));
         await syncAutomations(d).catch((err) => console.error(`sync ${rep.email}:`, (err as Error).message));
         // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
