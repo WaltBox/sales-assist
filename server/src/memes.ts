@@ -174,7 +174,8 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
   const paras = body.trim().split(/\n\s*\n/);
   // The keyword line (10/7) sits under the name; a meme goes above both.
   const keywords = isSignatureLine(paras[paras.length - 1]) ? paras.pop()! : null;
-  const sig = paras[paras.length - 1] === repName ? paras.pop()! : null;
+  const last = paras[paras.length - 1] ?? "";
+  const sig = last === repName || last.endsWith(`\n${repName}`) ? paras.pop()! : null; // "Thanks,\nWalt Boxwell" (10/8)
   const link = (t: string) => t.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
   const html = paras.map((p) => `<p>${link(esc(p)).replace(/\n/g, "<br>")}</p>`);
   if (meme) {
@@ -185,7 +186,7 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
     // A lot of mail apps hide images until the reader clicks "show": the link gets them the meme anyway (Walt 10/6).
     html.push(`<p style="font-size:12px;color:#6b6b70">There's a hilarious meme in here. If it didn't come through, <a href="${link}" style="color:#1a4fa3;text-decoration:underline">here it is</a>.</p>`);
   }
-  if (sig) html.push(`<p>${esc(sig)}</p>`);
+  if (sig) html.push(`<p>${esc(sig).replace(/\n/g, "<br>")}</p>`);
   if (keywords) html.push(`<p style="font-size:12px;color:#6b6b70">${esc(keywords)}</p>`);
   return html.join("");
 }

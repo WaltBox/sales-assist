@@ -24,7 +24,8 @@ export type FollowUpResult =
  * random minute from a few minutes out to 11:00; after 11 → the next weekday's window. `stagger` only nudges the
  * earliest possible minute, so a big batch still spreads across the whole window.
  */
-export const SEND_WINDOW = { fromMinute: 8 * 60 + 11, toMinute: 11 * 60 };
+// Around their 8am (Walt 10/8: "they should go out around the customer's 8am"), a random minute so a wave isn't a block.
+export const SEND_WINDOW = { fromMinute: 7 * 60 + 50, toMinute: 8 * 60 + 35 };
 export function sendSlot(tz: string, now: Date, stagger = 0, rand: () => number = Math.random): string {
   const p = localParts(now, tz);
   const mins = p.hour * 60 + p.minute;
@@ -103,12 +104,13 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
 // human and not email lingo"). Full sentences in Walt's voice, each one a different plain ask for the RFQ. No
 // email-speak ("bumping", "circling back", "top of your inbox"), no fragments, no hedging, no promises about speed.
 const BUMP_LINES = [
-  "I wanted to check in on this. If you have anything crossing your desk this week that I can put a price on, send it my way. A rough list is fine and I'll take it from there.",
-  "I'm following up on my last note. If you have an RFQ going out this week, I'd like a shot at it. Send it over and I'll get you numbers.",
-  "I'm still interested in working with you. What do you have coming up on the material side? Whether it's pipe, valves, fittings, flanges or bolting, send me the list and I'll price it.",
-  "I'm checking in again because I'd like to be on your list the next time you send an RFQ out. What do you have coming up?",
-  "Is there anything you're pricing this week? If so, send it over and I'll get on it.",
-  "This is my last note for a little while. If there's a job on your board that needs pipe, fittings or bolting, I'd like to price it. Send me what you have.",
+  // Walt (10/8): "It needs to just sound more like me... this industry is less professional." Short, friendly, his words.
+  "Just wanted to bump this up. I'd really love to take a look at any RFQs you've got going on.",
+  "Hope your week's going good! Got anything you're pricing out right now? I'd love a shot at it.",
+  "Bumping this back up for you. If there's an RFQ or a list on your desk, send it my way and I'll get you pricing.",
+  "Me again! Any RFQs going out this week? I'd love to get you a number on it.",
+  "Just checking in. Got anything coming up on pipe, fittings or bolting? Send it over and I'll price it out.",
+  "Wanted to get back in front of you real quick. If you've got any RFQs going on, I'd really love to check them out.",
 ];
 /**
  * The name to greet with, or null for "Hi there," (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
@@ -125,18 +127,27 @@ export function greetName(name: string | null | undefined): string | null {
   return w[0].toUpperCase() + w.slice(1);
 }
 
-const VARIANTS: Record<string, string> = {
-  // Friday send (Walt 10/2): pricing back Monday morning is the hook, so Monday has to deliver.
-  friday: "Happy Friday. Before the weekend, if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.",
-  // For an account that's never shown an open (Walt 10/6): the same voice, a plain ask, no talk of junk folders.
-  landed: "I wanted to make sure this reached you. If you have anything coming up that I can put a price on, send it over. A rough list is fine and I'll take it from there.",
+const VARIANTS: Record<string, string[]> = {
+  // Friday (Walt 10/8, his words): bump it before the week ends.
+  friday: [
+    "Just wanted to bump this message before the week ends. I'd really love to check out any RFQs you've got going on.",
+    "Happy Friday! Before the weekend hits, got any RFQs I can take a look at?",
+  ],
+  // Never opened: a few different ways, so nobody gets the same note twice in a row (no junk-folder talk).
+  landed: [
+    "Wanted to make sure this one got to you. Got any RFQs going on right now? I'd love to take a look.",
+    "Not sure this made it over, so here it is one more time. Anything you're pricing out right now?",
+    "Just bumping this up in case it got buried. I'd really love to check out any RFQs you've got.",
+    "Hope all's good! Sending this back over. If you've got a list or an RFQ, send it my way and I'll price it.",
+  ],
 };
 /** Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away. */
 export const LINE_CARD_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
-export const ATTACHED_LINE = `I attached our line card again so it's easy to find. It's also here: ${LINE_CARD_URL}`;
+export const ATTACHED_LINE = `Line card's attached too, or you can grab it here: ${LINE_CARD_URL}`;
 export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
-  const line = (variant && VARIANTS[variant]) || BUMP_LINES[nth % BUMP_LINES.length];
-  return `Hi ${first ?? "there"},\n\n${line}\n\n${ATTACHED_LINE}\n\n${repName}`;
+  const pool = variant && VARIANTS[variant] ? VARIANTS[variant] : BUMP_LINES;
+  const line = pool[nth % pool.length];
+  return `Hi ${first ?? "there"}!\n\n${line}\n\n${ATTACHED_LINE}\n\nThanks,\n${repName}`;
 }
 
 export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; nth: number; variant?: string | null }; onlyTo?: string } = {}): Promise<FollowUpResult> {

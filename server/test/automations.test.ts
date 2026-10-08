@@ -19,20 +19,19 @@ const setup = (userId: string) => {
   return { close, d };
 };
 
-test("bumps go out at a random minute between 8:11 and 11am their time on weekdays (10/6)", () => {
+test("bumps go out around their 8am, a random minute 7:50 to 8:34, on weekdays (Walt 10/8)", () => {
   const tz = "America/Chicago";
   const lo = () => 0, hi = () => 0.999;
-  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, lo), "2026-09-28T08:11:00-05:00", "Monday 7am → earliest 8:11");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, hi), "2026-09-28T10:59:00-05:00", "Monday 7am → latest 10:59");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z"), 0, lo), "2026-09-28T09:35:00-05:00", "Monday 9:30 → at least 5 minutes out");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z"), 0, hi), "2026-09-28T10:59:00-05:00", "Monday 9:30 → still inside the window");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T19:00:00Z"), 0, lo), "2026-09-29T08:11:00-05:00", "Monday 2pm → Tuesday's window");
-  assert.equal(sendSlot(tz, new Date("2026-09-26T15:00:00Z"), 0, lo), "2026-09-28T08:11:00-05:00", "Saturday → Monday's window");
-  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 12, lo), "2026-09-28T08:23:00-05:00", "stagger nudges the earliest minute");
-  // Random by default: a batch spreads across the window rather than landing together.
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, lo), "2026-09-28T07:50:00-05:00", "Monday 7am → earliest 7:50");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 0, hi), "2026-09-28T08:34:00-05:00", "Monday 7am → latest 8:34");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T13:00:00Z"), 0, lo), "2026-09-28T08:05:00-05:00", "Monday 8:00 → at least 5 minutes out");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T14:30:00Z"), 0, lo), "2026-09-29T07:50:00-05:00", "Monday 9:30 → past the window, Tuesday's");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T19:00:00Z"), 0, lo), "2026-09-29T07:50:00-05:00", "Monday 2pm → Tuesday's window");
+  assert.equal(sendSlot(tz, new Date("2026-09-26T15:00:00Z"), 0, lo), "2026-09-28T07:50:00-05:00", "Saturday → Monday's window");
+  assert.equal(sendSlot(tz, new Date("2026-09-28T12:00:00Z"), 12, lo), "2026-09-28T08:02:00-05:00", "stagger nudges the earliest minute");
   const slots = new Set(Array.from({ length: 40 }, () => sendSlot(tz, new Date("2026-09-28T12:00:00Z"))));
-  assert.ok(slots.size > 20, `spread: ${slots.size} distinct minutes`);
-  for (const s of slots) assert.ok(s >= "2026-09-28T08:11:00-05:00" && s <= "2026-09-28T10:59:00-05:00", s);
+  assert.ok(slots.size > 12, `spread: ${slots.size} distinct minutes`);
+  for (const s of slots) assert.ok(s >= "2026-09-28T07:50:00-05:00" && s <= "2026-09-28T08:34:00-05:00", s);
 });
 
 test("off by default; when on, the day's bumps are scheduled in Close with the reason, once per account", async () => {
@@ -110,7 +109,7 @@ test("coming up: who gets an automatic email and when, if nothing changes; Hold 
   const harbor = f.find((x) => x.company === "Harbor Fabrication");
   assert.ok(harbor, "not-opened accounts are in the sequence too (10/5)");
   assert.equal(harbor!.label, "Bump (not confirmed)");
-  assert.match(harbor!.preview ?? "", /I wanted to make sure this reached you/);
+  assert.match(harbor!.preview ?? "", /got to you|made it over|got buried|Sending this back over/);
   assert.doesNotMatch(harbor!.preview ?? "", /junk/);
 
   await holdAccount(d, crest!.leadId, true);
@@ -139,16 +138,17 @@ test("an account that sends an RFQ is out of automatic emails for good (VGas, 9/
 test("the automatic bump: back to the top + any RFQs, a meme inline (never one they've had), no AI (9/30)", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const { bumpHtml, memeFor } = await import("../src/memes.js");
-  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy,\n\nI wanted to check in on this. If you have anything crossing your desk this week that I can put a price on, send it my way. A rough list is fine and I'll take it from there.\n\nI attached our line card again so it's easy to find. It's also here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nWalt Boxwell");
-  // Six different asks for six bumps, none in email-speak.
+  // Walt's voice (10/8): short, friendly, not a professional email.
+  assert.equal(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Hi Tammy!\n\nJust wanted to bump this up. I'd really love to take a look at any RFQs you've got going on.\n\nLine card's attached too, or you can grab it here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nThanks,\nWalt Boxwell");
   const six = Array.from({ length: 6 }, (_, i) => bumpBodyFor("Tammy", "Walt Boxwell", i));
-  assert.equal(new Set(six).size, 6);
-  for (const b of six) assert.doesNotMatch(b, /bump|circl|top of your inbox|no strings|stack up|quotes back fast/i);
-  assert.notEqual(bumpBodyFor("Tammy", "Walt Boxwell", 1), bumpBodyFor("Tammy", "Walt Boxwell", 0), "a second bump isn't word for word the first");
-  assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there,/);
+  assert.equal(new Set(six).size, 6, "six different asks");
+  for (const b of six) assert.doesNotMatch(b, /circl|top of your inbox|no strings|no pressure|stack up|quotes back fast|junk|spam/i);
+  assert.match(bumpBodyFor(null, "Walt Boxwell"), /^Hi there!/);
+  // Never opened: rotating lines, never the same note twice in a row.
+  assert.notEqual(bumpBodyFor("Tammy", "Walt Boxwell", 0, "landed"), bumpBodyFor("Tammy", "Walt Boxwell", 1, "landed"));
   const meme = { name: "forklift.jpg", url: "https://x.supabase.co/storage/v1/object/public/memes/forklift.jpg" };
   const html = bumpHtml(bumpBodyFor("Tammy", "Walt Boxwell", 0), "Walt Boxwell", meme);
-  assert.match(html, /^<p>Hi Tammy,<\/p><p>I wanted to check in.*<\/p><p>I attached our line card again so it's easy to find\. It's also here: <a href="[^"]+">[^<]+<\/a><\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p[^>]*>There's a hilarious meme in here\. If it didn't come through, <a href="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*>here it is<\/a>\.<\/p><p>Walt Boxwell<\/p>$/, "inline, with a link under it for mail apps that hide images, before the name");
+  assert.match(html, /^<p>Hi Tammy!<\/p><p>Just wanted to bump this up.*<\/p><p>Line card's attached too, or you can grab it here: <a href="[^"]+">[^<]+<\/a><\/p><p><img src="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*><\/p><p[^>]*>There's a hilarious meme in here\. If it didn't come through, <a href="https:\/\/x\.supabase\.co\/storage\/v1\/object\/public\/memes\/forklift\.jpg"[^>]*>here it is<\/a>\.<\/p><p>Thanks,<br>Walt Boxwell<\/p>$/, "inline, with a link under it for mail apps that hide images, before the name");
   // Never the same meme twice: a pick they've already had is replaced by one they haven't.
   const memes = [meme, { name: "bolts.png", url: "u2" }];
   const d = { rep: { closeUserId: "user_m" } } as never;
@@ -300,7 +300,7 @@ test("shot down, or marked Not Interested in Close after it was planned: the bum
 test("the Friday copy (10/2): pricing back Monday, plain ask, no hedging", async () => {
   const { bumpBodyFor } = await import("../src/followup.js");
   const body = bumpBodyFor("Dana", "Walt Boxwell", 0, "friday");
-  assert.equal(body, "Hi Dana,\n\nHappy Friday. Before the weekend, if there's an RFQ on your desk, send it over and I'll have pricing back to you Monday morning.\n\nI attached our line card again so it's easy to find. It's also here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nWalt Boxwell");
+  assert.equal(body, "Hi Dana!\n\nJust wanted to bump this message before the week ends. I'd really love to check out any RFQs you've got going on.\n\nLine card's attached too, or you can grab it here: https://westgatesupply.com/brand/westgate-line-card.pdf\n\nThanks,\nWalt Boxwell");
   assert.doesNotMatch(body, /no strings|no pressure|stack up|quotes back fast/i);
   assert.equal(bumpBodyFor("Dana", "Walt Boxwell", 0, null), bumpBodyFor("Dana", "Walt Boxwell", 0), "no variant: the usual rotation");
 });
@@ -322,7 +322,7 @@ test("send now (10/2): out in minutes, staggered, with the copy, a meme, and the
   const at = new Date(row.scheduledFor!).getTime() - new Date("2026-10-02T17:00:00Z").getTime();
   assert.ok(at >= 2 * 60_000 && at <= 3 * 60_000, `goes in about two minutes, not 9am tomorrow: ${row.scheduledFor}`);
   const email = close.writes.filter((w) => w.op === "email").pop()!.body as { body: string; html: string | null; scheduleAt: string };
-  assert.match(email.body, /Happy Friday\./);
+  assert.match(email.body, /before the week ends/);
   assert.match(email.html ?? "", /forklift\.jpg/);
   assert.ok(close.writes.some((w) => w.op === "delete" && (w.body as { id: string }).id === "acti_rescue_crest"), "the rescue draft is deleted: never two emails");
   assert.deepEqual(await store.getSetting(d.rep.closeUserId, "rescueDrafts"), {});
@@ -383,7 +383,7 @@ test("unconfirmed accounts (10/5, 10/6): in the sequence with the plain ask, and
   if (mesa.bumpDue) {
     assert.ok(m, `Mesa planned: ${JSON.stringify(r.planned.map((p) => p.company))} skipped: ${JSON.stringify(r.skipped)}`);
     assert.equal(m!.variant, "landed");
-    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /I wanted to make sure this reached you/.test(e.body));
+    const email = close.writes.filter((w) => w.op === "email").map((w) => w.body as { body: string }).find((e) => /got to you|made it over|got buried|Sending this back over/.test(e.body));
     assert.ok(email, "the bump is the plain ask");
   }
 });

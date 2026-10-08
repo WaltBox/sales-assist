@@ -197,6 +197,11 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: `${UNCONFIRMED_MAX_BUMPS} automatic emails and no sign they got any of it; call to confirm the address.` });
       continue;
     }
+    // Talked to them yesterday or today (Walt 10/8): no email on top of a real conversation.
+    if (talkedRecently(a, now, d.rep.timeZone)) {
+      skipped.push({ company: a.company, why: "You talked to them yesterday or today; the email waits." });
+      continue;
+    }
     const onCadence = a.next.kind !== "bump";
     const base = {
       repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
@@ -354,6 +359,14 @@ export async function syncAutomations(d: Deps) {
       // The note carries the numbers (10/6): a pull-back that looks wrong can then be read off the row, whichever copy ran it.
       const twinAt = twin.statusAt ?? twin.createdAt;
       await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: they already got an automatic email on ${twinAt.slice(0, 10)}. It's a draft in Close now. [twin ${twin.id} at ${twinAt}, this one at ${goesAt.toISOString()}, ${businessDaysBetween(new Date(twinAt), goesAt, d.rep.timeZone)} business days apart in ${d.rep.timeZone}, gap ${gap}]` });
+      continue;
+    }
+    // Talked to them since this was planned (10/8): pull it back.
+    const callsSince = await d.close.calls({ leadId: a.leadId, since: a.createdAt }).catch(() => []);
+    const talk = callsSince.find((c) => c.direction === "outbound" && c.disposition === "answered" && c.duration >= 45 && !/voicemail/i.test(c.note ?? ""));
+    if (talk && !isTestLead) {
+      await d.close.unschedule(a.id).catch(() => {});
+      await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: you talked to them ${talk.date_created.slice(0, 10)}. It's a draft in Close now.` });
       continue;
     }
     const emails = await d.close.leadEmails(a.leadId).catch(() => null);
@@ -590,10 +603,21 @@ export async function sentEmailsView(d: Deps, days = 7): Promise<SentEmail[]> {
 }
 
 /** The morning run: once per weekday, from 7am the rep's time, for every rep with automations on. */
+/** A real conversation (not just a dial) since the start of the previous business day, rep's time. */
+export function talkedRecently(a: { touches?: { lastTalk: string | null } }, now: Date, tz: string): boolean {
+  const last = a.touches?.lastTalk;
+  if (!last) return false;
+  const p = localParts(now, tz);
+  const back = p.weekday === 1 ? 3 : p.weekday === 0 ? 2 : 1; // Monday looks back to Friday
+  const start = zonedTime(p.year, p.month, p.day, 0, 0, tz).getTime() - back * DAY;
+  return new Date(last).getTime() >= start;
+}
+
 export async function morningRun(d: Deps) {
   const now = d.now?.() ?? new Date();
   const p = localParts(now, d.rep.timeZone);
-  if (p.weekday === 0 || p.weekday === 6 || p.hour < 7) return null;
+  // Planned before the East Coast's 8am (10/8): the cron runs ~4am Pacific, each email then waits for its buyer's 8am.
+  if (p.weekday === 0 || p.weekday === 6 || p.hour < 3) return null;
   if (!(await automationsOn(d))) return null;
   if ((await store.getSetting<string>(d.rep.closeUserId, "lastPlanned")) === localDay(now, d.rep.timeZone)) return null;
   return planBumps(d);

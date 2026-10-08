@@ -6,7 +6,7 @@
     "api/index.ts": { "maxDuration": 300, "memory": 3009, "includeFiles": "{playbook,web}/**" }
   },
   "crons": [
-    { "path": "/api/cron/catch-up", "schedule": "5 14 * * *" },
-    { "path": "/api/cron/catch-up", "schedule": "45 15 * * *" }
+    { "path": "/api/cron/catch-up", "schedule": "5 11 * * *" },
+    { "path": "/api/cron/catch-up", "schedule": "40 11 * * *" }
   ]
 }
