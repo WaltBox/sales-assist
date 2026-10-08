@@ -59,6 +59,8 @@ export interface Store {
   deleteReviewsBefore(before: string): Promise<void>;
   /** One worker per review: true if this caller got it until `untilMs`. */
   claim(id: string, untilMs: number): Promise<boolean>;
+  /** True for the first caller only, across every server copy (10/8: two copies planned the same morning). */
+  once(key: string, ttlMs: number): Promise<boolean>;
   release(id: string): Promise<void>;
 
   cacheGet<T>(key: string): Promise<T | null>;
@@ -147,6 +149,12 @@ export class FileStore implements Store {
     return hit && hit.expires > Date.now() ? (hit.value as T) : null;
   }
   async cacheSet<T>(key: string, value: T, ttlMs: number) { this.m.cache[key] = { expires: Date.now() + ttlMs, value }; this.save(); }
+  async once(key: string, ttlMs: number) {
+    const k = `once:${key}`, hit = this.m.cache[k];
+    if (hit && hit.expires > Date.now()) return false;
+    this.m.cache[k] = { expires: Date.now() + ttlMs, value: true }; this.save();
+    return true;
+  }
   async cacheDelete(key: string) { if (key in this.m.cache) { delete this.m.cache[key]; this.save(); } }
 
   async logRejection(entry: Record<string, unknown>) { this.m.rejections.push(entry); this.save(); }
@@ -253,6 +261,16 @@ export class SupabaseStore implements Store {
   async cacheGet<T>(key: string) {
     const rows = await this.req<Array<{ value: T }>>("GET", `brief_cache?${this.q({ key: `eq.${key}`, expires_at: `gt.${new Date().toISOString()}`, select: "value" })}`);
     return rows[0]?.value ?? null;
+  }
+  async once(key: string, ttlMs: number) {
+    // A plain insert: the primary key makes a second one fail (409), so exactly one caller wins.
+    try {
+      await this.req("POST", "brief_cache", { key: `once:${key}`, value: true, expires_at: new Date(Date.now() + ttlMs).toISOString() }, "return=minimal");
+      return true;
+    } catch (e) {
+      if (/: 409 /.test((e as Error).message)) return false;
+      throw e;
+    }
   }
   async cacheSet<T>(key: string, value: T, ttlMs: number) {
     await this.req("POST", "brief_cache?on_conflict=key", { key, value, expires_at: new Date(Date.now() + ttlMs).toISOString() }, "resolution=merge-duplicates,return=minimal");

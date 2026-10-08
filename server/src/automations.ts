@@ -197,6 +197,11 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: `${UNCONFIRMED_MAX_BUMPS} automatic emails and no sign they got any of it; call to confirm the address.` });
       continue;
     }
+    // Never two in a day to one lead, however many plans run (10/8): the first to claim the lead today writes it.
+    if (!(await store.once(`bump:${d.rep.closeUserId}:${a.leadId}:${today}`, 20 * 3600 * 1000))) {
+      skipped.push({ company: a.company, why: "Already has an automatic email today." });
+      continue;
+    }
     // Talked to them yesterday or today (Walt 10/8): no email on top of a real conversation.
     if (talkedRecently(a, now, d.rep.timeZone)) {
       skipped.push({ company: a.company, why: "You talked to them yesterday or today; the email waits." });
@@ -620,6 +625,9 @@ export async function morningRun(d: Deps) {
   if (p.weekday === 0 || p.weekday === 6 || p.hour < 3) return null;
   if (!(await automationsOn(d))) return null;
   if ((await store.getSetting<string>(d.rep.closeUserId, "lastPlanned")) === localDay(now, d.rep.timeZone)) return null;
+  // One morning plan per rep per day, whichever server copy gets there first (10/8: the hosted and the Mac copies
+  // both planned 90 seconds apart, and 80 leads got two emails).
+  if (!(await store.once(`plan:${d.rep.closeUserId}:${localDay(now, d.rep.timeZone)}`, 20 * 3600 * 1000))) return null;
   return planBumps(d);
 }
 
