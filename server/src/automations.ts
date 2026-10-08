@@ -212,7 +212,7 @@ async function planDay(d: Deps, now: Date) {
         skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") });
         continue;
       }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -277,7 +277,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
       const r = await writeFollowUp(d, a.leadId, { force: true, schedule: { stagger: i * stagger, now: true }, template: { meme, nth, variant: opts.variant ?? null } });
       if (r.status === "warn") { skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") }); continue; }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? null, arm: await armFor(d, a.leadId, arms) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -298,8 +298,16 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
 export async function syncAutomations(d: Deps) {
   const now = d.now?.() ?? new Date();
   const rows = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - RAIL_LOOKBACK_DAYS * DAY).toISOString());
-  for (const a of rows.filter((r) => r.status === "scheduled")) {
-    const e = await d.close.email(a.id).catch(() => null);
+  // Only the rows worth asking about (10/8): past their send time, about to go, or not looked at in half an hour.
+  // A morning wave is 200+ rows; asking Close about every one on every page load hit its rate limit.
+  const worth = rows.filter((r) => r.status === "scheduled" && (() => {
+    const at = r.scheduledFor ? new Date(r.scheduledFor).getTime() : 0;
+    const looked = r.checkedAt ? new Date(r.checkedAt).getTime() : 0;
+    return at - now.getTime() <= RECHECK_WITHIN || now.getTime() - looked > 30 * 60 * 1000;
+  })());
+  const fetched = new Map(await mapLimit(worth, 4, async (a) => [a.id, await d.close.email(a.id).catch(() => null)] as const));
+  for (const a of worth) {
+    const e = fetched.get(a.id) ?? null;
     if (!e) continue;
     if (e.status === "sent") {
       await store.putAutomation({ ...a, status: "sent", statusAt: e.date_sent ?? now.toISOString() });
@@ -478,15 +486,30 @@ export function morningOf(at: Date, tz: string): Date {
 }
 
 /** What the Emails section shows: on/off, what's going out, what went out, what didn't. */
+const bodyCache = new Map<string, string | null>();
+/** Run `fn` over `items` with at most `n` at once, results in order. */
+async function mapLimit<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k]); } }));
+  return out;
+}
+
 export async function automationsView(d: Deps) {
   await syncAutomations(d).catch((err) => console.error("sync automations:", (err as Error).message));
   const now = d.now?.() ?? new Date();
   const rows = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 7 * DAY).toISOString());
-  const withBody = await Promise.all(rows.map(async (a) => {
+  // Bodies (10/8): from the row when it was saved with one; otherwise from Close, a few at a time and remembered,
+  // so 200+ rows don't trip Close's rate limit (that 429 made the page fail).
+  const withBody = await mapLimit(rows, 4, async (a) => {
+    if (a.body !== undefined && a.body !== null) return a;
     if (a.status === "failed") return { ...a, body: null };
+    const hit = bodyCache.get(a.id);
+    if (hit !== undefined) return { ...a, body: hit };
     const e = await d.close.email(a.id).catch(() => null);
+    if (e) bodyCache.set(a.id, e.body_text ?? null);
     return { ...a, body: e?.body_text ?? null };
-  }));
+  });
   const future = await forecast(d).catch(() => [] as Forecast[]);
   return {
     enabled: await automationsOn(d),

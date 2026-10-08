@@ -23,6 +23,8 @@ export type User = { email: string; passwordHash: string; createdAt: string; las
 /** One email the automation scheduled: the Close email id, and why it was sent. */
 export type Automation = {
   id: string; repId: string; leadId: string; company: string; to: string; subject: string;
+  /** The text as written (10/8): saved with the row so the page doesn't ask Close for every body. */
+  body?: string | null;
   kind: "bump"; label: string; reason: string;
   scheduledFor: string | null; createdAt: string;
   status: "scheduled" | "sent" | "skipped" | "stopped" | "failed";
