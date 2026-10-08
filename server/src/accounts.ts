@@ -1,3 +1,4 @@
+import { background } from "./background.js";
 import { classifyOpen, lineCardAttachments, RFQ_IN_TAG, RFQ_TAG, taskTitle, type Deps } from "./assistant.js";
 import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
@@ -335,17 +336,33 @@ const oneLine = (s: string, n = 140) => { const t = s.replace(/\s+/g, " ").trim(
 
 export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number } = {}): Promise<Board> {
   const key = `${d.rep.closeUserId}:${opts.days ?? 45}`;
-  const hit = boardCache.get(key);
-  // A caller that only needs a recent picture (the Emails tab) can take a board up to `maxAgeMs` old instead of waiting a minute for a rebuild.
-  if (hit && !opts.fresh && Date.now() - hit.at < (opts.maxAgeMs ?? 60_000)) return hit.value;
-  // A cold server (the hosted copy starts cold on every page load, 10/6) serves the last snapshot any copy wrote,
-  // up to a few minutes old, instead of rebuilding from Close and timing out; the long-running local server keeps
-  // the snapshot fresh every few minutes.
-  if (!hit && !opts.fresh) {
-    const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
-    if (snap && Date.now() - snap.at < BOARD_SNAPSHOT_MS) { boardCache.set(key, { at: snap.at, value: snap.value }); return snap.value; }
+  if (!opts.fresh) {
+    let hit = boardCache.get(key);
+    // A cold server (the hosted copy starts cold on most page loads) takes the last snapshot any copy wrote.
+    if (!hit) {
+      const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
+      if (snap) { hit = { at: snap.at, value: snap.value }; boardCache.set(key, hit); }
+    }
+    if (hit) {
+      const age = Date.now() - hit.at;
+      // Fresh enough for this caller: use it.
+      if (age < (opts.maxAgeMs ?? 60_000)) return hit.value;
+      // Older but still recent (10/8: pages waited ~20s on every rebuild): show it now, rebuild behind it.
+      if (age < BOARD_STALE_OK_MS) {
+        if (!boardRebuilding.has(key)) {
+          boardRebuilding.add(key);
+          background(buildBoard(d, opts, key).finally(() => boardRebuilding.delete(key)), "board refresh");
+        }
+        return hit.value;
+      }
+    }
   }
+  return buildBoard(d, opts, key);
+}
+const BOARD_STALE_OK_MS = 30 * 60_000;
+const boardRebuilding = new Set<string>();
 
+async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number }, key: string): Promise<Board> {
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
   const ours = (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();

@@ -1,3 +1,4 @@
+import { background } from "./background.js";
 import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, type Account } from "./accounts.js";
 import { reachedToday } from "./dialviews.js";
 import type { Deps } from "./assistant.js";
@@ -523,15 +524,22 @@ async function mapLimit<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): 
   return out;
 }
 
+const syncing = new Set<string>();
 export async function automationsView(d: Deps) {
-  await syncAutomations(d).catch((err) => console.error("sync automations:", (err as Error).message));
+  // The checks against Close run behind the page, not in front of it (10/8: this list took 61 seconds and every
+  // page waited on it). The catch-up job runs the same checks on its own schedule.
+  if (!syncing.has(d.rep.closeUserId)) {
+    syncing.add(d.rep.closeUserId);
+    background(syncAutomations(d).finally(() => syncing.delete(d.rep.closeUserId)), "sync automations");
+  }
   const now = d.now?.() ?? new Date();
   const rows = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 7 * DAY).toISOString());
   // Bodies (10/8): from the row when it was saved with one; otherwise from Close, a few at a time and remembered,
   // so 200+ rows don't trip Close's rate limit (that 429 made the page fail).
   const withBody = await mapLimit(rows, 4, async (a) => {
     if (a.body !== undefined && a.body !== null) return a;
-    if (a.status === "failed") return { ...a, body: null };
+    // Only the ones still to go need their text on the page; sent and skipped rows open in Close.
+    if (a.status !== "scheduled") return { ...a, body: null };
     const hit = bodyCache.get(a.id);
     if (hit !== undefined) return { ...a, body: hit };
     const e = await d.close.email(a.id).catch(() => null);
