@@ -38,7 +38,7 @@ export const openaiModelFor = (claudeModel: string | undefined) => (/sonnet|haik
 export class OpenAIDown extends ClaudeError {}
 
 /** The same structured call, answered by OpenAI. */
-export async function openaiStructured<S extends z.ZodType>(schema: S, system: string, messages: Anthropic.Beta.BetaMessageParam[], effort: "low" | "medium" | "high", task: string, model = config.openaiModel, role: "backup" | "primary" = "backup"): Promise<{ data: z.infer<S>; usage: Usage }> {
+export async function openaiStructured<S extends z.ZodType>(schema: S, system: string, messages: Anthropic.Beta.BetaMessageParam[], effort: "low" | "medium" | "high", task: string, model = config.openaiModel, role: "backup" | "primary" = "backup", attempt = 1): Promise<{ data: z.infer<S>; usage: Usage }> {
   const who = role === "backup" ? "Claude is down and the OpenAI backup" : "OpenAI";
   const started = Date.now();
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -68,8 +68,31 @@ export async function openaiStructured<S extends z.ZodType>(schema: S, system: s
   if (choice?.finish_reason === "length") throw new ClaudeError(`${role === "backup" ? "The OpenAI backup's" : "OpenAI's"} answer was cut off. Try again.`);
   let parsed: unknown;
   try { parsed = JSON.parse(choice?.message?.content ?? ""); } catch { parsed = undefined; }
-  const ok = schema.safeParse(parsed);
-  if (!ok.success) throw new ClaudeError(`${role === "backup" ? "The OpenAI backup" : "OpenAI"} returned an answer the app couldn't read. Try again.`);
+  // A field left out where the schema wants null is the usual slip (strict mode is off): fill those in first.
+  let ok = schema.safeParse(parsed);
+  if (!ok.success && parsed && typeof parsed === "object") {
+    const fixed = structuredClone(parsed) as Record<string, unknown>;
+    for (const issue of ok.error.issues) {
+      if (issue.code === "invalid_type" && (issue as { input?: unknown }).input === undefined && issue.path.length) {
+        let o: Record<string, unknown> = fixed;
+        for (const k of issue.path.slice(0, -1)) o = (o?.[k as string] ?? {}) as Record<string, unknown>;
+        if (o && typeof o === "object") o[issue.path[issue.path.length - 1] as string] = null;
+      }
+    }
+    ok = schema.safeParse(fixed);
+  }
+  if (!ok.success) {
+    const problems = ok.error.issues.slice(0, 6).map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    console.warn(`[openai ${model}] answer didn't match (attempt ${attempt}): ${problems}`);
+    // One more try with the mistakes pointed out (10/8: a brief failed with "couldn't read" on the first slip).
+    if (attempt < 2) {
+      const retry: Anthropic.Beta.BetaMessageParam[] = [...messages,
+        { role: "assistant", content: choice?.message?.content ?? "" },
+        { role: "user", content: `That answer didn't match the required JSON format: ${problems}. Answer again with every field filled in, valid JSON only.` }];
+      return openaiStructured(schema, system, retry, effort, task, model, role, attempt + 1);
+    }
+    throw new ClaudeError(`${role === "backup" ? "The OpenAI backup" : "OpenAI"} returned an answer the app couldn't read. Try again.`);
+  }
   return { data: ok.data, usage: { input_tokens: body.usage?.prompt_tokens ?? 0, output_tokens: body.usage?.completion_tokens ?? 0 } as Usage };
 }
 
