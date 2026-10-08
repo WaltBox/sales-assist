@@ -85,9 +85,9 @@ async function load(fresh = false) {
   const board = await apiRetry(`/api/accounts${fresh ? "?fresh=1" : ""}`).catch((e) => { if (e.message !== "Signed out") state.error = e.message; return null; });
   Object.assign(state, { me, board });
   render();
-  const results = await Promise.allSettled([apiRetry("/api/stats/today"), apiRetry("/api/automations"), apiRetry(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`)]);
-  const [today, autos, rfqLine] = results.map((r) => (r.status === "fulfilled" ? r.value : null));
-  Object.assign(state, { today, autos, rfqLine });
+  // Each one draws the moment it arrives (10/8): the RFQ count no longer waits on the automatic emails list.
+  const piece = (path, key) => apiRetry(path).then((v) => { state[key] = v; render(); return v; });
+  const results = await Promise.allSettled([piece("/api/stats/today", "today"), piece("/api/automations", "autos"), piece(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`, "rfqLine")]);
   const failed = results.find((r) => r.status === "rejected");
   if (failed && failed.reason.message !== "Signed out" && !state.error) state.error = failed.reason.message;
   render();
@@ -382,6 +382,12 @@ function rfqGrowth(t) {
   const pct = t.lastWeek ? Math.round(((t.thisWeek - t.lastWeek) / t.lastWeek) * 100) : null;
   const hero = el("div", { class: "rfqhero" }, [
     el("div", {}, [el("span", { class: "big mono", text: t.total }), el("span", { class: "sub2", text: ` RFQ${t.total === 1 ? "" : "s"} since your first line card, ${dayLabel(days[0].day)}` })]),
+    // New customers (10/8): companies sending their first RFQ ever.
+    t.firstToday != null ? el("div", { class: "rfqweeks rfqnew" }, [
+      el("span", {}, [el("b", { class: "mono", text: t.firstToday }), ` new today`]),
+      el("span", { class: "sub2" }, [el("b", { class: "mono", text: t.firstThisWeek }), " new this week"]),
+      el("span", { class: "sub2", text: `${t.companies} companies have sent one` }),
+    ]) : null,
     el("div", { class: "rfqweeks" }, [
       el("span", {}, [el("b", { class: "mono", text: t.thisWeek }), " this week"]),
       el("span", { class: "sub2" }, [el("b", { class: "mono", text: t.lastWeek }), " the week before"]),
@@ -864,28 +870,38 @@ function rfqsPage() {
   const all = (state.board && state.board.accounts) || [];
   // Waiting on you first, then Westgate, then the buyer, then done; oldest first inside each.
   const order = { you: 0, westgate: 1, buyer: 2, nobody: 3 };
-  const rows = all.filter((a) => a.rfq).sort((a, b) => order[a.rfq.status.waitingOn] - order[b.rfq.status.waitingOn] || a.rfq.status.since.localeCompare(b.rfq.status.since));
+  const sorted = all.filter((a) => a.rfq).sort((a, b) => order[a.rfq.status.waitingOn] - order[b.rfq.status.waitingOn] || a.rfq.status.since.localeCompare(b.rfq.status.since));
+  // First-time RFQs (10/8): from the RFQ line, the companies whose first one came in today or this week.
+  const t = state.rfqLine, days = (t && t.days) || [];
+  const firstIn = (n) => new Set(days.slice(-n).flatMap((dd) => dd.accounts.filter((x) => x.first).map((x) => x.leadId)));
+  const newToday = firstIn(1), newWeek = firstIn(7);
+  const pick = state.rfqFilter || "all";
+  const rows = pick === "today" ? sorted.filter((a) => newToday.has(a.leadId)) : pick === "week" ? sorted.filter((a) => newWeek.has(a.leadId)) : sorted;
+  const chip = (k, label, n) => el("button", { class: `cardk${pick === k ? " on" : ""}`, onclick: () => { state.rfqFilter = k; render(); } }, [el("b", { class: "mono", text: n }), label]);
+  const filters = el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("all", "All RFQs", sorted.length), chip("today", "First RFQ today", newToday.size), chip("week", "First RFQ this week", newWeek.size)]);
+  const fresh = new Set([...newWeek]);
   return el("section", {}, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "RFQs" })]),
     rfqGrowth(state.rfqLine),
+    filters,
     el("p", { class: "muted small3", text: "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
-      : !rows.length ? el("p", { class: "empty", text: "No RFQs yet." })
+      : !rows.length ? el("p", { class: "empty", text: pick === "today" ? "No first-time RFQs today yet." : pick === "week" ? "No first-time RFQs this week yet." : "No RFQs yet." })
         : el("div", { class: "grid rfqgrid" }, [
           el("div", { class: "gr gh" }, ["Account", "RFQ", "Status", "Waiting on", ""].map((h) => el("span", { class: "label", text: h }))),
-          ...rows.flatMap(rfqRow),
+          ...rows.flatMap((a) => rfqRow(a, fresh.has(a.leadId))),
         ]),
   ]);
 }
 
-function rfqRow(a) {
+function rfqRow(a, isNew = false) {
   const r = a.rfq, st = r.status;
   const [who, wcls] = WAITING[st.waitingOn];
   const edit = state.rfqEdit[a.leadId];
   const row = el("div", { class: "gr" }, [
     el("div", { class: "acct" }, [
       el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
-      el("span", { class: "sub2", text: a.contact.name || a.contact.email || "" }),
+      el("span", { class: "sub2" }, [isNew ? el("span", { class: "newbadge", text: "First RFQ" }) : null, a.contact.name || a.contact.email || ""]),
     ]),
     el("div", { class: "rfqin" }, [
       el("span", { class: "mono", text: shortDate(r.at) }),

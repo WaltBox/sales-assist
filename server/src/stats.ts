@@ -417,14 +417,39 @@ const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b
 const timelineCache = new Map<string, { at: number; value: RfqTimeline }>();
 export type RfqTimeline = {
   since: string; total: number; thisWeek: number; lastWeek: number;
-  days: Array<{ day: string; count: number; total: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked" }> }>;
+  /** Companies sending their first RFQ ever (10/8: "new RFQ today, unique suppliers"). */
+  firstToday: number; firstThisWeek: number; companies: number;
+  days: Array<{ day: string; count: number; total: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean }> }>;
+  /** When this was worked out (the page shows a saved copy at once and refreshes it behind). */
+  at?: string;
 };
 
+/**
+ * The RFQ line, fast (10/8: "taking an annoying amount of time to load"): the last one worked out is kept in the
+ * store, so a page load (even on a cold hosted server) gets it at once; if it's over 5 minutes old a fresh one is
+ * built behind it for the next load.
+ */
 export async function rfqTimeline(d: Deps, opts: { fresh?: boolean } = {}): Promise<RfqTimeline> {
-  const tz = d.rep.timeZone;
   const key = d.rep.closeUserId;
   const hit = timelineCache.get(key);
   if (hit && !opts.fresh && Date.now() - hit.at < 5 * 60_000) return hit.value;
+  if (!opts.fresh) {
+    const saved = hit?.value ?? (await store.cacheGet<RfqTimeline>(`rfqline:${key}`).catch(() => null));
+    if (saved && "firstToday" in saved) {
+      if (!rebuilding.has(key)) {
+        rebuilding.add(key);
+        void buildRfqTimeline(d).catch((e) => console.error("rfq line:", (e as Error).message)).finally(() => rebuilding.delete(key));
+      }
+      return saved;
+    }
+  }
+  return buildRfqTimeline(d);
+}
+const rebuilding = new Set<string>();
+
+async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
+  const tz = d.rep.timeZone;
+  const key = d.rep.closeUserId;
   const { isBounce, rfqInBody } = await import("./accounts.js");
   const now = d.now?.() ?? new Date();
   const window = new Date(now.getTime() - 120 * DAY_MS).toISOString();
@@ -470,10 +495,16 @@ export async function rfqTimeline(d: Deps, opts: { fresh?: boolean } = {}): Prom
     if (l) statusOf.set(id, l.status_label ?? "");
   }));
   for (const [k, f] of found) if (/^test lead\b/i.test(names.get(f.leadId) ?? "") || /vendor/i.test(statusOf.get(f.leadId) ?? "")) found.delete(k);
+  // Each company's first RFQ day: that's a new customer coming in, the number Walt wants to see grow.
+  const firstDay = new Map<string, string>();
+  for (const f of found.values()) {
+    const day = localDay(tz, new Date(f.at)).day;
+    if (!firstDay.has(f.leadId) || day < firstDay.get(f.leadId)!) firstDay.set(f.leadId, day);
+  }
   const byDay = new Map<string, RfqTimeline["days"][number]["accounts"]>();
   for (const f of found.values()) {
     const day = localDay(tz, new Date(f.at)).day;
-    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how }]);
+    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day }]);
   }
   // Every day from the first line card to today, so the line shows the quiet days too.
   const days: RfqTimeline["days"] = [];
@@ -487,7 +518,14 @@ export async function rfqTimeline(d: Deps, opts: { fresh?: boolean } = {}): Prom
     if (day >= today) break;
   }
   const sumLast = (from: number, to: number) => days.slice(Math.max(0, days.length - to), days.length - from).reduce((s, x) => s + x.count, 0);
-  const value: RfqTimeline = { since: start, total, thisWeek: sumLast(0, 7), lastWeek: sumLast(7, 14), days };
+  const weekAgo = days[Math.max(0, days.length - 7)].day;
+  const firsts = [...firstDay.values()];
+  const value: RfqTimeline = {
+    since: start, total, thisWeek: sumLast(0, 7), lastWeek: sumLast(7, 14), days,
+    firstToday: firsts.filter((x) => x === today).length, firstThisWeek: firsts.filter((x) => x >= weekAgo).length, companies: firstDay.size,
+    at: new Date().toISOString(),
+  };
   timelineCache.set(key, { at: Date.now(), value });
+  await store.cacheSet(`rfqline:${key}`, value, 3 * DAY_MS).catch(() => undefined);
   return value;
 }

@@ -502,3 +502,7 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .heatlbl .fresht { margin-left: auto; font-size: 12px; }
 .memenow .good { color: var(--green); }
 .memenow .bad { color: var(--red); }
+
+/* first-time RFQs (10/8) */
+.rfqnew b { color: var(--green); }
+.newbadge { display: inline-block; margin-right: 6px; padding: 0 6px; font-family: var(--label); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #fff; background: var(--green); }
