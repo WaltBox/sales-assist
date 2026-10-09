@@ -166,9 +166,10 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
       : req.outcome === "voicemail" ? flip(2)
         : req.outcome === "reached_buyer" ? businessDaysAt(tz, now, 2, 10, 0) // placeholder until the transcript sets it
           : flip(2); // got a name: the buyer in 2 business days, other half of the day (never two days in a row, 9/30)
-  // Every tap saves a callback right away; for calls with a conversation the
-  // background build rewrites it from the transcript (who, when, why).
-  const tapTask = true;
+  // A callback only when you reached the buyer (Walt 10/9: "only create tasks when I was told to call back or reached
+  // the buyer"). The transcript rewrites it (who, when, why). Voicemail, no answer and a name get no task from the
+  // tap; if someone on the call said to call back, the transcript sets that one with their time.
+  const tapTask = req.outcome === "reached_buyer";
   // One task per lead per call: a callback already scheduled for later wins.
   const later = ctx.tasks.find((t) => !t.is_complete && t.id !== change?.task_id && new Date(t.date).getTime() > now.getTime() + 3600 * 1000);
   // The callback that was due (the one you're making now, or overdue): it moves to the new time instead of a second
@@ -190,6 +191,14 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
 
   let savedTaskAt: string | null = null;
   let taskId: string | null = null;
+  // The callback you were making when this call didn't reach anyone: it's done (you called), not left overdue.
+  if (!tapTask && dueNow && !change) {
+    await d.close.completeTask(dueNow.id).then(() => saved.push(`marked done: ${taskTitle(dueNow.text)}`)).catch(() => undefined);
+  }
+  // Changed a mistaken "Reached buyer" to a result with no callback: the task that tap made goes.
+  if (!tapTask && change?.task_id) {
+    await d.close.completeTask(change.task_id).then(() => saved.push("removed the callback the first tap made")).catch(() => undefined);
+  }
   if (!skip && tapTask && later) {
     saved.push(`open callback already on ${formatLocal(new Date(later.date), tz, true)}, kept it`);
   } else if (!skip && tapTask) {
@@ -530,6 +539,12 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
       : Promise.resolve(null);
     const extras = await step(it, "write email", () => afterCallExtras(d, it.leadId, { ...req, callback, benchmark: core.benchmark, benchmark_agreed: core.benchmark_agreed, next_one: core.next_one_promised, referral: core.referral }));
     const p: Proposals = { ...core.proposals, email: extras.email };
+    // No task unless you reached the buyer or someone told you to call back (Walt 10/9).
+    const toldInNote = /\b(call (?:me |him |her |them )?back|callback|try (?:him|her|them|again|back)|call (?:him|her|them) (?:at|on|tomorrow|monday|tuesday|wednesday|thursday|friday|next))/i.test(it.note ?? "");
+    if (it.outcome !== "reached_buyer" && !core.told_to_call_back && !core.asked_specific_callback && !toldInNote && p.tasks.length) {
+      plog(it, `dropped ${p.tasks.length} task(s): not reached, nobody said to call back`);
+      p.tasks = [];
+    }
     const lc = await lineCardP;
     it.lineCard = lc?.state ?? null;
     if (lc) {
@@ -587,6 +602,18 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     it.callWith = p.contacts[0]?.name ?? null;
     it.warnings = [...it.warnings, ...core.warnings, ...extras.warnings];
     it.state = countItems(p) > 0 || it.summary || it.smartTask?.changed ? "ready" : "done";
+    // Re-read for the callback only, and there was no callback yet (10/9: taps other than Reached buyer make none):
+    // the one the rep's words asked for is saved now.
+    if (prev && !it.taskId && p.tasks.length) {
+      const t = p.tasks[0];
+      const r = await applyProposals(d, it.leadId, { note: null, contacts: [], contact_updates: [], tasks: [t], email: null, status: null }, (it.rating as never) ?? null).catch(() => null);
+      const made = r?.results.find((x) => x.kind === "task" && x.ok);
+      if (made?.id) {
+        it.taskId = made.id;
+        it.savedTaskAt = t.due_at;
+        it.smartTask = { title: t.title, when: formatLocal(new Date(t.due_at), tz, true), why: t.why, changed: true };
+      }
+    }
     if (prev) {
       Object.assign(it, prev);
       // A "no transcript" card that a note rebuilt: it's done now, not failed.

@@ -489,7 +489,7 @@ export async function afterCall(d: Deps, leadId: string, req: { call_id?: string
       details: missed === "voicemail" ? "Left a voicemail on the last try." : "No answer on the last try.",
     }];
     return {
-      outcome: missed, rfq_promised: false, no_current_rfq: false, benchmark_agreed: false, asked_specific_callback: false, soft_yes: false, next_one_promised: false, referral_gatekeeper: "", referral_recipient: "", referral_said: "", referral_back_when: "", referral: null, benchmark: false, outcome_label: missed === "voicemail" ? "Voicemail" : "No answer", summary: missed === "voicemail" ? "Left a voicemail." : "No answer.",
+      outcome: missed, rfq_promised: false, no_current_rfq: false, benchmark_agreed: false, asked_specific_callback: false, told_to_call_back: false, soft_yes: false, next_one_promised: false, referral_gatekeeper: "", referral_recipient: "", referral_said: "", referral_back_when: "", referral: null, benchmark: false, outcome_label: missed === "voicemail" ? "Voicemail" : "No answer", summary: missed === "voicemail" ? "Left a voicemail." : "No answer.",
       proposals: { note: null, contacts: [], contact_updates: [], tasks, email: null, status: null }, coaching: null, warnings, callId: f.callId, extras: false,
     };
   }

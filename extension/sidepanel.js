@@ -1665,9 +1665,10 @@ function renderOnCall() {
 
 const OUTCOMES = [
   ["reached_buyer", "Reached buyer", "callback set from the call"],
-  ["got_name", "Got a name", "callback in 2 days, other half of day"],
-  ["voicemail", "Voicemail", "callback in 2 days, other half of day"],
-  ["no_answer", "No answer", "callback · other half of day"],
+  // Tasks only when you reached the buyer or someone said to call back (Walt 10/9).
+  ["got_name", "Got a name", "no task unless they said to call back"],
+  ["voicemail", "Voicemail", "no task"],
+  ["no_answer", "No answer", "no task"],
   // Call results too (Walt 10/7): the objection he hears most, and the no.
   ["pms_buy", "PMs / subs buy", "reached · they order through PMs or subs"],
   ["shot_down", "Shot down", "not interested · no more calls or emails"],

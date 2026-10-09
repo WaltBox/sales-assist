@@ -225,36 +225,35 @@ test("one tap saves status and callback now; the transcript then fills in the re
   assert.match(note.note, /Verify email spelling: Rob Roy rob@roddaelectric\.com|Renee/);
 });
 
-test("no answer: one tap saves a callback at a different time of day, nothing queued", async () => {
+test("no answer (10/9): no callback task, nothing queued", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const close = new FakeClose();
   const morning = new Date("2026-09-24T16:00:00Z"); // 9 AM Pacific
   const d = { ...deps(close), now: () => morning, rep: { ...rep, closeUserId: "user_noAnswerTest" } };
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_x1", rating: "B" });
   assert.equal(r.queued, null);
-  const task = close.writes[0].body as { dueAt: string };
-  assert.equal(task.dueAt, "2026-09-25T14:00:00-07:00");
+  assert.equal(r.task, null);
+  assert.ok(!close.writes.some((w) => w.op === "task"), "no task: you didn't reach anyone and nobody said to call back");
 });
 
-test("voicemail callback names the person whose number was dialed", async () => {
+test("voicemail (10/9): no new task, and the callback you were making is marked done", async () => {
   const { quickOutcome } = await import("../src/queue.js");
-  const lead = roddaLead({ contacts: [...roddaLead().contacts, { id: "cont_corbin", name: "Corbin", title: "Purchasing Manager", emails: [], phones: [{ phone: "+18172401173", type: "office" }] }] });
-  const vm = roddaCall({ id: "acti_vmCorbin", disposition: "vm-left", contact_id: "cont_mainoffice", remote_phone: "+18172401173" });
-  const close = new FakeClose({ lead, calls: [vm] });
-  const d = { ...deps(close), rep: { ...rep, closeUserId: "user_vmTest" } };
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_vmCorbin", disposition: "vm-left", duration: 0 })] });
+  close.openTasks = async () => [{ id: "task_due_vm", text: "Call back Corbin", date: "2026-09-24T08:30:00-07:00", is_complete: false }];
+  const d = { ...deps(close), now: () => new Date("2026-09-24T16:00:00Z"), rep: { ...rep, closeUserId: "user_vmTest" } };
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_vmCorbin", rating: "B" });
-  const task = close.writes.find((w) => w.op === "task")!.body as { text: string };
-  assert.match(task.text, /^\[B\] Call back Corbin at Rodda Electric, Inc\. — \(817\) 240-1173\. Left a voicemail \d+\/\d+\./);
-  assert.match(r.saved[0], /^Call back Corbin \w{3}, \w{3} \d+, (9:30 AM|2:00 PM)/); // the other half of the day
+  assert.ok(!close.writes.some((w) => w.op === "task" || w.op === "task-update"));
+  assert.equal((close.writes.find((w) => w.op === "task-complete")!.body as { taskId: string }).taskId, "task_due_vm");
+  assert.match(r.saved.join(" "), /marked done: Call back Corbin/);
 });
 
 test("a name typed in 'Anything to add' is used when the number isn't known", async () => {
   const { quickOutcome } = await import("../src/queue.js");
-  const close = new FakeClose({ calls: [roddaCall({ id: "acti_na1", disposition: "no-answer", remote_phone: "+15105550000" })] });
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_na1", duration: 0, remote_phone: "+15105550000" })] });
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_noteName" } };
-  await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_na1", note: "Corbin", rating: "B" });
+  await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_na1", note: "Corbin", rating: "B" });
   const task = close.writes.find((w) => w.op === "task")!.body as { text: string };
-  assert.match(task.text, /^\[B\] Call back Corbin at .* — \(510\) 555-0000\. No answer \d+\/\d+\. Corbin\./);
+  assert.match(task.text, /^\[B\] Follow up with Corbin at .* — \(510\) 555-0000\. Talked on \d+\/\d+\. Corbin\./);
 });
 
 test("reschedule: quick picks include later today, and changing the time updates the Close task", async () => {
@@ -264,17 +263,16 @@ test("reschedule: quick picks include later today, and changing the time updates
   assert.deepEqual(opts.map((o) => o.label), ["Later today, 10:30 AM", "Tomorrow 10:00 AM", "Tomorrow 2:00 PM"]);
   const late = rescheduleOptions("America/Los_Angeles", new Date("2026-09-24T23:00:00Z")); // 4 PM: no "later today"
   assert.equal(late[0].label, "Tomorrow 10:00 AM");
-
-  const close = new FakeClose({ calls: [roddaCall({ id: "acti_rs1", disposition: "no-answer" })] });
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_rs1", duration: 0 })] });
   const d = { ...deps(close), now: () => morning, rep: { ...rep, closeUserId: "user_reschedule" } };
-  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_rs1", rating: "B" });
+  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_rs1", rating: "B" });
   assert.ok(r.task);
   const moved = await rescheduleTask(d, DEMO_LEAD_ID, r.task!.id, opts[0].due_at);
   assert.equal(moved.due_at, "2026-09-24T10:30:00-07:00");
   const upd = close.writes.find((w) => w.op === "task-update")!.body as { date: string; text?: string };
   assert.equal(upd.date, "2026-09-24T10:30:00-07:00");
   assert.equal(upd.text, undefined, "only the date changes; the task text in Close stays");
-  assert.match((await close.task(r.task!.id)).text, /^\[B\] Call back purchasing at Rodda Electric/);
+  assert.match((await close.task(r.task!.id)).text, /^\[B\] Follow up with \S+ at Rodda Electric/);
   await assert.rejects(rescheduleTask({ ...d, rep: { ...rep, closeUserId: "someone_else" } }, DEMO_LEAD_ID, r.task!.id, opts[0].due_at), /Can't find/);
 });
 
@@ -318,40 +316,36 @@ test("line card drafts carry the PDF from the Close template; a failure is flagg
 
 // ---------- §6 follow-up timing ----------
 
-test("§6: voicemail and got a name → 2 business days, the other half of the day (9/29, 9/30); later open callback is kept", async () => {
+test("§6 (10/9): voicemail, got a name and no answer make no task; reached buyer does, and a later open callback is kept", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
-  const vmClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6vm", disposition: "vm-left" })] });
-  await quickOutcome({ ...deps(vmClose), now: () => thu, rep: { ...rep, closeUserId: "user_s6a" } }, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_s6vm", rating: "B" });
-  assert.equal((vmClose.writes[0].body as { dueAt: string }).dueAt, "2026-09-28T14:00:00-07:00"); // Thu 9 AM + 2 business days = Mon, afternoon
-
-  const nameClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6nm" })] });
-  await quickOutcome({ ...deps(nameClose), now: () => thu, rep: { ...rep, closeUserId: "user_s6b" } }, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_s6nm", rating: "B" });
-  assert.equal((nameClose.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-28T14:00:00-07:00"); // Thu → Mon, never Fri right after
-  // An afternoon call flips to the next morning.
-  const pmClose = new FakeClose({ calls: [roddaCall({ id: "acti_s6pm", disposition: "vm-left" })] });
-  await quickOutcome({ ...deps(pmClose), now: () => new Date("2026-09-24T22:00:00Z"), rep: { ...rep, closeUserId: "user_s6d" } }, DEMO_LEAD_ID, { outcome: "voicemail", call_id: "acti_s6pm", rating: "B" });
-  assert.equal((pmClose.writes[0].body as { dueAt: string }).dueAt, "2026-09-28T09:30:00-07:00");
-
-  const busy = new FakeClose({ calls: [roddaCall({ id: "acti_s6k", disposition: "no-answer" })] });
+  for (const [i, outcome] of (["voicemail", "got_name", "no_answer"] as const).entries()) {
+    const c = new FakeClose({ calls: [roddaCall({ id: `acti_s6_${i}`, disposition: "vm-left", duration: 0 })] });
+    await quickOutcome({ ...deps(c), now: () => thu, rep: { ...rep, closeUserId: `user_s6_${i}` } }, DEMO_LEAD_ID, { outcome, call_id: `acti_s6_${i}`, rating: "B" });
+    assert.ok(!c.writes.some((w) => w.op === "task"), `${outcome}: no task`);
+  }
+  const reached = new FakeClose({ calls: [roddaCall({ id: "acti_s6r", duration: 0 })] });
+  await quickOutcome({ ...deps(reached), now: () => thu, rep: { ...rep, closeUserId: "user_s6r" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_s6r", rating: "B" });
+  assert.equal((reached.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-28T10:00:00-07:00");
+  const busy = new FakeClose({ calls: [roddaCall({ id: "acti_s6k", duration: 0 })] });
   busy.openTasks = async () => [{ id: "task_later", text: "Call back", date: "2026-09-29T10:00:00-07:00", is_complete: false }];
-  const r = await quickOutcome({ ...deps(busy), now: () => thu, rep: { ...rep, closeUserId: "user_s6c" } }, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_s6k", rating: "B" });
-  assert.equal(busy.writes.length, 0);
-  assert.match(r.saved[0], /open callback already on/);
+  const r = await quickOutcome({ ...deps(busy), now: () => thu, rep: { ...rep, closeUserId: "user_s6c" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_s6k", rating: "B" });
+  assert.ok(!busy.writes.some((w) => w.op === "task"));
+  assert.match(r.saved.join(" "), /open callback already on/);
 });
 
-test("a tap moves the callback that was due to the new time, keeping its wording (9/30)", async () => {
+test("reaching the buyer moves the callback that was due to the new time, keeping its wording (9/30)", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
-  const close = new FakeClose({ calls: [roddaCall({ id: "acti_due", disposition: "no-answer", duration: 0 })] });
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_due", duration: 0 })] });
   close.openTasks = async () => [{ id: "task_due", text: "Confirm J. Waite received line card", date: "2026-09-24T08:30:00-07:00", is_complete: false }];
-  await quickOutcome({ ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_due" } }, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_due", rating: "B" });
+  await quickOutcome({ ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_due" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_due", rating: "B" });
   assert.equal(close.writes.filter((w) => w.op === "task").length, 0, "no second callback");
   const moved = close.writes.find((w) => w.op === "task-update")!.body as { taskId: string; date: string; text?: string };
-  assert.deepEqual([moved.taskId, moved.date, moved.text], ["task_due", "2026-09-25T14:00:00-07:00", undefined]);
+  assert.deepEqual([moved.taskId, moved.date, moved.text], ["task_due", "2026-09-28T10:00:00-07:00", undefined]);
 });
 
-test("changing a mistaken tap moves the callback it made instead of adding a second one (9/29)", async () => {
+test("changing a mistaken tap to no answer takes off the callback the first tap made (9/29, 10/9)", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_chg", disposition: "no-answer", duration: 0 })] });
@@ -363,9 +357,7 @@ test("changing a mistaken tap moves the callback it made instead of adding a sec
   const fixed = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B",
     change: { task_id: first.task!.id, queued_id: first.queued, prev_status: first.prevStatus, set_status: first.setStatus } });
   assert.equal(close.writes.filter((w) => w.op === "task").length, 1, "no second callback");
-  const moved = close.writes.filter((w) => w.op === "task-update").pop()!.body as { taskId: string; date: string };
-  assert.equal(moved.taskId, first.task!.id);
-  assert.equal(moved.date, "2026-09-25T14:00:00-07:00", "no answer in the morning: tomorrow afternoon");
+  assert.equal((close.writes.filter((w) => w.op === "task-complete").pop()!.body as { taskId: string }).taskId, first.task!.id);
   assert.equal(fixed.label, "No answer");
 });
 
@@ -434,19 +426,17 @@ test("a call that reveals a full name updates the existing contact instead of ad
   assert.equal(upd.emails, undefined, "existing emails untouched");
 });
 
-test("tapping 'No answer' on a call Close marks answered still reads the transcript and rewrites the callback", async () => {
+test("tapping No answer on a call Close marks answered still reads the transcript; a callback only if someone said to call back (10/9)", async () => {
   const { quickOutcome, listQueue } = await import("../src/queue.js");
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_naTalked" })] }); // disposition answered, has transcript
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_naTalked" } };
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_naTalked", rating: "B" });
   assert.ok(r.queued, "queued because Close says the call was answered");
   for (let i = 0; i < 50 && (await listQueue(d))[0]?.state === "building"; i++) await new Promise((res) => setTimeout(res, 50));
-  assert.ok(close.writes.some((w) => w.op === "task-update"), "callback rewritten from the transcript");
-  const [item] = await listQueue(d);
-  assert.equal(item.smartTask?.changed, true, JSON.stringify({ smart: item.smartTask, saved: r.saved }));
+  assert.ok(!close.writes.some((w) => w.op === "task" || w.op === "task-update"), "nobody said to call back: no task");
 });
 
-test("no transcript from Close: a note typed after the tap sets the callback, without re-saving anything else", async () => {
+test("no transcript from Close: a note that says to call back sets the callback", async () => {
   const { quickOutcome, listQueue, noteItem } = await import("../src/queue.js");
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_noTx", recording_transcript: null, duration: 22 })] });
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_noTx" } };
@@ -455,15 +445,11 @@ test("no transcript from Close: a note typed after the tap sets the callback, wi
   const wait = async () => { for (let i = 0; i < 50 && (await listQueue(d))[0]?.state === "building"; i++) await new Promise((res) => setTimeout(res, 50)); };
   await wait();
   assert.equal((await listQueue(d))[0].noTranscript, true);
-  assert.ok(!close.writes.some((w) => w.op === "task-update"), "no transcript, no note: placeholder stays");
-  const savedOps = close.writes.length;
-
+  assert.ok(!close.writes.some((w) => w.op === "task" || w.op === "task-update"), "no transcript, no note: no task");
   await noteItem(d, r.queued!, "call back in about an hour");
   await new Promise((res) => setTimeout(res, 20));
   await wait();
-  assert.ok(close.writes.some((w) => w.op === "task-update"), "the note set the callback");
-  const extra = close.writes.slice(savedOps).map((w) => w.op);
-  assert.deepEqual(extra, ["task-update"], "nothing else re-saved");
+  assert.ok(close.writes.some((w) => w.op === "task"), "the note said to call back, so there's a callback");
 });
 
 test("'he leaves at 2:30': a callback scheduled after the cutoff is pulled back before it", async () => {

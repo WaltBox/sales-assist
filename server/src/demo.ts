@@ -274,7 +274,7 @@ function canned(schema: unknown, task: string): unknown {
   }
   if (schema === AfterCallSchema) {
     return {
-      outcome: "conversation", outcome_label: "Reached purchasing", rfq_promised: true, no_current_rfq: false, benchmark_agreed: false, asked_specific_callback: false, soft_yes: false, next_one_promised: false, referral_gatekeeper: "", referral_recipient: "", referral_said: "", referral_back_when: "",
+      outcome: "conversation", outcome_label: "Reached purchasing", rfq_promised: true, no_current_rfq: false, benchmark_agreed: false, asked_specific_callback: false, told_to_call_back: false, soft_yes: false, next_one_promised: false, referral_gatekeeper: "", referral_recipient: "", referral_said: "", referral_back_when: "",
       summary: "Rob Roy is on leave until Oct 12. Renee is covering purchasing, reads his inbox, and gets orders daily. She said \"we always need that stuff\" and will look at tomorrow's orders for us.",
       proposals: demoProposals(),
     };
