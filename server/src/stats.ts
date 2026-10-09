@@ -1,3 +1,4 @@
+import { background } from "./background.js";
 import { classifyOpen, RFQ_ASKED_TAG, RFQ_IN_TAG, RFQ_TAG, type Deps } from "./assistant.js";
 import type { CloseCall } from "./close.js";
 import { transcriptText } from "./close.js";
@@ -435,10 +436,14 @@ export async function rfqTimeline(d: Deps, opts: { fresh?: boolean } = {}): Prom
   if (hit && !opts.fresh && Date.now() - hit.at < 5 * 60_000) return hit.value;
   if (!opts.fresh) {
     const saved = hit?.value ?? (await store.cacheGet<RfqTimeline>(`rfqline:${key}`).catch(() => null));
-    if (saved && "firstToday" in saved) {
+    // A saved count is shown only if it's from today and under 10 minutes old (10/9: the page said 1 new RFQ when
+    // there were 3, from a stale copy). Otherwise it's worked out now.
+    const age = saved?.at ? Date.now() - new Date(saved.at).getTime() : Infinity;
+    const sameDay = saved?.at ? localDay(d.rep.timeZone, new Date(saved.at)).day === localDay(d.rep.timeZone, new Date()).day : false;
+    if (saved && "firstToday" in saved && sameDay && age < 10 * 60_000) {
       if (!rebuilding.has(key)) {
         rebuilding.add(key);
-        void buildRfqTimeline(d).catch((e) => console.error("rfq line:", (e as Error).message)).finally(() => rebuilding.delete(key));
+        background(buildRfqTimeline(d).finally(() => rebuilding.delete(key)), "rfq line");
       }
       return saved;
     }

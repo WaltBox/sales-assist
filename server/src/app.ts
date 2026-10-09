@@ -505,6 +505,7 @@ export function createApp(appDeps: AppDeps) {
 
   // Catch-up: anything still waiting gets built (Vercel Cron, or every 15s on a local server).
   let lastAutoCheck = 0;
+  const rfqLineAt = new Map<string, number>();
   const catchUp = async () => {
     // Automatic emails: plan the morning's bumps, and re-check the ones about to go (every few minutes).
     if (Date.now() - lastAutoCheck > 3 * 60_000) {
@@ -523,6 +524,11 @@ export function createApp(appDeps: AppDeps) {
         // Anyone reached today (Close's calls) gets the mark, then the Close call lists follow the board minus them (10/6).
         if (!config.demo) await accountsBoard(d).then((b) => markReachedFromCalls(d, b.accounts)).catch((err) => console.error(`reached ${rep.email}:`, (err as Error).message));
         if (!config.demo) await syncDialViews(d).catch((err) => console.error(`dial views ${rep.email}:`, (err as Error).message));
+        // The RFQ count stays current on its own (10/9), so the page never waits on a 17-second rebuild.
+        if (!config.demo && Date.now() - (rfqLineAt.get(rep.email) ?? 0) > 8 * 60_000) {
+          rfqLineAt.set(rep.email, Date.now());
+          await rfqTimeline(d, { fresh: true }).catch((err) => console.error(`rfq line ${rep.email}:`, (err as Error).message));
+        }
         // Today's call list gets its briefs written ahead of the first call (10/6).
         if (!config.demo) await accountsBoard(d).then((b) => warmLeads(d, callListIds(b.accounts))).catch((err) => console.error(`warm ${rep.email}:`, (err as Error).message));
       }
