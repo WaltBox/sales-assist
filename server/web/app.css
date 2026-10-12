@@ -410,6 +410,7 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .rfqtile { display: flex; flex-direction: column; min-width: 104px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 8px; background: var(--white); font-size: 13px; }
 .rfqtile b { font-size: 26px; line-height: 1.1; color: var(--green); }
 .rfqtile .sub2 { font-size: 12px; }
+.rfqtile-total b { color: var(--muted); }
 .rfqall { margin: 6px 0 0; font-size: 13px; }
 .rfqweeks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; }
 .rfqplot { position: relative; }

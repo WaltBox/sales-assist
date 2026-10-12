@@ -184,7 +184,8 @@ function topBar() {
       class: state.page === k ? "on" : "", onclick: () => go(k),
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
-      k === "rfqs" && state.board ? el("span", { class: "navc mono", text: state.board.accounts.filter((a) => a.rfq).length }) : null,
+      // Companies that have sent an RFQ, the same 32 as the RFQs page (10/12), not just the ones on the board.
+      k === "rfqs" && (state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
       k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth && a.warmth.bucket === "hot").length }) : null,
     ]))),
     el("div", { class: "who" }, [
@@ -392,9 +393,11 @@ function rfqGrowth(t) {
       tile(t.firstToday, "new today"),
       tile(t.newThisWeek, "new this week", `${t.newLastWeek ?? 0} last week`),
       tile(t.newThisMonth, "new this month", `${t.newLastMonth ?? 0} last month`),
+      // Total RFQs stays on the page, but small (10/12): repeats from the same company aren't new companies.
+      el("div", { class: "rfqtile rfqtile-total" }, [el("b", { class: "mono", text: t.total }), el("span", { text: "RFQs in all" }), el("span", { class: "sub2", text: "counting repeats" })]),
     ]),
   ]);
-  const allRfqs = el("p", { class: "sub2 rfqall", text: `${t.total} RFQ${t.total === 1 ? "" : "s"} in all since ${dayLabel(days[0].day)}, counting repeats from the same company.` });
+  const allRfqs = el("p", { class: "sub2 rfqall", text: `Since your first line card, ${dayLabel(days[0].day)}. A company counts once, on the day of its first RFQ.` });
   if (days.length < 2) return el("section", { class: "rfqline" }, [el("h2", { class: "rfqh", text: "New companies" }), hero, allRfqs]);
 
   // Plot: companies brought in so far, one step up per new company.
