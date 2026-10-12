@@ -116,10 +116,12 @@ export function tierFromPurchasing(p: Purchasing | null | undefined): "steady" |
 
 /** The one question worth asking next on this account, by value: volume, then the vendor list, then how to get on it. */
 export function askNext(p: Purchasing | null | undefined): { field: Field; question: string } | null {
+  // Easiest first (Walt 10/11): how RFQs go out is a natural question to a stranger; "how many a week" isn't.
   const order: Array<[Field, string]> = [
-    ["rfq_volume", "Roughly how many RFQs do you send out a week?"],
-    ["vendor_policy", "Do you bid those out, or do you have a set list of vendors?"],
+    ["vendor_policy", "How do you usually send RFQs out: to a set vendor list, or whoever you ask?"],
     ["how_to_get_on_list", "What's the easiest way for us to get on that list?"],
+    ["rfq_volume", "How often do those come up?"],
+    ["rfq_timing", "Any particular day they usually go out?"],
     ["buying_mode", "Is that mostly project by project, or day-to-day stock?"],
     ["incumbent", "Who are you getting pipe and fittings from now?"],
     ["works_through", "Does the buying go through you, or a GC or project manager?"],

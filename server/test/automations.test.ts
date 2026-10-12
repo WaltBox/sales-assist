@@ -452,3 +452,22 @@ test("never two in a day (10/8): two morning plans at once write one wave, and a
   assert.ok(view.upcoming.some((x) => x.id === c.id), "the first one still goes");
   delete process.env.PLAN_MORNING;
 });
+
+test("any reply cools the automatic emails for 1.5 weeks (10/12: \"nothing yet\" replies)", async () => {
+  const { repliedRecently, REPLY_COOLDOWN_DAYS } = await import("../src/automations.js");
+  const now = new Date("2026-10-12T16:00:00Z");
+  assert.equal(REPLY_COOLDOWN_DAYS, 10.5);
+  assert.equal(repliedRecently({ lastReplyAt: "2026-10-12T11:37:00Z" }, now), true, "\"Nothing yet\" this morning");
+  assert.equal(repliedRecently({ lastReplyAt: "2026-10-03T16:00:00Z" }, now), true, "9 days ago: still cooling");
+  assert.equal(repliedRecently({ lastReplyAt: "2026-10-01T03:00:00Z" }, now), false, "11+ days ago: back in");
+  assert.equal(repliedRecently({ lastReplyAt: null }, now), false);
+});
+
+test("the bump fits the day it goes out (10/12: \"hope your week's going good\" on a Monday)", async () => {
+  const { fitDay } = await import("../src/followup.js");
+  const line = "Hope your week's going good! I'd love the chance to work with you guys. Got any RFQs I can take a crack at?";
+  assert.match(fitDay(line, 1), /^Hope your week's off to a good start!/, "Monday");
+  assert.match(fitDay(line, 3), /^Hope your week's going good!/, "Wednesday");
+  assert.match(fitDay(line, 5), /^Happy Friday!/, "Friday");
+  assert.doesNotMatch(fitDay("Happy Friday! Before the weekend hits, got any RFQs I can take a look at?", 2), /Friday|weekend/, "never a Friday line midweek");
+});

@@ -216,3 +216,24 @@ test("the call screen's Say text is saved once per call, and kept out of what th
   assert.deepEqual(await saveSaid(d, "lead_x", "Hi, this is Walt with Westgate Supply. We supply A325 bolts.", "acti_1"), { saved: false });
   assert.deepEqual(writes, ["Opener: Hi, this is Walt with Westgate Supply. We supply A325 bolts."]);
 });
+
+test("no email address yet means no email draft (Encore 10/12: a blank To on a 'got a name' call)", async () => {
+  const { sanitizeProposals } = await import("../src/assistant.js");
+  const ctx = { contacts: [], facts: { vendor: false, prospectTz: "America/Chicago", competitorHits: [] }, statuses: [], tasks: [] } as never;
+  const warnings: string[] = [];
+  const p = sanitizeProposals({ note: null, contacts: [{ name: "Ethan Pilche", title: "Purchasing", email: null, phone: null, verify_email: false }], contact_updates: [], tasks: [], status: null,
+    email: { to: [{ name: "Ethan Pilche", email: "" }], subject: "Westgate Supply – line card", body: "Hi Ethan,\n\nHere's our line card.\n\nWalt Boxwell", attach_line_card: true, address_as_heard: null } } as never, ctx, warnings, new Date("2026-10-12T16:14:00Z"));
+  assert.equal(p.email, null);
+  assert.ok(warnings.some((w) => /No email address/.test(w)));
+  assert.equal(p.contacts[0].name, "Ethan Pilche", "the contact is still made");
+});
+
+test("an email address counts only if it was said on the call or is in Close (Samuel EPC 10/12: a made-up john.weber@)", async () => {
+  const { saidOnCall } = await import("../src/assistant.js");
+  const samuel = "Main Office: Samuel, this is Lee. ... Main Office: Okay, I'm going to transfer you to John Weber. If he doesn't pick up, he does have a voicemail.";
+  assert.equal(saidOnCall("john.weber@samuelepc.com", samuel), false, "a name and a website aren't an address");
+  const bcs = "Walt Boxwell: What's a good email for me to send that back to you? Main Office: Matt. Mattcsfab.com.";
+  assert.equal(saidOnCall("matt@bcsfab.com", bcs), false, "heard as 'csfab': not the same domain, so not counted as heard");
+  assert.equal(saidOnCall("matt@csfab.com", bcs), true, "what was actually said");
+  assert.equal(saidOnCall("cainchavez.mcc@gmail.com", "It's cain, that's C-A-I-N. Chavez, mcc gmail."), true);
+});

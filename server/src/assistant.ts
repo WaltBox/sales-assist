@@ -1,5 +1,6 @@
 import type { CloseCall, CloseClient, LeadEmail } from "./close.js";
 import { structured } from "./claude.js";
+import { buildHistory, type History } from "./history.js";
 import { background } from "./background.js";
 import { store } from "./store.js";
 import { config } from "./config.js";
@@ -61,6 +62,8 @@ export type BriefResponse = {
     lastCall: LastCall | null;
     /** Whether to call now, per the lead's own plan in Close (its open tasks) and any reply since. */
     callPlan: CallPlan;
+    /** Everything so far: counts, the conversations and what was said, emails both ways (10/11). */
+    history: History;
   };
   brief: Brief;
   flags: string[];
@@ -89,7 +92,7 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
   ]);
   const opens = emails ? await emailOpens(d, leadId, emails).catch(() => null) : null;
   const lastCall = lastCallOf(ctx, d.rep.closeUserId);
-  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone) };
+  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone), history: buildHistory(ctx, emails ?? []) };
   // The header (local time, status, call count) is always fresh; the brief itself is cached.
   const hit = opts.refresh ? null : await briefCache.get(key).catch(() => null);
   if (hit) return { header, brief: enforceBriefRules(hit, ctx), flags: briefFlags(ctx), cached: true };
@@ -105,7 +108,8 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
       // The opener you already used on this lead stays (Walt 10/1): same words every call, no rewrite pass for it.
       // PVF first (Walt 10/5): that only holds once the opener you used was the PVF one. An older opener that never
       // named pipe, valves or fittings gives way to the PVF pitch.
-      const said = ctx.saidOpener && namesPvf(ctx.saidOpener) ? ctx.saidOpener : null;
+      // 10/11: only once it's in today's style, "we specialize in PVF, and for [their niche]…".
+      const said = ctx.saidOpener && /specializ/i.test(ctx.saidOpener) && namesPvf(ctx.saidOpener) ? ctx.saidOpener : null;
       if (said) data = { ...data, opener: said };
       // Buyers respond to hyper-specifics: an opener that names none of the products gets one rewrite.
       // So does one that's hard to say out loud ("...flat washers crews use for renovation and façade work", 9/28).
@@ -257,7 +261,7 @@ export function callPlanOf(ctx: LeadContext, emails: LeadEmail[], lastCall: Last
   return { action: "call", reason: null, due: null };
 }
 
-function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan"> {
+function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan" | "history"> {
   const f = ctx.facts;
   return {
     company: f.company, website: f.website, status: f.statusLabel, location: f.location, phone: f.phoneDisplay, phoneE164: f.phone,
@@ -574,7 +578,7 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
     if (data.email && req.referral) data.email = { ...data.email, subject: INTRO_SUBJECT, attach_line_card: true };
     let email = enforceBenchmark(data.email, !!req.benchmark, warnings, { agreed: req.benchmark_agreed, nextOne: req.next_one, transcript });
     if (email && !req.referral) email = enforceGotIt(email);
-    const p = sanitizeProposals({ note: null, contacts: [], contact_updates: [], tasks: [], status: null, email }, f.ctx, warnings, now(d));
+    const p = sanitizeProposals({ note: null, contacts: [], contact_updates: [], tasks: [], status: null, email }, f.ctx, warnings, now(d), transcript);
     if (!p.email) return { email: null, coaching, warnings };
     failures = await checkEmail(d, f.ctx, p.email, transcript, context, req.referral);
     if (!failures.length) {
@@ -711,7 +715,15 @@ export function unguessedName(name: string, email: string | null | undefined): s
   return kept.join(" ") || words[0];
 }
 
-export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: string[], at: Date): Proposals {
+/** An email address said on the call: its mailbox and its company part both appear in the transcript ("matt… csfab dot com"). */
+export function saidOnCall(email: string, transcript: string | null | undefined): boolean {
+  if (!transcript) return false;
+  const flat = transcript.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const [local, domain] = [email.split("@")[0], (email.split("@")[1] ?? "").split(".")[0]].map((x) => (x ?? "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+  return local.length >= 2 && domain.length >= 2 && flat.includes(local) && flat.includes(domain);
+}
+
+export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: string[], at: Date, transcript?: string | null): Proposals {
   const out: Proposals = structuredClone(p);
 
   // Status: must exist in Close and never move a lead backwards.
@@ -807,6 +819,14 @@ export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: stri
         ?? out.contacts.find((c) => (c.email ?? "").toLowerCase() === r.email.toLowerCase());
       r.name = known && !/main|office|front desk|reception/i.test(known.name) ? known.name : unguessedName(r.name, r.email);
     }
+    // No address for them yet (Encore 10/12: a name from the front desk, no email): no draft, a blank To is useless.
+    out.email.to = out.email.to.filter((r) => (r.email ?? "").trim());
+    if (!out.email.to.length) {
+      warnings.push("No email address for them yet, so no email draft. Get it on the next call.");
+      out.email = null;
+    }
+  }
+  if (out.email) {
     const bad = out.email.to.filter((r) => !EMAIL_RE.test(r.email));
     if (bad.length) warnings.push(`Check these email addresses before approving: ${bad.map((b) => b.email || b.name).join(", ")}.`);
     out.email.body = formatParagraphs(stripDashes(out.email.body));
@@ -820,9 +840,16 @@ export function sanitizeProposals(p: Proposals, ctx: LeadContext, warnings: stri
     const words = out.email.body.split(/\s+/).filter(Boolean).length;
     if (words > 220) warnings.push(`The email draft is ${words} words; the playbook caps it at 220. Trim before sending.`);
     const known = new Set(ctx.contacts.flatMap((c) => c.emails.map((x) => x.email.toLowerCase())));
-    if (!out.email.address_as_heard && out.email.to.some((r) => !known.has(r.email.toLowerCase()))) {
-      out.email.address_as_heard = "not on file in Close";
+    // An address that's not in Close and wasn't said on the call is a guess (Samuel EPC 10/12: "john.weber@samuelepc.com"
+    // made up from his name and their website). No draft to a guess; get the real one on the next call.
+    const proposed = new Set(out.contacts.flatMap((c) => (c.email && c.verify_email ? [c.email.toLowerCase()] : [])));
+    const guessed = out.email.to.filter((r) => !known.has(r.email.toLowerCase()) && !proposed.has(r.email.toLowerCase()) && !saidOnCall(r.email, transcript));
+    if (!out.email.address_as_heard && guessed.length) {
+      warnings.push(`No email address was given for ${guessed.map((r) => r.name || r.email).join(", ")}, so no email draft (${guessed.map((r) => r.email).join(", ")} would be a guess). Get it on the next call.`);
+      out.email = null;
     }
+  }
+  if (out.email) {
     if (ctx.facts.vendor) {
       warnings.push("Dropped the sales email: this lead is a vendor.");
       out.email = null;

@@ -31,12 +31,13 @@ test("the tier from the answers: volume first, a locked-in vendor beats everythi
   assert.equal(tierFor({ ...emptyProfile(null), type: "plant", repSaid: "projects", heard: { rfq_volume: a("20/week") } }), "steady");
 });
 
-test("ask next: volume, then the vendor list, then how to get on it (only when there is one)", () => {
-  assert.equal(askNext(null)!.field, "rfq_volume");
-  assert.equal(askNext({ rfq_volume: a("5/week") })!.field, "vendor_policy");
-  assert.equal(askNext({ rfq_volume: a("5/week"), vendor_policy: a("open bid") })!.field, "buying_mode");
-  assert.equal(askNext({ rfq_volume: a("5/week"), vendor_policy: a("preferred list") })!.field, "how_to_get_on_list");
-  const full: Purchasing = { rfq_volume: a("5"), vendor_policy: a("open bid"), buying_mode: a("both"), incumbent: a("x"), works_through: a("GC"), buyer_count: a("2") };
+test("ask next, easiest first (10/11): how RFQs go out, how to get on the list (only when there is one), how often, when", () => {
+  assert.equal(askNext(null)!.field, "vendor_policy");
+  assert.equal(askNext({ vendor_policy: a("preferred list") })!.field, "how_to_get_on_list");
+  assert.equal(askNext({ vendor_policy: a("open bid") })!.field, "rfq_volume");
+  assert.equal(askNext({ vendor_policy: a("open bid"), rfq_volume: a("5/week") })!.field, "rfq_timing");
+  assert.equal(askNext({ vendor_policy: a("open bid"), rfq_volume: a("5/week"), rfq_timing: a("Mondays") })!.field, "buying_mode");
+  const full: Purchasing = { rfq_volume: a("5"), rfq_timing: a("Mondays"), vendor_policy: a("open bid"), buying_mode: a("both"), incumbent: a("x"), works_through: a("GC"), buyer_count: a("2") };
   assert.equal(askNext(full), null);
 });
 

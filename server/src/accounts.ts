@@ -186,6 +186,8 @@ export type Account = {
   touchedToday: string | null;
   /** A real touch on the last business day: it rests today (never two days in a row). */
   touchedLastDay?: string | null;
+  /** Their latest reply of any kind (not a bounce): the automatic emails cool down 1.5 weeks after it. */
+  lastReplyAt?: string | null;
   /** The lead's status in Close. */
   status: string | null;
   /** Callbacks set before they replied or confirmed: marked done in Close in the background. */
@@ -332,6 +334,8 @@ const CONFIRMED = /\b(confirm(ed|s)?|said|says)\b[^.]{0,40}\b(got|received|has|h
 export const isBounce = (e: { subject?: string | null; sender?: string | null }) =>
   /delivery status notification|undeliverable|undelivered mail|mail delivery (failed|subsystem)|returned mail|message blocked|delivery (has )?failed/i.test(e.subject ?? "")
   || /mailer-daemon|postmaster/i.test(e.sender ?? "");
+/** Their own words in an email: above the quoted thread and the signature. */
+const ownWords = (body: string) => (body ?? "").split(/\n\s*On .{5,140}wrote:|\n-{2,}\s*Original Message|\nFrom: .+\n(Sent|Date): |\n_{5,}/i)[0].split(/\n\s*(Regards|Thanks|Thank you|Best|Cheers),?\s*\n/i)[0].replace(/\s+/g, " ").trim().slice(0, 400);
 const oneLine = (s: string, n = 140) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number } = {}): Promise<Board> {
@@ -403,6 +407,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   await Promise.all([...new Set(all.filter((e) => bounceIds.has(e.id)).map((e) => e.lead_id))].map(async (leadId) => {
     for (const e of await d.close.leadEmails(leadId).catch(() => [])) if (bounceIds.has(e.id)) bounceBodies.set(e.id, e.body_text ?? "");
   }));
+  const cooling = (await store.getSetting<Record<string, { until: string | null; why: string | null }>>(d.rep.closeUserId, "cooling").catch(() => null)) ?? {};
   const built = ids.map((leadId) => buildAccount({
     d, now, card: latestCard.get(leadId)!, lead: leadCache.get(leadId)?.lead ?? null, ours,
     emails: all.filter((e) => e.lead_id === leadId && e.status !== "draft"),
@@ -416,6 +421,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     gap: arms[leadId] ?? null,
     profile: profiles[leadId] ?? null,
     bounceBodies,
+    cooling: cooling[leadId] ?? null,
   }));
   // Not Interested, Bad Fit, Disqualified in Close (by hand, or Shot down in the side panel): off the board and
   // out of the automatic emails (Walt 10/5: West Coast Air Conditioning was Not Interested and still in line for
@@ -447,6 +453,8 @@ export function buildAccount(x: {
   autos?: Automation[];
   rescueDraft?: string | null;
   autoOn?: boolean;
+  /** A cooling period set by hand or by the reply cool-down (automations' "cooling" setting). */
+  cooling?: { until: string | null; why: string | null } | null;
   /** Business days between this account's automatic emails (its cadence in the follow-up test), if it has one. */
   gap?: number | null;
   /** What their website says they do (RFQ potential), if it's been read. */
@@ -491,6 +499,8 @@ export function buildAccount(x: {
   // "Got it, thanks." isn't a reply that needs an answer (Walt 10/7, Matt McDaniel): the sequence doesn't stop for it.
   // (The bulk list carries no text; the body of a reply with no file was fetched into bounceBodies above.)
   const lastIn = replies.filter((e) => !isAck({ ...e, body_text: e.body_text ?? x.bounceBodies?.get(e.id) ?? null })).map(at).pop() ?? null;
+  // Any reply at all, "got it" and "nothing yet" included: it starts the 1.5-week cool-down (Walt 10/12).
+  const lastReplyAt = replies.map(at).pop() ?? null;
   const rfqPromised = x.notes.some((n) => n.note.includes(RFQ_TAG));
   // An RFQ is an email from them with a real file; a quote is ours back with a file or "quote"/"pricing" in the subject.
   const windowStart = new Date(new Date(t0).getTime() - 3 * DAY).toISOString();
@@ -609,6 +619,7 @@ export function buildAccount(x: {
     events,
     touchedToday,
     touchedLastDay,
+    lastReplyAt,
     status: lead?.status_label ?? null,
     touches: tally,
     staleTaskIds: staleTasks.map((t) => t.id).filter((id): id is string => !!id),
@@ -619,7 +630,11 @@ export function buildAccount(x: {
     website: lead?.url || siteFromEmail(toAddr),
     potential: potentialFor(x.profile),
   } as Omit<Account, "section" | "warmth">;
-  return { ...acct, warmth: warmthFor(acct, now), section: sectionOf(acct) };
+  // The heat map's inputs (10/12): their replies in their own words, opens by distinct day, cooling off.
+  const replyNotes = replies.filter((r) => !theirFiles(r.attachments).length).map((r) => ({ at: at(r), text: ownWords(x.bounceBodies?.get(r.id) ?? r.body_text ?? r.subject ?? "") }));
+  const openDays = [...new Set(person.map((o) => o.opened_at.slice(0, 10)))].sort().reverse();
+  const warmth = warmthFor({ ...acct, replyNotes, openDays, lastOutAt: lastOut, lastOpenAt: person.map((o) => o.opened_at).pop() ?? null, cooling: x.cooling ?? null }, now);
+  return { ...acct, warmth, section: sectionOf(acct) };
 }
 
 /** What to do next, with the calls in mind: a scheduled check-in means hold, not bump. */

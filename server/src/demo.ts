@@ -201,7 +201,7 @@ export function demoProposals(): Proposals {
         details: null,
       },
       {
-        due_at: isoWithOffset(nextWeekdayAt(tz, new Date("2026-10-12T19:00:00Z"), 9, 30), tz),
+        due_at: isoWithOffset(nextWeekdayAt(tz, new Date("2026-10-12T19:00:00Z"), 13, 30), tz), // afternoon: never the same slot as a "tomorrow 9:30" callback
         title: "Intro call with Rob Roy when he's back",
         ask_for: "Rob Roy (Purchasing Manager)",
         phone: null,

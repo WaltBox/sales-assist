@@ -406,6 +406,11 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .rfqh { font-family: var(--label); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; }
 .rfqhero { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 8px; }
 .rfqhero .big { font-size: 44px; font-weight: 700; line-height: 1; color: var(--ink); }
+.rfqtiles { display: flex; gap: 10px; flex-wrap: wrap; }
+.rfqtile { display: flex; flex-direction: column; min-width: 104px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 8px; background: var(--white); font-size: 13px; }
+.rfqtile b { font-size: 26px; line-height: 1.1; color: var(--green); }
+.rfqtile .sub2 { font-size: 12px; }
+.rfqall { margin: 6px 0 0; font-size: 13px; }
 .rfqweeks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; }
 .rfqplot { position: relative; }
 .rfqsvg { width: 100%; height: auto; display: block; overflow: visible; }
@@ -506,3 +511,16 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 /* first-time RFQs (10/8) */
 .rfqnew b { color: var(--green); }
 .newbadge { display: inline-block; margin-right: 6px; padding: 0 6px; font-family: var(--label); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #fff; background: var(--green); }
+/* The drawer's company name copies on click (10/12) */
+button.dr-co { background: none; border: 0; padding: 0; text-align: left; cursor: copy; display: block; }
+button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-family: var(--label); font-size: 12px; letter-spacing: .1em; color: var(--green); vertical-align: middle; }
+.dr-open { display: inline-block; font-size: 13px; }
+/* Paused accounts on the heat map (10/12) */
+.heatband.paused .heatlbl .linkbtn { margin-left: auto; }
+.pausedlist { display: flex; flex-direction: column; border-top: 1px solid var(--ink-line); }
+.prow { display: grid; grid-template-columns: minmax(180px, 1.3fr) 150px 90px 3fr; gap: 12px; align-items: baseline; padding: 6px 4px; border-bottom: 1px solid var(--ink-line); font-size: 13.5px; }
+.prow .co { font-weight: 600; color: var(--ink); text-decoration: none; }
+.prow .pk { font-family: var(--label); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; }
+.prow.p-out .pk { color: var(--red); }
+.prow .pw { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { .prow { grid-template-columns: 1fr 1fr; } .prow .pw { grid-column: 1 / -1; white-space: normal; } }

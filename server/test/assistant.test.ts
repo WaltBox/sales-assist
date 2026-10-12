@@ -316,10 +316,14 @@ test("line card drafts carry the PDF from the Close template; a failure is flagg
 
 // ---------- §6 follow-up timing ----------
 
-test("§6 (10/9): voicemail, got a name and no answer make no task; reached buyer does, and a later open callback is kept", async () => {
+test("§6 (10/9, 10/12): voicemail and no answer make no task; got a name and reached buyer do, and a later open callback is kept", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
-  for (const [i, outcome] of (["voicemail", "got_name", "no_answer"] as const).entries()) {
+  // Got a name (10/12): a callback to call that person, two business days out, the other half of the day.
+  const named = new FakeClose({ calls: [roddaCall({ id: "acti_s6_name", duration: 0 })] });
+  await quickOutcome({ ...deps(named), now: () => thu, rep: { ...rep, closeUserId: "user_s6_name" } }, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_s6_name", rating: "B" });
+  assert.equal(named.writes.filter((w) => w.op === "task").length, 1, "got a name: a task");
+  for (const [i, outcome] of (["voicemail", "no_answer"] as const).entries()) {
     const c = new FakeClose({ calls: [roddaCall({ id: `acti_s6_${i}`, disposition: "vm-left", duration: 0 })] });
     await quickOutcome({ ...deps(c), now: () => thu, rep: { ...rep, closeUserId: `user_s6_${i}` } }, DEMO_LEAD_ID, { outcome, call_id: `acti_s6_${i}`, rating: "B" });
     assert.ok(!c.writes.some((w) => w.op === "task"), `${outcome}: no task`);
@@ -533,9 +537,9 @@ test("PVF first (Walt 10/5): the card leads with PVF, flags a company that likel
   const b2 = (await leadBrief(deps(before), DEMO_LEAD_ID, { refresh: true })).brief;
   assert.match(b2.opener, /pipe, valves, fittings and flanges/);
   assert.equal(b2.alt_opener, oldWords);
-  // Once the PVF opener has been said, it stays: same words every call.
+  // Once the opener in today's style ("we specialize in PVF, and for…", 10/11) has been said, it stays: same words every call.
   const after = new FakeClose({ calls: [roddaCall()] });
-  const pvfWords = "Hi Renee, this is Walt with Westgate Supply. We supply pipe, valves and fittings for your plant work.";
+  const pvfWords = "Hi Renee, this is Walt with Westgate Supply. We specialize in pipe, valves and fittings, and for electrical work like yours we also supply threaded rod and anchors.";
   after.notes = (async () => [{ id: "acti_said_new", note: `[Said on the call] ${pvfWords}`, date_created: "2026-10-05T21:30:00Z" }]) as never;
   assert.equal((await leadBrief(deps(after), DEMO_LEAD_ID, { refresh: true })).brief.opener, pvfWords);
 

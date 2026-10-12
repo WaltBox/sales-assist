@@ -420,7 +420,10 @@ export type RfqTimeline = {
   since: string; total: number; thisWeek: number; lastWeek: number;
   /** Companies sending their first RFQ ever (10/8: "new RFQ today, unique suppliers"). */
   firstToday: number; firstThisWeek: number; companies: number;
-  days: Array<{ day: string; count: number; total: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean }> }>;
+  /** New companies (their first RFQ ever) by calendar week (Mon–Sun) and month (Walt 10/12: "how many new companies
+   *  have I brought in this week, this month"). */
+  newThisWeek: number; newLastWeek: number; newThisMonth: number; newLastMonth: number;
+  days: Array<{ day: string; count: number; total: number; newCompanies: number; companiesTotal: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean }> }>;
   /** When this was worked out (the page shows a saved copy at once and refreshes it behind). */
   at?: string;
 };
@@ -513,21 +516,31 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   }
   // Every day from the first line card to today, so the line shows the quiet days too.
   const days: RfqTimeline["days"] = [];
-  let total = 0;
+  let total = 0, companiesTotal = 0;
   const today = localDay(tz, now).day;
   for (let t = new Date(`${localDay(tz, new Date(start)).day}T12:00:00Z`); ; t = new Date(t.getTime() + DAY_MS)) {
     const day = t.toISOString().slice(0, 10);
     const accounts = byDay.get(day) ?? [];
+    const newCompanies = new Set(accounts.filter((a) => a.first).map((a) => a.leadId)).size;
     total += accounts.length;
-    days.push({ day, count: accounts.length, total, accounts });
+    companiesTotal += newCompanies;
+    days.push({ day, count: accounts.length, total, newCompanies, companiesTotal, accounts });
     if (day >= today) break;
   }
+  // Calendar weeks (Monday start) and months, in the rep's time.
+  const dow = (dd: string) => (new Date(`${dd}T12:00:00Z`).getUTCDay() + 6) % 7; // 0 = Monday
+  const shift = (dd: string, n: number) => new Date(Date.parse(`${dd}T12:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+  const monday = shift(today, -dow(today)), lastMonday = shift(monday, -7);
+  const month = today.slice(0, 7);
+  const lastMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 15)).toISOString().slice(0, 7);
   const sumLast = (from: number, to: number) => days.slice(Math.max(0, days.length - to), days.length - from).reduce((s, x) => s + x.count, 0);
   const weekAgo = days[Math.max(0, days.length - 7)].day;
   const firsts = [...firstDay.values()];
   const value: RfqTimeline = {
     since: start, total, thisWeek: sumLast(0, 7), lastWeek: sumLast(7, 14), days,
     firstToday: firsts.filter((x) => x === today).length, firstThisWeek: firsts.filter((x) => x >= weekAgo).length, companies: firstDay.size,
+    newThisWeek: firsts.filter((x) => x >= monday).length, newLastWeek: firsts.filter((x) => x >= lastMonday && x < monday).length,
+    newThisMonth: firsts.filter((x) => x.startsWith(month)).length, newLastMonth: firsts.filter((x) => x.startsWith(lastMonth)).length,
     at: new Date().toISOString(),
   };
   timelineCache.set(key, { at: Date.now(), value });

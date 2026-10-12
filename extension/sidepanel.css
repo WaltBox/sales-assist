@@ -611,3 +611,25 @@ textarea { resize: vertical; min-height: 70px; }
 
 /* cool off period (10/7) */
 .coolpick { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* The cut-down call card (10/11): ask for, history, how they buy, line card in one line, more tucked away */
+.askfor { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.askfor .label { margin-right: 2px; }
+.hist { border: 1px solid var(--ink-line); background: var(--white); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.hist .hcounts { font-size: 13.5px; color: var(--muted); }
+.hlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.hlist li { display: grid; grid-template-columns: 52px 16px 1fr; gap: 6px; font-size: 13.5px; line-height: 1.4; }
+.hlist .hwhen { color: var(--muted); font-size: 12px; padding-top: 1px; }
+.hlist .h-reply .htext { font-weight: 600; color: var(--green); }
+.hlist .h-call .htext { color: var(--ink); }
+.hlist .h-no_answer .htext, .hlist .h-voicemail .htext { color: var(--muted); }
+.hist .link { align-self: flex-start; }
+.buyingline { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 14px; }
+.lcrowmin { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--ink-line); background: var(--white); padding: 8px 12px; font-size: 13.5px; }
+.lcrowmin .good { color: var(--green); font-weight: 600; }
+.lcrowmin .btn { margin-left: auto; }
+details.more { border-top: 1px solid var(--ink-line); padding-top: 8px; }
+details.more > summary { cursor: pointer; font-family: var(--label); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); list-style: none; }
+details.more > summary::before { content: "▸ "; }
+details.more[open] > summary::before { content: "▾ "; }
+details.more[open] > * + * { margin-top: 12px; }
+.oncall details.hometown > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }

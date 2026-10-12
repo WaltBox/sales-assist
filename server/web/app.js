@@ -379,26 +379,28 @@ const dayLabel = (day, opts = { month: "short", day: "numeric" }) => new Date(`$
 function rfqGrowth(t) {
   if (!t) return el("section", { class: "rfqline" }, [el("p", { class: "loading", text: "Counting RFQs…" })]);
   const days = t.days;
-  const pct = t.lastWeek ? Math.round(((t.thisWeek - t.lastWeek) / t.lastWeek) * 100) : null;
+  // Unique companies (Walt 10/12): "how many new companies have I brought in this week, this month". A company counts
+  // once, on the day of its first RFQ; repeat RFQs from a company already in don't move these numbers.
+  const companiesNow = days.length ? days[days.length - 1].companiesTotal ?? t.companies : t.companies;
+  const tile = (n, label, vs) => el("div", { class: "rfqtile" }, [
+    el("b", { class: "mono", text: n ?? 0 }), el("span", { text: label }),
+    vs != null ? el("span", { class: "sub2", text: vs }) : null,
+  ]);
   const hero = el("div", { class: "rfqhero" }, [
-    el("div", {}, [el("span", { class: "big mono", text: t.total }), el("span", { class: "sub2", text: ` RFQ${t.total === 1 ? "" : "s"} since your first line card, ${dayLabel(days[0].day)}` })]),
-    // New customers (10/8): companies sending their first RFQ ever.
-    t.firstToday != null ? el("div", { class: "rfqweeks rfqnew" }, [
-      el("span", {}, [el("b", { class: "mono", text: t.firstToday }), ` new today`]),
-      el("span", { class: "sub2" }, [el("b", { class: "mono", text: t.firstThisWeek }), " new this week"]),
-      el("span", { class: "sub2", text: `${t.companies} companies have sent one` }),
-    ]) : null,
-    el("div", { class: "rfqweeks" }, [
-      el("span", {}, [el("b", { class: "mono", text: t.thisWeek }), " this week"]),
-      el("span", { class: "sub2" }, [el("b", { class: "mono", text: t.lastWeek }), " the week before"]),
-      el("span", { class: "sub2", text: pct == null ? (t.thisWeek ? "first week with RFQs" : "") : `${pct >= 0 ? "+" : ""}${pct}% week over week` }),
+    el("div", {}, [el("span", { class: "big mono", text: companiesNow }), el("span", { class: "sub2", text: ` compan${companiesNow === 1 ? "y has" : "ies have"} sent you an RFQ` })]),
+    el("div", { class: "rfqtiles" }, [
+      tile(t.firstToday, "new today"),
+      tile(t.newThisWeek, "new this week", `${t.newLastWeek ?? 0} last week`),
+      tile(t.newThisMonth, "new this month", `${t.newLastMonth ?? 0} last month`),
     ]),
   ]);
-  if (days.length < 2) return el("section", { class: "rfqline" }, [hero]);
+  const allRfqs = el("p", { class: "sub2 rfqall", text: `${t.total} RFQ${t.total === 1 ? "" : "s"} in all since ${dayLabel(days[0].day)}, counting repeats from the same company.` });
+  if (days.length < 2) return el("section", { class: "rfqline" }, [el("h2", { class: "rfqh", text: "New companies" }), hero, allRfqs]);
 
-  // Plot: fixed coordinate space, scaled to the container.
+  // Plot: companies brought in so far, one step up per new company.
   const W = 760, H = 240, L = 34, R = 28, T = 14, B = 30;
-  const max = Math.max(4, Math.ceil(t.total * 1.15));
+  const val = (dd) => dd.companiesTotal ?? 0;
+  const max = Math.max(4, Math.ceil(companiesNow * 1.15));
   const step = max <= 12 ? 2 : max <= 30 ? 5 : max <= 60 ? 10 : max <= 150 ? 25 : 50;
   const x = (i) => L + (i * (W - L - R)) / (days.length - 1);
   const y = (v) => T + (H - T - B) * (1 - v / max);
@@ -407,40 +409,45 @@ function rfqGrowth(t) {
     kids.push(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "base" : "grid" }));
     kids.push(svg("text", { x: L - 8, y: y(v) + 4, class: "tick", "text-anchor": "end" }, [String(v)]));
   }
+  // Date labels: evenly spaced, plus the last day; a regular label too close to the last one is dropped so they never overlap.
   const every = Math.max(1, Math.ceil(days.length / 8));
-  days.forEach((dd, i) => { if (i % every === 0 || i === days.length - 1) kids.push(svg("text", { x: x(i), y: H - 8, class: "tick", "text-anchor": i === 0 ? "start" : i === days.length - 1 ? "end" : "middle" }, [dayLabel(dd.day)])); });
-  kids.push(svg("path", { d: days.map((dd, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(dd.total).toFixed(1)}`).join(""), class: "line" }));
-  // A dot on each day RFQs came in (the steps up), with a surface ring.
-  days.forEach((dd, i) => { if (dd.count) kids.push(svg("circle", { cx: x(i), cy: y(dd.total), r: 4.5, class: "dot" })); });
-  // Direct label on the last point: the total.
+  days.forEach((dd, i) => {
+    const lastI = days.length - 1;
+    if (!(i === lastI || (i % every === 0 && lastI - i >= Math.max(2, every * 0.6)))) return;
+    kids.push(svg("text", { x: x(i), y: H - 8, class: "tick", "text-anchor": i === 0 ? "start" : i === lastI ? "end" : "middle" }, [dayLabel(dd.day)]));
+  });
+  kids.push(svg("path", { d: days.map((dd, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(val(dd)).toFixed(1)}`).join(""), class: "line" }));
+  days.forEach((dd, i) => { if (dd.newCompanies) kids.push(svg("circle", { cx: x(i), cy: y(val(dd)), r: 4.5, class: "dot" })); });
   const last = days[days.length - 1];
-  kids.push(svg("text", { x: x(days.length - 1) + 8, y: y(last.total) + 4, class: "endlabel" }, [String(last.total)]));
+  kids.push(svg("text", { x: x(days.length - 1) + 8, y: y(val(last)) + 4, class: "endlabel" }, [String(val(last))]));
   const hair = svg("line", { y1: T, y2: H - B, class: "hair", visibility: "hidden" });
   const focus = svg("circle", { r: 6, class: "focus", visibility: "hidden" });
   kids.push(hair, focus);
-  const hit = svg("rect", { x: L, y: T, width: W - L - R, height: H - T - B, class: "hit", tabindex: "0", "aria-label": "RFQs over time; use the arrow keys to move between days" });
+  const hit = svg("rect", { x: L, y: T, width: W - L - R, height: H - T - B, class: "hit", tabindex: "0", "aria-label": "New companies over time; use the arrow keys to move between days" });
   kids.push(hit);
-  const plot = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "rfqsvg", role: "img", "aria-label": `RFQs over time: ${t.total} since ${dayLabel(days[0].day)}` }, kids);
+  const plot = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "rfqsvg", role: "img", "aria-label": `Companies that have sent an RFQ: ${companiesNow} since ${dayLabel(days[0].day)}` }, kids);
   const tip = el("div", { class: "rfqtip", hidden: true });
   const wrap = el("div", { class: "rfqplot" }, [plot, tip]);
 
+  const how = (a) => (a.how === "marked" ? " (marked)" : a.how === "email" ? " (in the email)" : "");
   let at = -1;
   const show = (i) => {
     at = Math.max(0, Math.min(days.length - 1, i));
     const dd = days[at];
+    const fresh = dd.accounts.filter((a) => a.first), repeat = dd.accounts.filter((a) => !a.first);
     hair.setAttribute("x1", x(at)); hair.setAttribute("x2", x(at)); hair.setAttribute("visibility", "visible");
-    focus.setAttribute("cx", x(at)); focus.setAttribute("cy", y(dd.total)); focus.setAttribute("visibility", "visible");
+    focus.setAttribute("cx", x(at)); focus.setAttribute("cy", y(val(dd))); focus.setAttribute("visibility", "visible");
     tip.replaceChildren(
       el("p", { class: "tipday", text: dayLabel(dd.day, { weekday: "short", month: "short", day: "numeric" }) }),
-      el("p", {}, [el("b", { class: "mono", text: dd.count }), ` new · `, el("b", { class: "mono", text: dd.total }), " total"]),
-      ...dd.accounts.map((a) => el("p", { class: "sub2", text: `${a.company}${a.how === "marked" ? " (marked)" : a.how === "email" ? " (in the email)" : ""}` })),
+      el("p", {}, [el("b", { class: "mono", text: dd.newCompanies ?? 0 }), ` new compan${dd.newCompanies === 1 ? "y" : "ies"} · `, el("b", { class: "mono", text: val(dd) }), " so far"]),
+      ...fresh.map((a) => el("p", { class: "sub2", text: `${a.company}${how(a)}` })),
+      repeat.length ? el("p", { class: "sub2 muted", text: `Again: ${repeat.map((a) => a.company).join(", ")}` }) : null,
     );
     tip.hidden = false;
     const r = plot.getBoundingClientRect(), px = (x(at) / W) * r.width;
-    // Right half: the readout sits left of the crosshair, so it never covers the point it describes.
     const tw = tip.offsetWidth || 200;
     tip.style.left = `${px > r.width / 2 ? Math.max(px - tw - 14, 0) : Math.min(px + 14, r.width - tw)}px`;
-    tip.style.top = `${Math.max((y(dd.total) / H) * r.height - 20, 0)}px`;
+    tip.style.top = `${Math.max((y(val(dd)) / H) * r.height - 20, 0)}px`;
   };
   const hide = () => { hair.setAttribute("visibility", "hidden"); focus.setAttribute("visibility", "hidden"); tip.hidden = true; };
   hit.addEventListener("pointermove", (e) => { const r = plot.getBoundingClientRect(); const vx = ((e.clientX - r.left) / r.width) * W; show(Math.round(((vx - L) / (W - L - R)) * (days.length - 1))); });
@@ -450,15 +457,16 @@ function rfqGrowth(t) {
   hit.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") { show(at - 1); e.preventDefault(); } if (e.key === "ArrowRight") { show(at + 1); e.preventDefault(); } });
 
   const table = el("details", { class: "rfqtable" }, [
-    el("summary", { text: "See the numbers" }),
+    el("summary", { text: "See the companies, by the day they came in" }),
     el("table", {}, [
-      el("thead", {}, [el("tr", {}, ["Day", "New", "Total", "From"].map((h) => el("th", { text: h })))]),
-      el("tbody", {}, days.filter((dd) => dd.count).reverse().map((dd) => el("tr", {}, [
-        el("td", { text: dayLabel(dd.day, { weekday: "short", month: "short", day: "numeric" }) }), el("td", { class: "mono", text: dd.count }), el("td", { class: "mono", text: dd.total }), el("td", { text: dd.accounts.map((a) => a.company).join(", ") }),
+      el("thead", {}, [el("tr", {}, ["Day", "New", "So far", "Companies"].map((h) => el("th", { text: h })))]),
+      el("tbody", {}, days.filter((dd) => dd.newCompanies).reverse().map((dd) => el("tr", {}, [
+        el("td", { text: dayLabel(dd.day, { weekday: "short", month: "short", day: "numeric" }) }), el("td", { class: "mono", text: dd.newCompanies }), el("td", { class: "mono", text: val(dd) }),
+        el("td", { text: dd.accounts.filter((a) => a.first).map((a) => a.company).join(", ") }),
       ]))),
     ]),
   ]);
-  return el("section", { class: "rfqline" }, [el("h2", { class: "rfqh", text: "RFQs over time" }), hero, wrap, table]);
+  return el("section", { class: "rfqline" }, [el("h2", { class: "rfqh", text: "New companies" }), hero, wrap, allRfqs, table]);
 }
 
 function rfqNote(all) {
@@ -572,7 +580,8 @@ function matchesToday(a) {
 
 function heatRows() {
   // Nobody with an RFQ in (detected, tapped, or marked RFQ Received / Quoted / Won in Close) belongs here (Walt 10/7): the map is for getting the first one.
-  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth);
+  // Paused (cooling, snoozed until a date, bounced, or said no) is off the call bands (10/12); see the Paused list.
+  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth && !a.warmth.paused);
   // Hottest first; inside a warmth band, the accounts worth the most come first.
   const rows = all.slice().sort((a, b) => b.warmth.bucket === a.warmth.bucket
     ? (POT_RANK[potTier(a)] - POT_RANK[potTier(b)] || b.warmth.score - a.warmth.score || a.company.localeCompare(b.company))
@@ -600,7 +609,8 @@ async function sayPotential(a, said) {
 
 function heatPage() {
   const rows = heatRows();
-  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth);
+  const all = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && a.warmth && !a.warmth.paused);
+  const paused = ((state.board && state.board.accounts) || []).filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth && a.warmth.paused);
   const by = { hot: [], warm: [], cool: [], cold: [] };
   for (const a of rows) by[a.warmth.bucket].push(a);
   const pick = state.heatPick && rows.find((a) => a.leadId === state.heatPick);
@@ -673,7 +683,30 @@ function heatPage() {
         ]),
       ]))) : el("p", { class: "empty small3", text: fresh.length ? `Nobody waiting. ${fresh.length} contacted in the last ${QUIET_DUE_DAYS} days.` : "Nobody here." }),
     ]); }),
+    pausedBand(paused),
     pick ? heatDrawer(pick, rows) : null,
+  ]);
+}
+
+// Paused (10/12): not for calling now. Why, and when they come back on their own.
+const PAUSE = { out: ["Said no", 0], no_emails: ["No more emails", 1], later: ["Come back later", 2], not_now: ["Not now", 3], cooling: ["Cooling off", 4], bounced: ["Needs a working email", 5] };
+function pausedBand(list) {
+  if (!list.length) return null;
+  const open = !!state.heatPausedOpen;
+  const rows = list.slice().sort((a, b) => PAUSE[a.warmth.paused.kind][1] - PAUSE[b.warmth.paused.kind][1] || (a.warmth.paused.until || "9").localeCompare(b.warmth.paused.until || "9"));
+  const counts = Object.keys(PAUSE).map((k) => [k, list.filter((a) => a.warmth.paused.kind === k).length]).filter(([, n]) => n);
+  return el("div", { class: "heatband paused" }, [
+    el("div", { class: "heatlbl", onclick: () => { state.heatPausedOpen = !open; render(); }, style: "cursor:pointer" }, [
+      el("span", { class: "label", text: "Paused" }), el("span", { class: "mono muted", text: list.length }),
+      el("span", { class: "muted small3 why", text: counts.map(([k, n]) => `${n} ${PAUSE[k][0].toLowerCase()}`).join(" · ") + ". Not for calling now; they come back on their own." }),
+      el("button", { class: "linkbtn", text: open ? "Hide" : "Show" }),
+    ]),
+    open ? el("div", { class: "pausedlist" }, rows.map((a) => { const p = a.warmth.paused; return el("div", { class: `prow p-${p.kind}` }, [
+      el("a", { class: "co", href: closeLead(a.leadId), target: "westgate-close", text: a.company, onclick: (e) => { e.preventDefault(); openInCloseTab(a.leadId); } }),
+      el("span", { class: "pk", text: PAUSE[p.kind][0] }),
+      el("span", { class: "pu mono", text: p.until ? `back ${shortDate(p.until)}` : p.kind === "out" ? "off the map" : "" }),
+      el("span", { class: "pw muted", text: p.why }),
+    ]); })) : null,
   ]);
 }
 
@@ -777,7 +810,12 @@ function heatDrawer(a, rows) {
       el("button", { class: "linkbtn", text: "Close", onclick: close }),
     ]),
     el("span", { class: `warmth w-${w.bucket} big` }, [el("i", { "aria-hidden": "true" }), `${HEAT[w.bucket][0]} · ${w.score}`]),
-    el("a", { class: "dr-co", href: closeLead(a.leadId), target: "westgate-close", text: a.company, onclick: (e) => { e.preventDefault(); openInCloseTab(a.leadId); } }),
+    // Click the name to copy it (Walt 10/12), e.g. to search for it in Close; "Open in Close" is right under it.
+    el("button", { class: "dr-co", title: "Copy the company name", text: a.company, onclick: (e) => {
+      navigator.clipboard?.writeText(a.company).catch(() => {});
+      const b = e.currentTarget; b.dataset.copied = "1"; setTimeout(() => { delete b.dataset.copied; }, 1200);
+    } }),
+    el("a", { class: "linkbtn dr-open", href: closeLead(a.leadId), target: "westgate-close", text: "Open in Close", onclick: (e) => { e.preventDefault(); openInCloseTab(a.leadId); } }),
     el("div", { class: "sub2 dr-who", text: [c.name, c.email].filter(Boolean).join(" · ") }),
     c.phone ? el("a", { class: "mono tel dr-tel", href: `tel:${c.phone}`, text: prettyPhone(c.phone) }) : null,
     (() => { const y = lastYou(a); const t = todayState(a); return el("div", { class: "dr-touch" }, [
@@ -873,18 +911,21 @@ function rfqsPage() {
   const sorted = all.filter((a) => a.rfq).sort((a, b) => order[a.rfq.status.waitingOn] - order[b.rfq.status.waitingOn] || a.rfq.status.since.localeCompare(b.rfq.status.since));
   // First-time RFQs (10/8): from the RFQ line, the companies whose first one came in today or this week.
   const t = state.rfqLine, days = (t && t.days) || [];
-  const firstIn = (n) => new Set(days.slice(-n).flatMap((dd) => dd.accounts.filter((x) => x.first).map((x) => x.leadId)));
-  const newToday = firstIn(1), newWeek = firstIn(7);
+  // Calendar week (since Monday) and month, the same spans as the tiles above (10/12).
+  const lastDay = days.length ? days[days.length - 1].day : "";
+  const monday = lastDay ? new Date(Date.parse(`${lastDay}T12:00:00Z`) - ((new Date(`${lastDay}T12:00:00Z`).getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10) : "";
+  const firstIn = (from) => new Set(days.filter((dd) => dd.day >= from).flatMap((dd) => dd.accounts.filter((x) => x.first).map((x) => x.leadId)));
+  const newToday = firstIn(lastDay), newWeek = firstIn(monday), newMonth = firstIn(lastDay.slice(0, 7));
   const pick = state.rfqFilter || "all";
   // Companies the RFQ count found that aren't on the accounts board (no line card from the app, 10/8: 7 counted, 4
   // listed): a plain row from the count, so every one counted is listed.
   const onBoard = new Set(sorted.map((a) => a.leadId));
   const offBoard = new Map();
   for (const dd of days) for (const x of dd.accounts) if (!onBoard.has(x.leadId)) offBoard.set(x.leadId, { leadId: x.leadId, company: x.company, how: x.how, day: offBoard.get(x.leadId)?.day ?? dd.day });
-  const extras = [...offBoard.values()].filter((x) => pick === "today" ? newToday.has(x.leadId) : pick === "week" ? newWeek.has(x.leadId) : true);
-  const rows = pick === "today" ? sorted.filter((a) => newToday.has(a.leadId)) : pick === "week" ? sorted.filter((a) => newWeek.has(a.leadId)) : sorted;
+  const extras = [...offBoard.values()].filter((x) => pick === "today" ? newToday.has(x.leadId) : pick === "week" ? newWeek.has(x.leadId) : pick === "month" ? newMonth.has(x.leadId) : true);
+  const rows = pick === "today" ? sorted.filter((a) => newToday.has(a.leadId)) : pick === "week" ? sorted.filter((a) => newWeek.has(a.leadId)) : pick === "month" ? sorted.filter((a) => newMonth.has(a.leadId)) : sorted;
   const chip = (k, label, n) => el("button", { class: `cardk${pick === k ? " on" : ""}`, onclick: () => { state.rfqFilter = k; render(); } }, [el("b", { class: "mono", text: n }), label]);
-  const filters = el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("all", "All RFQs", sorted.length + offBoard.size), chip("today", "First RFQ today", newToday.size), chip("week", "First RFQ this week", newWeek.size)]);
+  const filters = el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("all", "All RFQs", sorted.length + offBoard.size), chip("today", "New today", newToday.size), chip("week", "New this week", newWeek.size), chip("month", "New this month", newMonth.size)]);
   const fresh = new Set([...newWeek]);
   return el("section", {}, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "RFQs" })]),
@@ -892,7 +933,7 @@ function rfqsPage() {
     filters,
     el("p", { class: "muted small3", text: "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
-      : !rows.length && !extras.length ? el("p", { class: "empty", text: pick === "today" ? "No first-time RFQs today yet." : pick === "week" ? "No first-time RFQs this week yet." : "No RFQs yet." })
+      : !rows.length && !extras.length ? el("p", { class: "empty", text: pick === "today" ? "No new companies today yet." : pick === "week" ? "No new companies this week yet." : pick === "month" ? "No new companies this month yet." : "No RFQs yet." })
         : el("div", { class: "grid rfqgrid" }, [
           el("div", { class: "gr gh" }, ["Account", "RFQ", "Status", "Waiting on", ""].map((h) => el("span", { class: "label", text: h }))),
           ...rows.flatMap((a) => rfqRow(a, fresh.has(a.leadId))),

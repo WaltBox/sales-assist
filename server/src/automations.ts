@@ -129,6 +129,13 @@ export async function planBumps(d: Deps, opts: { force?: boolean } = {}) {
 
 const planning = new Set<string>();
 
+/** After any reply, 1.5 weeks with no automatic email (Walt 10/12: "we need to make sure we aren't upsetting people"). */
+export const REPLY_COOLDOWN_DAYS = 10.5;
+export const repliedRecently = (a: { lastReplyAt?: string | null; warmth?: { paused: { kind: string; until: string | null } | null } | null }, now: Date) =>
+  (!!a.lastReplyAt && now.getTime() - Date.parse(a.lastReplyAt) < REPLY_COOLDOWN_DAYS * DAY)
+  // Their reply said no, or "not until [a date]" (10/12): no automatic email until then, or ever for a no.
+  || (!!a.warmth?.paused && (a.warmth.paused.kind === "out" || a.warmth.paused.kind === "no_emails" || (a.warmth.paused.kind === "later" && !!a.warmth.paused.until && a.warmth.paused.until > now.toISOString())));
+
 /**
  * Safety rails on the day's list (Walt 10/2, after Mercer Tech got two bumps six minutes apart): one bump per
  * account and per email address today, nobody who already has one scheduled, and nobody sooner than their own
@@ -175,9 +182,11 @@ async function planDay(d: Deps, now: Date) {
   // Anyone who's sent an RFQ is past the line card stage: out of automatic emails for good (Walt 9/28).
   const arms = (await store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").catch(() => null)) ?? {};
   // Due: the board says bump, or the cadence says so even though a callback is on the books (Walt 10/5).
-  const { keep: due, dropped } = dedupeDue(board.accounts.filter((a) => (a.next.kind === "bump" || a.bumpDue) && !a.rfq && !held.has(a.leadId)), recent, { now, tz: d.rep.timeZone, arms });
+  // They replied (anything: "nothing yet", "got it", a question): no automatic email for 1.5 weeks (Walt 10/12).
+  const replied = board.accounts.filter((a) => repliedRecently(a, now));
+  const { keep: due, dropped } = dedupeDue(board.accounts.filter((a) => (a.next.kind === "bump" || a.bumpDue) && !a.rfq && !held.has(a.leadId) && !repliedRecently(a, now)), recent, { now, tz: d.rep.timeZone, arms });
   const planned: Automation[] = [];
-  const skipped: Array<{ company: string; why: string }> = [...dropped];
+  const skipped: Array<{ company: string; why: string }> = [...dropped, ...replied.filter((a) => a.next.kind === "bump" || a.bumpDue).map((a) => ({ company: a.company, why: `They replied ${a.lastReplyAt!.slice(0, 10)}: cooling down until ${new Date(Date.parse(a.lastReplyAt!) + REPLY_COOLDOWN_DAYS * DAY).toISOString().slice(0, 10)}.` }))];
   // Memes (9/30): one per bump, never one the company has already had.
   const memes = await listMemes().catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; });
   const seen = await memesSeen(d);
@@ -481,6 +490,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   for (const a of board.accounts) {
     if (scheduled.has(a.leadId)) continue; // already on its way: it's in the scheduled list
     if (a.rfq) continue; // sent an RFQ: out of the sequence; following up on the quote is the rep's job
+    if (repliedRecently(a, now)) continue; // replied in the last 1.5 weeks: cooling down (10/12)
     // Bumps due now go out the next weekday morning; waiting ones on their due date.
     const autoWaiting = a.next.kind === "waiting" && a.next.due && /· bump |· email /.test(a.next.label);
     // The cadence can say "due" when the board shows a call or a rescue (10/5): same rule as the planner.
@@ -496,7 +506,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
       : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;
     const first = greetName(a.contact.name);
-    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), heldUntil: held.has(a.leadId) ? cool[a.leadId]?.until ?? null : null, heldWhy: held.has(a.leadId) ? cool[a.leadId]?.why ?? null : null, meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null) });
+    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), heldUntil: held.has(a.leadId) ? cool[a.leadId]?.until ?? null : null, heldWhy: held.has(a.leadId) ? cool[a.leadId]?.why ?? null : null, meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null, localParts(sendOn, d.rep.timeZone).weekday) });
   }
   return out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
 }

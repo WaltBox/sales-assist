@@ -1468,10 +1468,11 @@ function renderPre() {
     ]));
   }
 
-  page.append(glanceBlock(st));
-  // Details as small raised chips (not another box). The opener is the star.
+  // The call card, cut to what helps on the phone (Walt 10/11: "way too much going on"): ask for, history, the
+  // opener, the ask and one comeback, the line card in one line. Everything else is under "More about them".
   const plan = h.callPlan || null;
-  const when = b.rating === "D" ? "don't call" : plan && plan.action === "hold" ? `hold till ${shortDate(plan.until)}` : clock && !clock.open ? "call later" : "call now";
+  const skipping = !!(clock && !clock.open && b.rating !== "D");
+  const when = b.rating === "D" ? "don't call" : plan && plan.action === "hold" ? `hold till ${shortDate(plan.until)}` : skipping ? "call later" : "call now";
   if (plan && plan.action === "hold" && b.rating !== "D") page.append(holdBanner(plan));
   if (st.rescue && st.rescue.draft && !st.rescue.sent) {
     page.append(el("div", { class: "rescuebanner" }, [
@@ -1481,60 +1482,116 @@ function renderPre() {
   }
   page.append(el("section", { class: "chips" }, [
     el("span", { class: `tile grade ${b.rating}`, title: "Lead rating", text: b.rating }),
-    el("span", { class: "chip3", text: `${FIT[b.rating] || "Fit"} · ${when}` }),
+    el("span", { class: "chip3", text: skipping ? (FIT[b.rating] || "Fit") : `${FIT[b.rating] || "Fit"} · ${when}` }),
     clock ? el("span", { id: "their-time", class: `chip3 ${clock.open ? "good" : "bad"}`, text: `Their time ${clock.time}` }) : null,
     plan && plan.action === "call" && plan.due ? el("span", { class: "chip3 good", title: plan.reason, text: "Callback due" }) : null,
     plan && plan.action === "call" && !plan.due && plan.reason ? el("span", { class: "chip3 good", text: "They replied" }) : null,
-    callsChip(h),
     opensChip(h),
-    el("span", { class: "chip3 who" }, [el("span", { class: "muted", text: "Ask for " }), el("strong", { text: b.ask_for.name })]),
     h.phone ? el("button", { class: "chip3 mono", title: "Copy number", text: h.phone, onclick: (e) => { navigator.clipboard.writeText(h.phone).catch(() => {}); e.currentTarget.textContent = "Copied"; setTimeout(render, 900); } }) : null,
-    clock && !clock.open && h.bestWindow ? el("span", { class: "chip3 soft", text: `Best: ${h.bestWindow}` }) : null,
   ]));
-  if (b.ask_for.role || b.fit_summary) page.append(el("section", { class: "plain small-notes" }, [
-    b.ask_for.role ? el("p", { class: "muted", text: `${b.ask_for.name}: ${b.ask_for.role}` }) : null,
-    b.fit_summary ? el("p", { class: "fitsum", title: "Tap to expand", text: b.fit_summary, onclick: (e) => e.currentTarget.classList.toggle("open") }) : null,
+  page.append(el("section", { class: "askfor" }, [
+    el("span", { class: "label", text: "Ask for" }), el("strong", { text: b.ask_for.name }),
+    b.ask_for.role ? el("span", { class: "muted", text: ` · ${b.ask_for.role}` }) : null,
   ]));
+  page.append(historyBlock(st));
+  const buying = purchasingLine(st);
+  if (buying) page.append(buying);
 
-  page.append(rfqButton(st));
-  page.append(lastCallBlock(h.lastCall));
-  // Line card already out: the follow-up (a short bump in the same thread) is ready to send before you dial,
-  // with a custom one a tap away (Walt 9/29, Westport: "why does this not have a follow up email ready to go?").
-  // Never emailed: the line card to the address on file, ready to send without a call (Walt 9/29, DMG).
-  page.append(el("div", { class: "afterlc" }, [lineCardAsk(st, true)]));
-  if (h.opens && h.opens.emails > 0) {
-    page.append(el("section", { class: "plain afterfollow" }, [el("p", { class: "label", text: "Or a custom follow-up" }), followUpBlock(st.leadId, true)]));
-  }
-
-  const pitch = activePitch(st);
   page.append(el("section", { class: "hero" }, [
-    el("p", { class: "label", text: hasAltPitch(b) ? (pitch.alt ? "Opener · their trade" : "Opener · PVF") : "Opener" }),
-    el("p", { class: "opener" }, highlightSupplies(pitch.opener, pitch.buys)),
+    el("p", { class: "label", text: "Opener" }),
+    el("p", { class: "opener" }, highlightSupplies(b.opener, b.buys || [])),
   ]));
-  const flag = pvfFlag(st);
-  if (flag) page.append(flag);
-  if (b.hometown) page.append(el("section", { class: "plain script hometown" }, [
-    el("div", { class: "block" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]),
-  ]));
-  if (st.purch && st.purch.ask) page.append(el("section", { class: "plain script asknext" }, [
-    el("div", { class: "block" }, [el("p", { class: "label", text: "Ask next · purchasing cycle" }), el("p", { class: "say", text: st.purch.ask.question })]),
-  ]));
-  if (st.purch) page.append(purchasingCard(st));
-
   if (b.ask || b.objection) page.append(el("section", { class: "plain script" }, [
     b.ask ? el("div", { class: "block" }, [el("p", { class: "label", text: "The ask" }), el("p", { class: "say", text: b.ask })]) : null,
     b.objection ? el("div", { class: "block" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { class: "say", text: b.objection_response })]) : null,
   ]));
 
-  if (pitch.buys.length) page.append(el("section", { class: "plain tagsec" }, [el("p", { class: "label", text: "What they'd buy from us" }), el("ul", { class: "tags" }, pitch.buys.map((x) => el("li", { text: x })))]));
-  if (b.heads_ups && b.heads_ups.length) page.append(el("section", { class: "heads" }, [el("p", { class: "label", text: "Heads-ups" }), el("ul", {}, b.heads_ups.map((x) => el("li", { text: x })))]));
-  if (b.what_they_do) page.append(el("section", { class: "plain what" }, [el("p", { class: "label", text: "What they do" }), el("p", { text: b.what_they_do })]));
+  page.append(lineCardRow(st));
+  page.append(rfqButton(st));
+
+  // Everything else, one tap away.
+  const purch = st.purch ? purchasingCard(st) : null;
+  page.append(el("details", { class: "more", open: !!st.moreOpen, ontoggle: (e) => { st.moreOpen = e.currentTarget.open; } }, [
+    el("summary", { text: "More about them" }),
+    b.fit_summary ? el("p", { class: "fitsum open", text: b.fit_summary }) : null,
+    b.what_they_do ? el("section", { class: "plain what" }, [el("p", { class: "label", text: "What they do" }), el("p", { text: b.what_they_do })]) : null,
+    b.heads_ups && b.heads_ups.length ? el("section", { class: "heads" }, [el("p", { class: "label", text: "Heads-ups" }), el("ul", {}, b.heads_ups.map((x) => el("li", { text: x })))]) : null,
+    b.buys && b.buys.length ? el("section", { class: "plain tagsec" }, [el("p", { class: "label", text: "What they'd buy from us" }), el("ul", { class: "tags" }, b.buys.map((x) => el("li", { text: x })))]) : null,
+    purch,
+    b.hometown ? el("section", { class: "plain script hometown" }, [
+      el("div", { class: "block" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]),
+    ]) : null,
+  ]));
   page.append(el("div", { class: "linkrow" }, [
     listInfo && listInfo.position ? el("span", { class: "muted", text: `Lead ${listInfo.position} of ${listInfo.size >= 200 ? "200+" : listInfo.size}` }) : el("span"),
     el("button", { class: "link", text: "Rewrite card", onclick: () => loadBrief(st, true) }),
   ]));
   out.push(chatBar(st.chat, st.chatBusy, "Ask or tell me anything about this lead…"));
   return out;
+}
+
+// ---------- the lead's history, before you dial (Walt 10/11: "I call and forget what happened") ----------
+const HIST_ICON = { call: "☎", voicemail: "☎", no_answer: "☎", email: "✉", reply: "↩", note: "✎" };
+function historyBlock(st) {
+  const hist = st.header && st.header.history;
+  if (!hist) return null;
+  const c = hist.counts, h = st.header;
+  if (!c.calls && !c.emailsOut && !c.replies) return el("section", { class: "hist" }, [el("p", { class: "label", text: "History" }), el("p", { class: "muted", text: "First touch: no calls or emails yet." })]);
+  const opened = h.opens && h.opens.total > 0;
+  const bits = [
+    `${c.calls} call${c.calls === 1 ? "" : "s"}`,
+    c.connected ? `${c.connected} picked up` : null,
+    c.voicemails ? `${c.voicemails} voicemail${c.voicemails === 1 ? "" : "s"}` : null,
+    `${c.emailsOut} email${c.emailsOut === 1 ? "" : "s"} sent`,
+    c.replies ? `${c.replies} repl${c.replies === 1 ? "y" : "ies"}` : "no replies",
+    hist.lineCard ? `line card ${shortDate(hist.lineCard.at)}${opened ? `, opened ${h.opens.total}×` : ", not opened"}` : "no line card yet",
+  ].filter(Boolean);
+  const ev = hist.events || [];
+  const show = st.histAll ? ev : ev.slice(0, 4);
+  return el("section", { class: "hist" }, [
+    el("p", { class: "label", text: "History" }),
+    el("p", { class: "hcounts", text: bits.join(" · ") }),
+    el("ul", { class: "hlist" }, show.map((e) => el("li", { class: `h-${e.kind}` }, [
+      el("span", { class: "hwhen mono", text: shortDate(e.at) }),
+      el("span", { class: "hic", "aria-hidden": "true", text: HIST_ICON[e.kind] || "•" }),
+      el("span", { class: "htext", text: e.text }),
+    ]))),
+    ev.length > 4 ? el("button", { class: "link", text: st.histAll ? "Show less" : `Show all ${ev.length}`, onclick: () => { st.histAll = !st.histAll; render(); } }) : null,
+  ]);
+}
+
+// What you already know about how they buy, in one line (only when something's known).
+function purchasingLine(st) {
+  const heard = (st.purch && st.purch.heard) || {};
+  const v = (k) => heard[k] && heard[k].value;
+  const bits = [
+    v("rfq_volume") ? `${v("rfq_volume")} RFQs` : null,
+    v("rfq_timing"),
+    v("vendor_policy"),
+    v("how_to_get_on_list") ? `get on it: ${v("how_to_get_on_list")}` : null,
+    v("incumbent") ? `buys from ${v("incumbent")}` : null,
+  ].filter(Boolean);
+  if (!bits.length) return null;
+  return el("section", { class: "buyingline" }, [el("span", { class: "label", text: "How they buy" }), el("span", { text: bits.join(" · ") })]);
+}
+
+// The line card in one line until you need it; the full box (send, meme, follow-up) opens on a tap.
+function lineCardRow(st) {
+  const h = st.header || {}, hist = h.history || {};
+  const open = st.lcOpen || (st.lc && (st.lc.sent || st.lc.sending || st.lc.another));
+  if (open) {
+    const kids = [lineCardAsk(st, true)];
+    if (h.opens && h.opens.emails > 0) kids.push(el("section", { class: "plain afterfollow" }, [el("p", { class: "label", text: "Or a custom follow-up" }), followUpBlock(st.leadId, true)]));
+    kids.push(el("button", { class: "link", text: "Hide", onclick: () => { st.lcOpen = false; render(); } }));
+    return el("div", { class: "afterlc" }, kids);
+  }
+  const sent = hist.lineCard;
+  const opened = h.opens && h.opens.total > 0;
+  return el("div", { class: "lcrowmin" }, [
+    el("span", { class: "label", text: "Line card" }),
+    el("span", { class: opened ? "good" : "muted", text: sent ? `Sent ${shortDate(sent.at)}${sent.to ? ` to ${sent.to}` : ""} · ${opened ? `opened ${h.opens.total}×` : "not opened"}` : "Not sent yet" }),
+    el("button", { class: "btn small", text: sent ? "Send follow-up" : "Send line card", onclick: () => { st.lcOpen = true; render(); } }),
+  ]);
 }
 
 // --- on call ---
@@ -1639,12 +1696,11 @@ function renderOnCall() {
         ])),
       ]) : null,
       pitch.opener ? el("div", { class: fu ? "ifask" : "" }, [el("p", { class: "label", text: fu ? "If they ask what we supply" : "Say" }), el("p", { class: fu ? "say2x" : "say" }, highlightSupplies(fu ? pitchOnly(pitch.opener) : pitch.opener, pitch.buys))]) : null,
-      pitch.buys.length ? el("div", { class: "namethese" }, [el("p", { class: "label", text: "Name these" }), el("ul", { class: "tags" }, pitch.buys.map((x) => el("li", { text: x })))]) : null,
-      b.hometown ? el("div", { class: "hometown" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]) : null,
-      pvfFlag(st),
+      // 10/11: no product tags (the opener names them) and no second pitch; the memory is a tap away.
+      b.hometown ? el("details", { class: "hometown" }, [el("summary", { text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]) : null,
       b.ask ? el("div", {}, [el("p", { class: "label", text: "Ask" }), el("p", { class: "ask", text: b.ask })]) : null,
       // The purchasing cycle (Walt 10/5): the one question this account still needs answered.
-      st.purch && st.purch.ask ? el("div", { class: "asknext" }, [el("p", { class: "label", text: "Ask next · purchasing cycle" }), el("p", { class: "ask", text: st.purch.ask.question })]) : null,
+      st.purch && st.purch.ask ? el("div", { class: "asknext" }, [el("p", { class: "label", text: "Find out" }), el("p", { class: "ask", text: st.purch.ask.question })]) : null,
       b.objection ? el("div", { class: "box" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { text: b.objection_response })]) : null,
       b.capture && b.capture.length ? el("div", { class: "checks" }, [
         el("p", { class: "label", text: "Before you hang up" }),

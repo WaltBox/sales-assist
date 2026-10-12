@@ -140,9 +140,23 @@ const VARIANTS: Record<string, string[]> = {
 /** Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away. */
 export const LINE_CARD_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
 export const ATTACHED_LINE = `Line card's attached too, or you can grab it here: ${LINE_CARD_URL}`;
-export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null) {
+/**
+ * The line fitted to the day it goes out, their time (Walt 10/12: "Hope your week's going good" landed on a Monday
+ * morning). Monday: the week's just starting. Friday: "Happy Friday". A Friday line never goes out midweek.
+ * `weekday`: 0 Sunday … 6 Saturday; unknown leaves the line as written.
+ */
+export function fitDay(line: string, weekday: number | null | undefined): string {
+  if (weekday == null) return line;
+  const fridayOnly = /happy friday|before the week ends|before the weekend/i.test(line);
+  if (fridayOnly && weekday !== 5) return fitDay(BUMP_LINES[0], weekday);
+  if (weekday === 1) return line.replace(/Hope your week's going good!/, "Hope your week's off to a good start!");
+  if (weekday === 5) return line.replace(/Hope your week's going good!/, "Happy Friday!");
+  return line;
+}
+
+export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null, weekday?: number | null) {
   const pool = variant && VARIANTS[variant] ? VARIANTS[variant] : BUMP_LINES;
-  const line = pool[nth % pool.length];
+  const line = fitDay(pool[nth % pool.length], weekday);
   return `Hi ${first ?? "there"}!\n\n${line}\n\n${ATTACHED_LINE}\n\nThanks,\n${repName}`;
 }
 
@@ -202,9 +216,15 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   let failures: Failure[] = [];
   let draft: FollowUp | null = null;
   let body = "";
+  // When it goes out, their time: the wording fits that day (10/12).
+  const tz = ctx.facts.prospectTz ?? d.rep.timeZone;
+  const scheduledFor = !opts.schedule ? null
+    : opts.schedule.now ? isoWithOffset(new Date(now.getTime() + (2 + opts.schedule.stagger) * 60 * 1000), tz)
+    : sendSlot(tz, now, opts.schedule.stagger);
+  const sendDay = localParts(new Date(scheduledFor ?? now.toISOString()), tz).weekday;
   // Automatic bump in the thread: the template, no AI.
   if (opts.template && threaded) {
-    body = bumpBodyFor(first, d.rep.name, opts.template.nth, opts.template.variant);
+    body = bumpBodyFor(first, d.rep.name, opts.template.nth, opts.template.variant, sendDay);
     draft = { body } as FollowUp;
   }
   for (let attempt = 1; attempt <= 2 && !(opts.template && threaded); attempt++) {
@@ -226,11 +246,7 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   const warnings: string[] = [];
   let attachments: Awaited<ReturnType<typeof lineCardAttachments>> = await lineCardAttachments(d).catch(() => []);
   if (!attachments.length) warnings.push("LINE CARD NOT ATTACHED: add it in Close before sending.");
-  // "now": out in a couple of minutes plus the stagger, whatever the hour (an approved same-day send, 10/2).
-  const tz = ctx.facts.prospectTz ?? d.rep.timeZone;
-  const scheduledFor = !opts.schedule ? null
-    : opts.schedule.now ? isoWithOffset(new Date(now.getTime() + (2 + opts.schedule.stagger) * 60 * 1000), tz)
-    : sendSlot(tz, now, opts.schedule.stagger);
+  // "now": out in a couple of minutes plus the stagger, whatever the hour (an approved same-day send, 10/2); set above.
   const meme = opts.template && threaded ? opts.template.meme : null;
   const token = meme ? newToken() : null;
   const created = await d.close.createDraftEmail(leadId, {
