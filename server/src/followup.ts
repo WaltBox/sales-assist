@@ -6,7 +6,7 @@ import { loadLeadContext, renderContext, type LeadContext } from "./context.js";
 import { businessDaysBetween, isoWithOffset, localParts, nextWeekdayAt, zonedTime } from "./rules.js";
 import { FollowUpSchema, type FollowUp } from "./schemas.js";
 import { logRejection, retryNote, ruleChecks, type Failure } from "./validate.js";
-import { bumpHtml, newToken, trackMeme, type Meme } from "./memes.js";
+import { bumpHtml, linkUrl, newToken, trackingOn, trackMeme, type Meme } from "./memes.js";
 
 // "Write a follow-up" (Walt 9/25): one tap drafts a short bump in Close.
 // It replies in the lead's existing thread when there is one (only a lead with
@@ -26,18 +26,26 @@ export type FollowUpResult =
  */
 // Around their 8am (Walt 10/8: "they should go out around the customer's 8am"), a random minute so a wave isn't a block.
 export const SEND_WINDOW = { fromMinute: 7 * 60 + 50, toMinute: 8 * 60 + 35 };
+/** Monday morning is a pile of mail (10/12): Monday's go out after 10. */
+export const MONDAY_WINDOW = { fromMinute: 10 * 60, toMinute: 10 * 60 + 45 };
+const windowOn = (weekday: number) => (weekday === 1 ? MONDAY_WINDOW : SEND_WINDOW);
 export function sendSlot(tz: string, now: Date, stagger = 0, rand: () => number = Math.random): string {
   const p = localParts(now, tz);
   const mins = p.hour * 60 + p.minute;
   const weekday = p.weekday >= 1 && p.weekday <= 5;
-  const pick = (dayStart: Date, fromMin: number) => {
-    const span = Math.max(1, SEND_WINDOW.toMinute - fromMin);
+  const w = windowOn(p.weekday);
+  const pick = (dayStart: Date, fromMin: number, win: { toMinute: number }) => {
+    const span = Math.max(1, win.toMinute - fromMin);
     return new Date(dayStart.getTime() + (fromMin + Math.floor(rand() * span)) * 60 * 1000);
   };
   let at: Date;
-  if (weekday && mins < SEND_WINDOW.fromMinute) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), SEND_WINDOW.fromMinute + Math.min(stagger, 20));
-  else if (weekday && mins < SEND_WINDOW.toMinute - 5) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), mins + 5 + Math.min(stagger, 10));
-  else { const next = nextWeekdayAt(tz, now, 0, 0); at = pick(next, SEND_WINDOW.fromMinute + Math.min(stagger, 20)); }
+  if (weekday && mins < w.fromMinute) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), w.fromMinute + Math.min(stagger, 20), w);
+  else if (weekday && mins < w.toMinute - 5) at = pick(zonedTime(p.year, p.month, p.day, 0, 0, tz), mins + 5 + Math.min(stagger, 10), w);
+  else {
+    const next = nextWeekdayAt(tz, now, 0, 0);
+    const nw = windowOn(localParts(new Date(next.getTime() + 12 * 3600 * 1000), tz).weekday);
+    at = pick(next, nw.fromMinute + Math.min(stagger, 20), nw);
+  }
   return isoWithOffset(at, tz);
 }
 
@@ -98,20 +106,26 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
   return `The rep's most recent call on this lead was ${when} (their time), ${c.duration} seconds: ${connected ? "they talked" : "it didn't connect (a missed try)"}.${transcript && connected ? ` Transcript:\n${transcript.slice(0, 1500)}` : ""}`;
 }
 
-// The automatic bump (Walt 9/30): no AI, just back to the top of the inbox and one question, plus a meme.
-// A few wordings, so a second bump to the same company doesn't read word for word like the first.
-// The automatic bumps, in the order an account gets them (Walt 10/6: "complete sentences that seem written by a
-// human and not email lingo"). Full sentences in Walt's voice, each one a different plain ask for the RFQ. No
-// email-speak ("bumping", "circling back", "top of your inbox"), no fragments, no hedging, no promises about speed.
-const BUMP_LINES = [
-  // Walt (10/8): "It needs to just sound more like me... this industry is less professional." Short, friendly, his words.
-  "Just wanted to bump this up. I'd really love to take a look at any RFQs you've got going on.",
-  "Hope your week's going good! I'd love the chance to work with you guys. Got any RFQs I can take a crack at?",
-  "Bumping this back up for you. If there's an RFQ or a list on your desk, send it my way and I'll get you pricing.",
-  "Me again! Any RFQs going out this week? I'd love to get you a number on it.",
-  "Just checking in. Got anything coming up on pipe, fittings or bolting? Send it over and I'll price it out.",
-  "Wanted to get back in front of you real quick. If you've got any RFQs going on, I'd really love to check them out.",
+// The automatic bumps (Walt 10/12): the job is to be on top of their inbox the day an RFQ is ready, not to sell.
+// Eager salesman, full sentences like Walt typed them, and every one ends in the same plain ask. Nothing self-aware
+// about how many emails they've had. The line depends on the track (talked to the buyer, or the email came from the
+// front desk), the round (how many real conversations), and where the account is in the sequence.
+export const ASK = "Please send me over an RFQ and we'll get you a quote back.";
+const BENCHMARK = "I have a quick ask for you. Send me the last RFQ you sent out, even if it's already been bought, and we'll quote it so you can see where we land.";
+const HOPE_WEEK = `I hope your week's going good! ${ASK}`;
+const RHYTHM = [
+  `I wanted to get back in front of you so I'm on top of the pile the day one comes across your desk. Please send it over and we'll get you a quote back.`,
+  `I'm bumping this back up for you. If you have an RFQ going out this week, please send it over and we'll get you a quote back.`,
+  HOPE_WEEK,
 ];
+const COLD = [
+  `I wanted to bump this back up in case it got buried. ${ASK}`,
+  `I'm checking in on this one more time. ${ASK}`,
+  HOPE_WEEK,
+];
+/** A shared mailbox (info@, estimating@): every other email asks who to send it to. */
+export const WHO_HANDLES = "I'm trying to reach whoever handles the pipe and fittings RFQs over there. If you can point me their way, or just send one over, we'll get you a quote back.";
+const BUMP_LINES = RHYTHM;
 /**
  * The name to greet with, or null for "Hi there," (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
  * → Clifford); an initial ("J. Waite") or a mailbox word ("frontdesk", "hello", "info") isn't a name.
@@ -130,15 +144,13 @@ export function greetName(name: string | null | undefined): string | null {
 const VARIANTS: Record<string, string[]> = {
   // Friday (Walt 10/8, his words): bump it before the week ends.
   friday: [
-    "Just wanted to bump this message before the week ends. I'd really love to check out any RFQs you've got going on.",
-    "Happy Friday! Before the weekend hits, got any RFQs I can take a look at?",
+    `I wanted to bump this before the week ends. ${ASK}`,
+    `Happy Friday! Before the weekend hits, ${ASK.charAt(0).toLowerCase()}${ASK.slice(1)}`,
   ],
-  // Never opened (Walt 10/8): no "did this reach you". We know we're emailing them again; the point is to stay at
-  // the top of their inbox and sound eager to earn their business. His pick:
-  landed: ["Hope your week's going good! I'd love the chance to work with you guys. Got any RFQs I can take a crack at?"],
 };
 /** Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away. */
 export const LINE_CARD_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
+export const SITE_URL = "https://westgatesupply.com";
 export const ATTACHED_LINE = `Line card's attached too, or you can grab it here: ${LINE_CARD_URL}`;
 /**
  * The line fitted to the day it goes out, their time (Walt 10/12: "Hope your week's going good" landed on a Monday
@@ -149,18 +161,56 @@ export function fitDay(line: string, weekday: number | null | undefined): string
   if (weekday == null) return line;
   const fridayOnly = /happy friday|before the week ends|before the weekend/i.test(line);
   if (fridayOnly && weekday !== 5) return fitDay(BUMP_LINES[0], weekday);
-  if (weekday === 1) return line.replace(/Hope your week's going good!/, "Hope your week's off to a good start!");
-  if (weekday === 5) return line.replace(/Hope your week's going good!/, "Happy Friday!");
+  if (weekday === 1) return line.replace(/(I hope|Hope) your week's going good!/, "$1 your week's off to a good start!");
+  if (weekday === 5) return line.replace(/(I hope|Hope) your week's going good!/, "Happy Friday!");
   return line;
 }
 
-export function bumpBodyFor(first: string | null, repName: string, nth = 0, variant?: string | null, weekday?: number | null) {
-  const pool = variant && VARIANTS[variant] ? VARIANTS[variant] : BUMP_LINES;
-  const line = fitDay(pool[nth % pool.length], weekday);
-  return `Hi ${first ?? "there"}!\n\n${line}\n\n${ATTACHED_LINE}\n\nThanks,\n${repName}`;
+export type BumpPlace = {
+  /** Emails since the last real conversation (0 = the first one after the line card). */
+  nth: number;
+  track?: "talked" | "cold";
+  /** Real conversations so far: round 2 knows you've talked before. */
+  round?: number;
+  /** A shared mailbox: every other email asks who handles RFQs. */
+  generic?: boolean;
+  weekday?: number | null;
+  /** Calendar days since you talked (for "yesterday" vs "the other day"). */
+  talkedDaysAgo?: number | null;
+  variant?: string | null;
+  /** Tracked links, when tracking is on. */
+  cardUrl?: string | null;
+  siteUrl?: string | null;
+};
+
+/** The one line in the bump: which depends on the track, the round and where they are in the sequence. */
+export function bumpLine(p: BumpPlace): string {
+  const { nth } = p;
+  if (p.variant && VARIANTS[p.variant]) { const v = VARIANTS[p.variant]; return v[nth % v.length]; }
+  if (p.generic && nth % 2 === 1) return WHO_HANDLES;
+  if ((p.track ?? "talked") === "cold") return COLD[nth % COLD.length];
+  const round = p.round ?? 1;
+  // "Great talking to you" only while the call is fresh: more than a week later it reads wrong.
+  if (nth === 0 && (p.talkedDaysAgo == null || p.talkedDaysAgo <= 7)) {
+    if (round >= 2) return `It was good talking to you again! ${ASK}`;
+    const when = p.talkedDaysAgo != null && p.talkedDaysAgo <= 1 ? "yesterday" : "the other day";
+    return `It was great talking to you ${when}! ${ASK}`;
+  }
+  if (nth === 0) return HOPE_WEEK;
+  if (nth === 1) return BENCHMARK;
+  if (nth === 2) return HOPE_WEEK;
+  return RHYTHM[(nth - 3) % RHYTHM.length];
 }
 
-export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; nth: number; variant?: string | null }; onlyTo?: string } = {}): Promise<FollowUpResult> {
+export function bumpBodyFor(first: string | null, repName: string, place: BumpPlace = { nth: 0 }) {
+  const line = fitDay(bumpLine(place), place.weekday);
+  const card = `Line card's attached too, or you can grab it here: ${place.cardUrl ?? LINE_CARD_URL}`;
+  // Someone you haven't talked to gets the site too (Walt 10/12): a click tells us the address works.
+  const site = place.track === "cold" ? `\n\nOur site is here if that's easier: ${place.siteUrl ?? SITE_URL}` : "";
+  return `Hi ${first ?? "there"}!\n\n${line}\n\n${card}${site}\n\nThanks,\n${repName}`;
+}
+
+export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; place: BumpPlace }; onlyTo?: string } = {}): Promise<FollowUpResult> {
   const now = d.now?.() ?? new Date();
   const [ctx, all] = await Promise.all([loadLeadContext(d.close as CloseClient, leadId, now), d.close.leadEmails(leadId)]);
   if (ctx.facts.vendor || ctx.facts.competitorHits.length) throw new FollowUpError("This lead is a vendor or competitor. No follow-up.");
@@ -223,8 +273,12 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
     : sendSlot(tz, now, opts.schedule.stagger);
   const sendDay = localParts(new Date(scheduledFor ?? now.toISOString()), tz).weekday;
   // Automatic bump in the thread: the template, no AI.
+  // Every automatic bump is tracked when tracking is on (10/12): the meme, and the line card and site links, so a
+  // click tells us a person read it.
+  const token = opts.template && threaded && (opts.template.meme || trackingOn()) ? newToken() : null;
   if (opts.template && threaded) {
-    body = bumpBodyFor(first, d.rep.name, opts.template.nth, opts.template.variant, sendDay);
+    const tracked = token && trackingOn() ? { cardUrl: linkUrl(token, "card"), siteUrl: linkUrl(token, "site") } : {};
+    body = bumpBodyFor(first, d.rep.name, { ...opts.template.place, weekday: sendDay, ...tracked });
     draft = { body } as FollowUp;
   }
   for (let attempt = 1; attempt <= 2 && !(opts.template && threaded); attempt++) {
@@ -248,13 +302,12 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   if (!attachments.length) warnings.push("LINE CARD NOT ATTACHED: add it in Close before sending.");
   // "now": out in a couple of minutes plus the stagger, whatever the hour (an approved same-day send, 10/2); set above.
   const meme = opts.template && threaded ? opts.template.meme : null;
-  const token = meme ? newToken() : null;
   const created = await d.close.createDraftEmail(leadId, {
     contactId: to.contactId, to: [to.email], subject, body, attachments,
     sender: d.rep.sender ?? `"${d.rep.name.replaceAll('"', "")}" <${d.rep.email}>`, emailAccountId: d.rep.emailAccountId ?? null,
     inReplyToId: latest?.id ?? null, threadId: latest?.thread_id ?? null, scheduleAt: scheduledFor,
-    html: meme ? bumpHtml(body, d.rep.name, meme, token) : null,
+    html: opts.template && threaded ? bumpHtml(body, d.rep.name, meme, token) : null,
   });
-  if (meme && token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme.name, emailId: created.id });
+  if (token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme?.name ?? "", emailId: created.id });
   return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor, meme: meme?.name ?? null, track: token };
 }

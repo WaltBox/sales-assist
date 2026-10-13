@@ -19,13 +19,13 @@ import {
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { deleteMeme, listMemes, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
+import { deleteMeme, listMemes, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, stopScheduledFor } from "./automations.js";
+import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
-import { FollowUpError, writeFollowUp } from "./followup.js";
+import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -54,6 +54,14 @@ export function createApp(appDeps: AppDeps) {
 
   // The meme in a bump (10/6): the image and the link come through here so a load or a click is logged, then the
   // image itself. No sign-in: the buyer's mail app and browser are the callers. An unknown token still gets the image.
+  // The line card and site links in a bump (10/12): logged as a click on the account, then on to the real thing.
+  app.get("/l/:token/:kind", async (req, res) => {
+    const kind = String(req.params.kind);
+    if (kind !== "card" && kind !== "site") { res.status(404).end(); return; }
+    await logLinkClick(String(req.params.token), kind, req.header("user-agent") ?? null).catch(() => null);
+    res.setHeader("Cache-Control", "private, max-age=0, no-store");
+    res.redirect(302, kind === "card" ? LINE_CARD_URL : SITE_URL);
+  });
   app.get("/m/:token/:name", async (req, res) => {
     const name = String(req.params.name);
     if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
@@ -305,6 +313,8 @@ export function createApp(appDeps: AppDeps) {
   })));
   // Cooling periods (10/6): out of the automatic emails for `days` (or for good), back in on their own after; `hold: false` puts them back now.
   app.post("/api/leads/:leadId/hold", authed, route((req, d) => holdAccount(d, leadId(req), req.body?.hold !== false, { days: Number(req.body?.days) || null, why: typeof req.body?.why === "string" ? req.body.why.slice(0, 200) : null })));
+  // "Next email in…" on the call screen (10/12): when the email sequence starts again after this call.
+  app.post("/api/leads/:leadId/next-email", authed, route((req, d) => setNextEmail(d, leadId(req), Number(req.body?.days) || 3)));
   app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));
   // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
   app.get("/api/memes", authed, route(async (req, d) => {

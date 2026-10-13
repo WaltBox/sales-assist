@@ -191,13 +191,13 @@ test("'Matt M.' is treated as the existing contact 'Matt Michon'", async () => {
 
 // ---------- one tap + queue ----------
 
-test("one tap saves status and callback now; the transcript then fills in the rest straight into Close", async () => {
+test("one tap saves the status now (no Close task for reaching the buyer, 10/12); the transcript fills in the rest straight into Close", async () => {
   const { quickOutcome, listQueue } = await import("../src/queue.js");
   const close = new FakeClose({ calls: [roddaCall()] });
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_queueTest" } };
   const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_demoRoddaCall0001", rating: "B" });
-  // The tap saves status + a placeholder callback right away…
-  assert.deepEqual(close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field").sort(), ["status", "task"]);
+  // The tap saves the status right away; reaching the buyer starts the next round of emails, not a Close task…
+  assert.deepEqual(close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field").sort(), ["status"]);
   assert.ok(close.writes.some((w) => w.op === "lead-update"), "Reached buyer puts today's date on the lead (Last reached)");
   assert.equal(r.saved[0], "status Qualified");
   assert.ok(r.queued);
@@ -205,19 +205,16 @@ test("one tap saves status and callback now; the transcript then fills in the re
 
   for (let i = 0; i < 50 && (await listQueue(d))[0]?.state === "building"; i++) await new Promise((res) => setTimeout(res, 50));
   const item = (await listQueue(d))[0];
-  // …the transcript rewrites that same task (who/when/why)…
-  const upd = close.writes.find((w) => w.op === "task-update")!.body as { text: string };
-  assert.match(upd.text, /^\[B\] Follow up with Renee on today's orders at Rodda Electric/);
-  assert.equal(item.smartTask?.title, "Follow up with Renee on today's orders");
-  assert.equal(item.smartTask?.why, "She said she'd check today's orders");
-  assert.equal(item.smartTask?.changed, true);
-  // …and contacts, note, email draft and the extra task go straight into Close, no approval step.
+  // …nobody on the call gave a time to call back, so the transcript makes no task either…
+  assert.ok(!close.writes.some((w) => w.op === "task" || w.op === "task-update"));
+  assert.equal(item.smartTask ?? null, null);
+  // …and contacts, note and the email draft go straight into Close, no approval step.
   assert.equal(item.state, "saved");
   // (Last reached writes, from the tap, aren't part of this order.)
   const ops = close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field");
   for (const op of ["note", "contact", "email"]) assert.ok(ops.includes(op), `${op} saved`);
-  assert.equal(ops.filter((o) => o === "task").length, 2, "placeholder + the Oct 13 intro call");
-  assert.ok(!ops.slice(2).includes("status"), "status was already saved by the tap");
+  assert.equal(ops.filter((o) => o === "task").length, 0, "no time given, no task");
+  assert.ok(!ops.slice(1).includes("status"), "status was already saved by the tap");
   const email = close.writes.find((w) => w.op === "email")!.body as { attachments: Array<{ filename: string }> };
   assert.equal(email.attachments[0].filename, "Westgate_Supply_Line_Card.pdf");
   assert.ok(item.applied?.every((x) => x.ok));
@@ -251,9 +248,9 @@ test("a name typed in 'Anything to add' is used when the number isn't known", as
   const { quickOutcome } = await import("../src/queue.js");
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_na1", duration: 0, remote_phone: "+15105550000" })] });
   const d = { ...deps(close), rep: { ...rep, closeUserId: "user_noteName" } };
-  await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_na1", note: "Corbin", rating: "B" });
+  await quickOutcome(d, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_na1", note: "Corbin", rating: "B" });
   const task = close.writes.find((w) => w.op === "task")!.body as { text: string };
-  assert.match(task.text, /^\[B\] Follow up with Corbin at .* — \(510\) 555-0000\. Talked on \d+\/\d+\. Corbin\./);
+  assert.match(task.text, /^\[B\] Call Corbin at .* — \(510\) 555-0000\. On \d+\/\d+ got a name to ask for\. Corbin\./);
 });
 
 test("reschedule: quick picks include later today, and changing the time updates the Close task", async () => {
@@ -265,14 +262,14 @@ test("reschedule: quick picks include later today, and changing the time updates
   assert.equal(late[0].label, "Tomorrow 10:00 AM");
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_rs1", duration: 0 })] });
   const d = { ...deps(close), now: () => morning, rep: { ...rep, closeUserId: "user_reschedule" } };
-  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_rs1", rating: "B" });
+  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_rs1", rating: "B" });
   assert.ok(r.task);
   const moved = await rescheduleTask(d, DEMO_LEAD_ID, r.task!.id, opts[0].due_at);
   assert.equal(moved.due_at, "2026-09-24T10:30:00-07:00");
   const upd = close.writes.find((w) => w.op === "task-update")!.body as { date: string; text?: string };
   assert.equal(upd.date, "2026-09-24T10:30:00-07:00");
   assert.equal(upd.text, undefined, "only the date changes; the task text in Close stays");
-  assert.match((await close.task(r.task!.id)).text, /^\[B\] Follow up with \S+ at Rodda Electric/);
+  assert.match((await close.task(r.task!.id)).text, /^\[B\] Call .* at Rodda Electric/);
   await assert.rejects(rescheduleTask({ ...d, rep: { ...rep, closeUserId: "someone_else" } }, DEMO_LEAD_ID, r.task!.id, opts[0].due_at), /Can't find/);
 });
 
@@ -316,7 +313,7 @@ test("line card drafts carry the PDF from the Close template; a failure is flagg
 
 // ---------- §6 follow-up timing ----------
 
-test("§6 (10/9, 10/12): voicemail and no answer make no task; got a name and reached buyer do, and a later open callback is kept", async () => {
+test("§6 (10/9, 10/12): only got a name makes a task from the tap; voicemail, no answer and reached buyer don't, and a later open callback is kept", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
   // Got a name (10/12): a callback to call that person, two business days out, the other half of the day.
@@ -328,25 +325,25 @@ test("§6 (10/9, 10/12): voicemail and no answer make no task; got a name and re
     await quickOutcome({ ...deps(c), now: () => thu, rep: { ...rep, closeUserId: `user_s6_${i}` } }, DEMO_LEAD_ID, { outcome, call_id: `acti_s6_${i}`, rating: "B" });
     assert.ok(!c.writes.some((w) => w.op === "task"), `${outcome}: no task`);
   }
+  assert.equal((named.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-28T14:00:00-07:00", "two business days out, the other half of the day");
   const reached = new FakeClose({ calls: [roddaCall({ id: "acti_s6r", duration: 0 })] });
   await quickOutcome({ ...deps(reached), now: () => thu, rep: { ...rep, closeUserId: "user_s6r" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_s6r", rating: "B" });
-  assert.equal((reached.writes.find((w) => w.op === "task")!.body as { dueAt: string }).dueAt, "2026-09-28T10:00:00-07:00");
+  assert.ok(!reached.writes.some((w) => w.op === "task"), "reached buyer: the emails carry it, no Close task");
   const busy = new FakeClose({ calls: [roddaCall({ id: "acti_s6k", duration: 0 })] });
   busy.openTasks = async () => [{ id: "task_later", text: "Call back", date: "2026-09-29T10:00:00-07:00", is_complete: false }];
-  const r = await quickOutcome({ ...deps(busy), now: () => thu, rep: { ...rep, closeUserId: "user_s6c" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_s6k", rating: "B" });
+  const r = await quickOutcome({ ...deps(busy), now: () => thu, rep: { ...rep, closeUserId: "user_s6c" } }, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_s6k", rating: "B" });
   assert.ok(!busy.writes.some((w) => w.op === "task"));
   assert.match(r.saved.join(" "), /open callback already on/);
 });
 
-test("reaching the buyer moves the callback that was due to the new time, keeping its wording (9/30)", async () => {
+test("reaching the buyer (10/12): no new task, and the callback you were making is marked done", async () => {
   const { quickOutcome } = await import("../src/queue.js");
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_due", duration: 0 })] });
   close.openTasks = async () => [{ id: "task_due", text: "Confirm J. Waite received line card", date: "2026-09-24T08:30:00-07:00", is_complete: false }];
   await quickOutcome({ ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_due" } }, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_due", rating: "B" });
-  assert.equal(close.writes.filter((w) => w.op === "task").length, 0, "no second callback");
-  const moved = close.writes.find((w) => w.op === "task-update")!.body as { taskId: string; date: string; text?: string };
-  assert.deepEqual([moved.taskId, moved.date, moved.text], ["task_due", "2026-09-28T10:00:00-07:00", undefined]);
+  assert.equal(close.writes.filter((w) => w.op === "task" || w.op === "task-update").length, 0, "no callback");
+  assert.equal((close.writes.find((w) => w.op === "task-complete")!.body as { taskId: string }).taskId, "task_due");
 });
 
 test("changing a mistaken tap to no answer takes off the callback the first tap made (9/29, 10/9)", async () => {
@@ -354,8 +351,8 @@ test("changing a mistaken tap to no answer takes off the callback the first tap 
   const thu = new Date("2026-09-24T16:00:00Z"); // Thu 9 AM Pacific
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_chg", disposition: "no-answer", duration: 0 })] });
   const d = { ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_chg" } };
-  const first = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_chg", rating: "B" });
-  assert.equal(first.setStatus, "Qualified");
+  const first = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_chg", rating: "B" });
+  assert.equal(first.setStatus, "Called");
   assert.ok(first.task);
   await assert.rejects(quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B" }), /already saved/);
   const fixed = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B",

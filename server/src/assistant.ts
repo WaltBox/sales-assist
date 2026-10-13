@@ -64,11 +64,34 @@ export type BriefResponse = {
     callPlan: CallPlan;
     /** Everything so far: counts, the conversations and what was said, emails both ways (10/11). */
     history: History;
+    /** Where they are in the email sequence (10/12), from the accounts board; null if they're not on it. */
+    sequence: SequenceInfo | null;
   };
   brief: Brief;
   flags: string[];
   cached: boolean;
 };
+
+/** The card's view of the email sequence: the board's numbers for this lead, from the saved board (never a rebuild). */
+export type SequenceInfo = {
+  track: "talked" | "cold"; round: number; nth: number; introLength: number; phase: string;
+  nextEmailAt: string | null; picked: boolean; lastConvo: string | null; clickedAt: string | null; replied: boolean;
+  rfqPromised: boolean; callAsk: string | null;
+};
+async function sequenceInfo(d: Deps, leadId: string): Promise<SequenceInfo | null> {
+  try {
+    const { accountsBoard } = await import("./accounts.js");
+    const { INTRO_GAPS } = await import("./cadence.js");
+    const a = (await accountsBoard(d, { maxAgeMs: 30 * 60_000 })).accounts.find((x) => x.leadId === leadId);
+    if (!a?.cadence) return null;
+    const c = a.cadence;
+    return {
+      track: c.track, round: c.round, nth: c.nth, introLength: INTRO_GAPS[c.track].length, phase: c.phase,
+      nextEmailAt: c.eligible ? c.dueAt : null, picked: !!c.nextEmailAt, lastConvo: c.lastConvo, clickedAt: c.clickedAt,
+      replied: a.seen === "replied", rfqPromised: a.rfqPromised, callAsk: a.callAsk?.label ?? null,
+    };
+  } catch { return null; }
+}
 
 // Briefs are cached (Supabase when hosted) so reopening a lead is instant. A
 // lead's brief is dropped when the rep saves follow-ups on it, so the next open
@@ -92,7 +115,7 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
   ]);
   const opens = emails ? await emailOpens(d, leadId, emails).catch(() => null) : null;
   const lastCall = lastCallOf(ctx, d.rep.closeUserId);
-  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone), history: buildHistory(ctx, emails ?? []) };
+  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone), history: buildHistory(ctx, emails ?? []), sequence: await sequenceInfo(d, leadId) };
   // The header (local time, status, call count) is always fresh; the brief itself is cached.
   const hit = opts.refresh ? null : await briefCache.get(key).catch(() => null);
   if (hit) return { header, brief: enforceBriefRules(hit, ctx), flags: briefFlags(ctx), cached: true };
@@ -261,7 +284,7 @@ export function callPlanOf(ctx: LeadContext, emails: LeadEmail[], lastCall: Last
   return { action: "call", reason: null, due: null };
 }
 
-function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan" | "history"> {
+function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan" | "history" | "sequence"> {
   const f = ctx.facts;
   return {
     company: f.company, website: f.website, status: f.statusLabel, location: f.location, phone: f.phoneDisplay, phoneE164: f.phone,

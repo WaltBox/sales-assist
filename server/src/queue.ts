@@ -169,9 +169,10 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   // A callback only when you reached the buyer (Walt 10/9: "only create tasks when I was told to call back or reached
   // the buyer"). The transcript rewrites it (who, when, why). Voicemail, no answer and a name get no task from the
   // tap; if someone on the call said to call back, the transcript sets that one with their time.
-  // Reached the buyer, or got a name (Walt 10/12: "if I select got a name it should create a contact and task to
-  // call that person back"): a callback right away, rewritten from the transcript.
-  const tapTask = req.outcome === "reached_buyer" || req.outcome === "got_name";
+  // Close tasks only for a name to call (Walt 10/12: "if I select got a name it should create a contact and task to
+  // call that person back") and a time the buyer gave you (set from the transcript). Reaching the buyer starts the
+  // next round of emails instead; the app flags the call when that round is done.
+  const tapTask = req.outcome === "got_name";
   // One task per lead per call: a callback already scheduled for later wins.
   const later = ctx.tasks.find((t) => !t.is_complete && t.id !== change?.task_id && new Date(t.date).getTime() > now.getTime() + 3600 * 1000);
   // The callback that was due (the one you're making now, or overdue): it moves to the new time instead of a second
@@ -543,9 +544,10 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     const p: Proposals = { ...core.proposals, email: extras.email };
     // No task unless you reached the buyer or someone told you to call back (Walt 10/9).
     const toldInNote = /\b(call (?:me |him |her |them )?back|callback|try (?:him|her|them|again|back)|call (?:him|her|them) (?:at|on|tomorrow|monday|tuesday|wednesday|thursday|friday|next))/i.test(it.note ?? "");
-    // Got a name always gets its callback (10/12): the whole point of the name is calling them.
-    if (it.outcome !== "reached_buyer" && it.outcome !== "got_name" && !core.told_to_call_back && !core.asked_specific_callback && !toldInNote && p.tasks.length) {
-      plog(it, `dropped ${p.tasks.length} task(s): not reached, nobody said to call back`);
+    // Got a name always gets its callback (10/12): the whole point of the name is calling them. Otherwise a task only
+    // when someone gave you a time; reaching the buyer is the email sequence's job (10/12).
+    if (it.outcome !== "got_name" && !core.told_to_call_back && !core.asked_specific_callback && !toldInNote && p.tasks.length) {
+      plog(it, `dropped ${p.tasks.length} task(s): nobody gave a time to call back`);
       p.tasks = [];
     }
     const lc = await lineCardP;

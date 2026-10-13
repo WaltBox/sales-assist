@@ -1438,6 +1438,71 @@ function bumpCallCount(st, callId) {
   c.last = new Date().toISOString();
 }
 
+// ---------- which call this is (Walt 10/12: "it doesn't differentiate when you're calling for the first time or the
+// second time. It needs to be clear: this is the order of this account, what happened last time, who you spoke with,
+// call again, talk to X, get the RFQ") ----------
+const firstOf = (name) => (name && !/purchas|whoever|buyer|main|office|front desk|reception/i.test(name) ? name.split(/\s+/)[0] : null);
+const whenWords = (iso) => {
+  if (!iso) return "earlier";
+  const days = (Date.now() - new Date(iso).getTime()) / 864e5;
+  return days < 1.5 ? "yesterday" : days < 6 ? `on ${new Date(iso).toLocaleDateString([], { weekday: "long" })}` : `on ${shortDate(iso)}`;
+};
+function callStage(st) {
+  const h = st.header || {}, b = st.brief || {}, hist = h.history || { counts: { calls: 0 }, talked: [], events: [] };
+  const seq = h.sequence || null;
+  const me = myName || "Walt";
+  const calls = (h.myCalls && h.myCalls.count) || hist.counts.calls || 0;
+  const n = calls + 1;
+  const ask = firstOf(b.ask_for && b.ask_for.name);
+  const last = (hist.talked || [])[0] || null;
+  const lastCallEv = (hist.events || []).find((e) => e.kind === "call" || e.kind === "voicemail" || e.kind === "no_answer");
+  // What's happened since: the emails, and anything they did.
+  const since = [];
+  if (seq) {
+    since.push(seq.phase === "intro" ? `${seq.nth} of ${seq.introLength} emails sent${seq.track === "talked" ? " since you talked" : ""}` : `${seq.nth} emails since you ${seq.track === "talked" ? "talked" : "started"}`);
+    since.push(seq.replied ? "they replied" : "no reply");
+    if (seq.clickedAt) since.push(`clicked your email ${shortDate(seq.clickedAt)}`);
+    else if (h.opens && h.opens.total) since.push(`opened ${h.opens.total}×`);
+    if (seq.nextEmailAt) since.push(`next email ${shortDate(seq.nextEmailAt)}`);
+  }
+  const first = calls === 0 && !(hist.lineCard);
+  if (first) return {
+    kind: "first", banner: "First call", sub: "Nobody's called them yet",
+    goal: "Get the buyer's name and email, and send the line card", say: null, last: null, since: null,
+  };
+  const intro = ask ? `Hi ${ask}, it's ${me} with Westgate Supply.` : `Hi, it's ${me} with Westgate Supply.`;
+  if (seq && seq.rfqPromised) return {
+    kind: "promised", banner: `Call ${n} · they promised an RFQ`, sub: last ? `Last talk: ${last.who || "them"}, ${shortDate(last.at)}, ${last.minutes} min` : "",
+    last: last && last.note, since: since.join(" · "),
+    goal: `Get the RFQ ${ask || "they"} promised`,
+    say: `${intro} Checking in on the RFQ you mentioned. Is it ready to send over?`,
+  };
+  if (last) return {
+    kind: "talked", banner: `Call ${n} · you've talked ${hist.talked.length === 1 ? "once" : `${hist.talked.length} times`}`,
+    sub: `Last talk: ${last.who || "someone there"}, ${shortDate(last.at)}, ${last.minutes} min`,
+    last: last.note, since: since.join(" · "),
+    goal: `Talk to ${ask || last.who || "the buyer"}, get the RFQ`,
+    say: `${intro} Following up from when we talked ${whenWords(last.at)}. Do you have an RFQ going out this week I can quote?`,
+  };
+  const card = hist.lineCard;
+  return {
+    kind: "cold", banner: `Call ${n} · haven't reached the buyer yet`,
+    sub: lastCallEv ? `Last call ${shortDate(lastCallEv.at)}: ${lastCallEv.text.replace(/^Call(ed)?,?\s*/i, "").toLowerCase()}` : card ? `Line card went to ${card.to || "them"} ${shortDate(card.at)}` : "",
+    last: null, since: since.join(" · "),
+    goal: ask ? `Ask for ${ask} by name, get the RFQ` : "Get the buyer's name and email",
+    say: ask ? `Could I speak with ${ask}? … ${intro} I sent you our line card ${whenWords(card && card.at)}. Do you have an RFQ going out this week I can quote?` : null,
+  };
+}
+function stageBlock(st) {
+  const g = callStage(st);
+  return el("section", { class: `stagecard k-${g.kind}` }, [
+    el("div", { class: "stagebanner" }, [el("strong", { text: g.banner }), g.sub ? el("span", { text: g.sub }) : null]),
+    g.last ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Last time" }), el("span", { text: g.last })]) : null,
+    g.since ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Since then" }), el("span", { text: g.since })]) : null,
+    el("div", { class: "stagegoal" }, [el("span", { class: "label", text: "Goal" }), el("strong", { text: g.goal })]),
+  ]);
+}
+
 function renderPre() {
   const st = S;
   const h = st.header;
@@ -1489,18 +1554,24 @@ function renderPre() {
     opensChip(h),
     h.phone ? el("button", { class: "chip3 mono", title: "Copy number", text: h.phone, onclick: (e) => { navigator.clipboard.writeText(h.phone).catch(() => {}); e.currentTarget.textContent = "Copied"; setTimeout(render, 900); } }) : null,
   ]));
+  page.append(stageBlock(st));
   page.append(el("section", { class: "askfor" }, [
     el("span", { class: "label", text: "Ask for" }), el("strong", { text: b.ask_for.name }),
     b.ask_for.role ? el("span", { class: "muted", text: ` · ${b.ask_for.role}` }) : null,
   ]));
-  page.append(historyBlock(st));
-  const buying = purchasingLine(st);
-  if (buying) page.append(buying);
-
-  page.append(el("section", { class: "hero" }, [
+  const stage = callStage(st);
+  // A repeat call gets its own line (10/12); the first-call opener is for first calls, or if they ask what we do.
+  page.append(el("section", { class: "hero" }, stage.say ? [
+    el("p", { class: "label", text: "Say" }),
+    el("p", { class: "opener", text: stage.say }),
+    el("details", { class: "more inline" }, [el("summary", { text: "If they ask what we supply" }), el("p", {}, highlightSupplies(pitchOnly(b.opener), b.buys || []))]),
+  ] : [
     el("p", { class: "label", text: "Opener" }),
     el("p", { class: "opener" }, highlightSupplies(b.opener, b.buys || [])),
   ]));
+  const buying = purchasingLine(st);
+  if (buying) page.append(buying);
+  page.append(historyBlock(st));
   if (b.ask || b.objection) page.append(el("section", { class: "plain script" }, [
     b.ask ? el("div", { class: "block" }, [el("p", { class: "label", text: "The ask" }), el("p", { class: "say", text: b.ask })]) : null,
     b.objection ? el("div", { class: "block" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { class: "say", text: b.objection_response })]) : null,
@@ -1665,7 +1736,10 @@ function renderOnCall() {
   const b = st.brief || {};
   const ask = b.ask_for || { name: "Purchasing", role: null };
   const elapsed = st.callStartedAt ? (Date.now() - new Date(st.callStartedAt).getTime()) / 1000 : 0;
-  const fu = followUpScript(st);
+  const stage = callStage(st);
+  let fu = followUpScript(st);
+  // A repeat call says the line for this call (10/12), unless the line card was never seen: then it's "did it come through".
+  if (fu && stage.say && !fu.ifNot) fu = { ...fu, say: stage.say };
   const pitch = activePitch(st);
   // What the Say box shows goes to Close as a note, once per call (Walt 10/1).
   const said = fu ? fu.say : pitch.opener;
@@ -1681,6 +1755,7 @@ function renderOnCall() {
       el("div", { class: "linerow" }, [myLineButton("callbar"), callsChip(st.header, true), opensChip(st.header)]),
     ]),
     el("div", { class: "body" }, [
+      el("div", { class: `stagegoal oncallgoal k-${stage.kind}` }, [el("span", { class: "label", text: stage.banner }), el("strong", { text: stage.goal })]),
       st.rescue ? rescueBlock(st) : lineCardAsk(st),
       rfqButton(st),
       glanceBlock(st),
@@ -1720,9 +1795,9 @@ function renderOnCall() {
 // --- call ended: one tap ---
 
 const OUTCOMES = [
-  ["reached_buyer", "Reached buyer", "callback set from the call"],
-  // Tasks only when you reached the buyer or someone said to call back (Walt 10/9).
-  ["got_name", "Got a name", "no task unless they said to call back"],
+  // Close tasks only for a name to call or a time they gave you (Walt 10/12); reaching the buyer starts the emails.
+  ["reached_buyer", "Reached buyer", "starts the next round of emails"],
+  ["got_name", "Got a name", "a callback task to call them"],
   ["voicemail", "Voicemail", "no task"],
   ["no_answer", "No answer", "no task"],
   // Call results too (Walt 10/7): the objection he hears most, and the no.
@@ -1748,6 +1823,7 @@ function renderEnded() {
       disabled: down || (!!o && !(o.changing && !o.busy && o.picked !== k)),
       onclick: () => pickOutcome(k),
     }, [el("strong", { text: label }), el("span", { text: sub })]))),
+    !down && o && (o.picked === "reached_buyer" || o.picked === "got_name" || o.picked === "pms_buy") ? nextEmailPicker(st) : null,
     el("div", { class: "aftertaps" }, [rfqButton(st), shotDownButton(st)]),
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
@@ -1780,6 +1856,26 @@ function renderEnded() {
     el("button", { class: "link", text: "See recent calls", onclick: () => { leaveEnded(null); view = "queue"; refreshQueue(); render(); } }),
   ]));
   return out;
+}
+
+// "Next email in…" (Walt 10/12): you can hear on the call whether they're keen or annoyed. Picks when the next round of
+// emails starts. Not picking leaves the sequence's own timing (next morning after a talk).
+const NEXT_EMAIL = [[1, "Tomorrow"], [3, "3 days"], [5, "5 days"], [7, "1 week"], [14, "2 weeks"]];
+function nextEmailPicker(st) {
+  const ne = st.nextEmail || {};
+  const pick = async (days) => {
+    st.nextEmail = { ...ne, busy: days, error: null }; render();
+    try { const r = await api(`/api/leads/${st.leadId}/next-email`, { days }); st.nextEmail = { days, at: r.nextEmailAt }; }
+    catch (e) { st.nextEmail = { ...ne, busy: null, error: e.message }; }
+    render();
+  };
+  return el("section", { class: "nextemail" }, [
+    el("p", { class: "label", text: "Next email" }),
+    el("div", { class: "row" }, NEXT_EMAIL.map(([days, label]) => el("button", {
+      class: `btn small${ne.days === days ? " primary" : ""}`, disabled: !!ne.busy, text: ne.busy === days ? "…" : label, onclick: () => pick(days),
+    }))),
+    el("p", { class: "muted small", text: ne.at ? `Emails start again ${new Date(ne.at).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}.` : ne.error ? ne.error : "Sounded busy or annoyed? Pick a week or two. Keen? Tomorrow." }),
+  ]);
 }
 
 // Change the one-tap callback's time: quick picks in their hours, or any date.

@@ -11,7 +11,7 @@ let token = (() => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch
 const state = {
   me: null, today: null, board: null, autos: null,
   open: {}, followUps: {}, gotIt: {}, showSect: {}, error: null,
-  mailTab: "upcoming", mailOpen: {}, mailBusy: false,
+  mailTab: "upcoming", mailOpen: {}, mailBusy: false, mailStage: null, mailDay: null,
   page: pageFromHash(),
   rfqEdit: {}, // leadId -> { stage, note, busy, error }
   heatPick: null, // leadId whose breakdown is open on the heat map
@@ -1290,6 +1290,165 @@ function memeLibrary() {
   ]);
 }
 
+// Is the sequence working (10/12)? Emails sent, RFQs that came in within a week of one, and stop requests, by where
+// the account was in the sequence. The number that matters is RFQs per 100 emails.
+function scoreboardTable(rows) {
+  const per = (r) => (r.sent ? `${((r.rfqs / r.sent) * 100).toFixed(1)}` : "–");
+  const tot = rows.reduce((t, r) => ({ sent: t.sent + r.sent, rfqs: t.rfqs + r.rfqs, stops: t.stops + r.stops }), { sent: 0, rfqs: 0, stops: 0 });
+  return el("details", { class: "rfqtable scoreboard", open: true }, [
+    el("summary", { text: `Scoreboard, last 60 days: ${tot.rfqs} RFQ${tot.rfqs === 1 ? "" : "s"} from ${tot.sent} automatic emails` }),
+    el("table", {}, [
+      el("thead", {}, [el("tr", {}, ["Where they were", "Emails", "RFQs within a week", "RFQs per 100", "Asked to stop or slow down"].map((h) => el("th", { text: h })))]),
+      el("tbody", {}, rows.map((r) => el("tr", {}, [
+        el("td", { text: r.label }), el("td", { class: "mono", text: r.sent }), el("td", { class: "mono", text: r.rfqs }), el("td", { class: "mono", text: per(r) }), el("td", { class: "mono", text: r.stops }),
+      ]))),
+    ]),
+  ]);
+}
+
+// ---------- the Automatic emails dashboard (Walt 10/12: "make it super intuitive, I don't know what's going on") ----------
+// Four questions, top to bottom: what's going out, where every account is in the sequence, who to call, and is it
+// producing RFQs. The full list of emails is under that.
+
+// Where an account is in the sequence, one stage each, in the order the sequence moves them.
+const MAIL_STAGES = [
+  { k: "intro", label: "Intro emails", sub: "Talked to the buyer: 3 emails", tone: "navy" },
+  { k: "cold", label: "Cold intro", sub: "Email from the front desk: 2 emails", tone: "navy" },
+  { k: "call", label: "Call them", sub: "Clicked, intro done, or 3 days quiet", tone: "red" },
+  { k: "rhythm", label: "Rhythm", sub: "Every few days to 3 weeks, by how much they buy", tone: "ink" },
+  { k: "monthly", label: "Monthly", sub: "6 emails, nothing back", tone: "muted" },
+];
+const MAIL_SIDE = [
+  { k: "you", label: "Waiting on you", sub: "A reply to answer, or a bad address", tone: "red" },
+  { k: "paused", label: "Paused", sub: "Replied, cooling off, or on hold", tone: "amber" },
+  { k: "rfq", label: "RFQ in", sub: "Out of the emails, into quoting", tone: "green" },
+  { k: "out", label: "Off for good", sub: "Said no or stop", tone: "muted" },
+];
+function mailStageOf(a, held) {
+  if (a.rfq) return "rfq";
+  const p = a.warmth && a.warmth.paused;
+  if (p && (p.kind === "out" || p.kind === "no_emails")) return "out";
+  if (a.next.kind === "reply" || a.seen === "bounced" || a.next.kind === "rescue" && /working email|mail filter/i.test(a.next.label)) return "you";
+  const replied = a.lastReplyAt && Date.now() - Date.parse(a.lastReplyAt) < 10.5 * 864e5;
+  if (held.has(a.leadId) || replied || (p && p.until && p.until > new Date().toISOString())) return "paused";
+  if (a.next.kind === "bump" && a.next.tag === "Call") return "call";
+  const c = a.cadence;
+  if (!c || !c.eligible) return "paused";
+  if (c.phase === "intro") return c.track === "cold" ? "cold" : "intro";
+  return c.phase === "monthly" ? "monthly" : "rhythm";
+}
+// "talked:r1:intro" (a sent row's tag) or the forecast label → a short step for the list.
+function stepOf(m) {
+  const v = m.variant || "";
+  const t = /^(cold|talked):r(\d+):(intro|rhythm|monthly)$/.exec(v);
+  if (t) return t[1] === "cold" ? `Cold ${t[3]}` : `Round ${t[2]} ${t[3]}`;
+  if (v === "friday") return "Sent by hand";
+  if (m.future) return m.label;
+  return m.status === "sent" ? "Old sequence" : m.label || "";
+}
+const localDay = (iso) => new Date(iso).toLocaleDateString("en-CA");
+
+function mailDashboard(au) {
+  const accounts = (state.board && state.board.accounts) || [];
+  const held = new Set((au.held || []).map((f) => f.leadId));
+  const upcoming = mailRows(au, "upcoming");
+  const today = localDay(new Date().toISOString());
+  const byDay = new Map();
+  for (const m of upcoming) { const d = localDay(m.sortAt); byDay.set(d, (byDay.get(d) || 0) + 1); }
+  const days = [...byDay.keys()].sort();
+  const nextDay = days.find((d) => d > today);
+  const tot = (au.scoreboard || []).reduce((t, r) => ({ sent: t.sent + r.sent, rfqs: t.rfqs + r.rfqs, stops: t.stops + r.stops }), { sent: 0, rfqs: 0, stops: 0 });
+  const tile = (n, label, sub, tone, onclick) => el(onclick ? "button" : "div", { class: `mtile t-${tone}${onclick ? " click" : ""}`, onclick }, [
+    el("b", { class: "mono", text: n }), el("span", { class: "tl", text: label }), sub ? el("span", { class: "sub2", text: sub }) : null,
+  ]);
+  const pickDay = (d) => { state.mailTab = "upcoming"; state.mailDay = state.mailDay === d ? null : d; render(); document.querySelector(".mlist")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+
+  // 1. At a glance. The daily goal (Walt 10/12): every account in the sequence hears from you, email or phone, at
+  // least every 3 business days: about 50-100 a day.
+  const inSeq = accounts.filter((a) => ["intro", "cold", "call", "rhythm", "monthly"].includes(mailStageOf(a, held)));
+  const touched = inSeq.filter((a) => a.touchedToday).length;
+  const callsLeft = accounts.filter((a) => a.next.kind === "bump" && a.next.tag === "Call" && !a.touchedToday).length;
+  const tiles = el("div", { class: "mtiles" }, [
+    tile(touched, "Touched today", `of ${inSeq.length} in the sequence · ${callsLeft} call${callsLeft === 1 ? "" : "s"} to go`, touched ? "green" : "muted", () => { state.mailStage = "call"; render(); }),
+    tile(byDay.get(today) || 0, "Emails today", (byDay.get(today) || 0) ? "around 8am their time" : "nothing due today", "navy", () => pickDay(today)),
+    tile(nextDay ? byDay.get(nextDay) : 0, nextDay ? `Going out ${dayOf(`${nextDay}T12:00:00`).split(",")[0]}` : "Next run", nextDay ? shortDate(`${nextDay}T12:00:00`) : "", "navy", nextDay ? () => pickDay(nextDay) : null),
+    tile(tot.rfqs, "RFQs from emails", `last 60 days, from ${tot.sent} emails`, "green"),
+    tile(tot.stops, "Asked to stop or slow down", "they're off or paused", tot.stops ? "red" : "muted"),
+  ]);
+
+  // 2. Where everyone is: the sequence, left to right, and the ones off to the side.
+  const counts = {};
+  const members = {};
+  for (const a of accounts) { const k = mailStageOf(a, held); counts[k] = (counts[k] || 0) + 1; (members[k] = members[k] || []).push(a); }
+  const stageCard = (st, arrow) => el("button", { class: `stage s-${st.tone}${state.mailStage === st.k ? " on" : ""}`, onclick: () => { state.mailStage = state.mailStage === st.k ? null : st.k; render(); } }, [
+    el("b", { class: "mono", text: counts[st.k] || 0 }), el("span", { class: "tl", text: st.label }), el("span", { class: "sub2", text: st.sub }),
+    arrow ? el("i", { class: "arrow", "aria-hidden": "true", text: "→" }) : null,
+  ]);
+  const picked = state.mailStage && (members[state.mailStage] || []);
+  const stageList = picked ? el("div", { class: "stagelist" }, [
+    el("div", { class: "head" }, [
+      el("h3", { text: `${[...MAIL_STAGES, ...MAIL_SIDE].find((x) => x.k === state.mailStage).label} · ${picked.length}` }),
+      el("button", { class: "linkbtn small3", text: "Close", onclick: () => { state.mailStage = null; render(); } }),
+    ]),
+    !picked.length ? el("p", { class: "empty", text: "Nobody here right now." }) : el("div", { class: "slrows" }, picked
+      .sort((x, y) => (x.cadence?.dueAt || "z").localeCompare(y.cadence?.dueAt || "z"))
+      .map((a) => el("div", { class: "slrow" }, [
+        el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
+        el("span", { class: "sub2", text: [a.contact.name, a.contact.email].filter(Boolean).join(" · ") }),
+        el("span", { class: "sl-step", text: state.mailStage === "call" || state.mailStage === "you" ? a.next.label
+          : a.cadence ? `${a.cadence.nth} email${a.cadence.nth === 1 ? "" : "s"} ${a.cadence.track === "cold" ? "so far, haven't talked yet" : "since you talked"}` : "" }),
+        el("span", { class: "sub2", text: ["intro", "cold", "rhythm", "monthly", "call"].includes(state.mailStage) && a.cadence?.dueAt ? `next email ${shortDate(a.cadence.dueAt)}` : a.warmth?.paused?.why || "" }),
+      ]))),
+  ]) : null;
+  const flow = el("section", { class: "mcard" }, [
+    el("div", { class: "mhead" }, [el("h2", { text: "Where everyone is" }), el("span", { class: "sub2", text: `${accounts.length} accounts with a line card. Click a box to see who.` })]),
+    el("div", { class: "stages" }, MAIL_STAGES.map((st, i) => stageCard(st, i < MAIL_STAGES.length - 1))),
+    el("div", { class: "stages side" }, MAIL_SIDE.map((st) => stageCard(st, false))),
+    stageList,
+  ]);
+
+  // 3. The next two weeks, a bar a day.
+  const max = Math.max(1, ...byDay.values());
+  const cal = el("section", { class: "mcard" }, [
+    el("div", { class: "mhead" }, [el("h2", { text: "Next two weeks" }), el("span", { class: "sub2", text: state.mailDay ? `Showing ${dayOf(`${state.mailDay}T12:00:00`)} below.` : "Click a day to see who." })]),
+    el("div", { class: "cal" }, days.slice(0, 12).map((d) => el("button", { class: `calday${state.mailDay === d ? " on" : ""}${d === today ? " today" : ""}`, title: `${byDay.get(d)} emails`, onclick: () => pickDay(d) }, [
+      el("span", { class: "mono n", text: byDay.get(d) }),
+      el("span", { class: "bar", style: `height:${Math.max(4, Math.round((byDay.get(d) / max) * 64))}px` }),
+      el("span", { class: "dl", text: d === today ? "Today" : new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: "short" }) }),
+      el("span", { class: "sub2", text: shortDate(`${d}T12:00:00`) }),
+    ]))),
+  ]);
+
+  // 4. Calls the sequence is asking for.
+  // In the board's priority order: clicks, then the intro-done flags, then the longest quiet.
+  const calls = (members.call || []).slice().sort((x, y) => ((x.callAsk && x.callAsk.rank) ?? 999) - ((y.callAsk && y.callAsk.rank) ?? 999));
+  const callCard = el("section", { class: "mcard" }, [
+    el("div", { class: "mhead" }, [el("h2", { text: `Calls to make · ${calls.length}` }), el("span", { class: "sub2", text: "Top first: clicked your email, intro done with nothing back, then quiet 3 business days. Work down; what's left is here tomorrow." })]),
+    !calls.length ? el("p", { class: "empty", text: "None right now." }) : el("div", { class: "slrows" }, calls.slice(0, 12).map((a) => el("div", { class: "slrow" }, [
+      el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
+      el("span", { class: "sub2", text: a.contact.phone || a.contact.email || "" }),
+      el("span", { class: `sl-step${/clicked/.test(a.next.label) ? " hot" : ""}`, text: a.next.label }),
+      el("span", { class: "sub2", text: a.cadence?.dueAt ? `emails keep going, next ${shortDate(a.cadence.dueAt)}` : "" }),
+    ]))),
+    calls.length > 12 ? el("p", { class: "sub2", text: `And ${calls.length - 12} more: click "Call them" above.` }) : null,
+  ]);
+
+  const how = el("details", { class: "mhow" }, [
+    el("summary", { text: "How the sequence works" }),
+    el("ol", {}, [
+      "You reach the buyer, or the front desk gives you their email. The line card goes out.",
+      "Talked to the buyer: 3 emails (next morning, then 3 and 5 business days later). Email from the front desk: 2 emails (2 and 5 business days later).",
+      "Then the app flags a call. The emails keep going while it waits: every 3 business days for steady buyers, weekly for project buyers and anyone you haven't talked to, every 3 weeks for occasional ones. After 6 with nothing back, monthly.",
+      "Nobody goes more than 3 business days without hearing from you (occasional buyers: 2 weeks). When no email is due, they're on Calls to make. No daily limit on calls; the list is in priority order. Emails go at most 80 a day; extras go the next morning.",
+      "After you reach someone, pick Next email in the side panel (tomorrow to 2 weeks) if you want a different start for the next round.",
+      "Reach the buyer again and the next round starts from the top.",
+      "Any time: a reply pauses it, a click on your email makes it a call today, an RFQ takes them out for good, and \"no\" or \"stop\" ends it.",
+      "Every email ends with the same ask: please send me over an RFQ and we'll get you a quote back. They go out around 8am their time, Mondays after 10.",
+    ].map((t) => el("li", { text: t }))),
+  ]);
+  return [tiles, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
+}
+
 function emailsSection() {
   const au = state.autos;
   const toggle = async () => {
@@ -1302,10 +1461,8 @@ function emailsSection() {
     state.mailBusy = true; render();
     try {
       const r = await api("/api/automations/plan", {});
-      // Always say what happened, including "nothing's due yet, next one is Mercer on Sep 30".
-      const next = ((state.board && state.board.accounts) || []).filter((a) => a.next.kind === "waiting" && /^Bump /.test(a.next.label) && a.next.due).sort((a, b) => a.next.due.localeCompare(b.next.due))[0];
       const lines = [
-        r.planned.length ? `Scheduled ${r.planned.length} bump${r.planned.length === 1 ? "" : "s"}. They're under Going out.` : `No bumps are due today.${next ? ` The next one is ${next.company}, ${shortDate(next.next.due)}.` : ""}`,
+        r.planned.length ? `Scheduled ${r.planned.length} email${r.planned.length === 1 ? "" : "s"}. They're under Coming up.` : "No emails are due today.",
         ...(r.skipped || []).map((x) => `Not scheduled, ${x.company}: ${x.why}`),
       ];
       alert(lines.join("\n"));
@@ -1314,38 +1471,43 @@ function emailsSection() {
     await reloadAutos();
     load(true);
   };
-  const rows = au ? mailRows(au, state.mailTab) : [];
-  return el("section", {}, [
+  let rows = au ? mailRows(au, state.mailTab) : [];
+  if (au && state.mailTab === "upcoming" && state.mailDay) rows = rows.filter((m) => localDay(m.sortAt) === state.mailDay);
+  return el("section", { class: "mdash" }, [
     el("div", { class: "head pagehead" }, [
       el("h1", { class: "ptitle", text: "Automatic emails" }),
       au ? el("div", { class: "acts" }, [
         el("span", { class: `switch${au.enabled ? " on" : ""}` }, [el("i"), au.enabled ? "On" : "Off"]),
         el("button", { class: "btn small", disabled: state.mailBusy, text: au.enabled ? "Turn off" : "Turn on", onclick: toggle }),
-        el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan bumps now", onclick: planNow }),
+        el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today's emails now", onclick: planNow }),
       ]) : null,
     ]),
-    au && !au.enabled ? el("p", { class: "offnote", text: "Automatic emails are off. Coming up shows what would go out; nothing sends until you turn them on." }) : null,
+    au && !au.enabled ? el("p", { class: "offnote", text: "Automatic emails are off. Everything below shows what would go out; nothing sends until you turn them on." }) : null,
     // Test mode (10/1): only Test Lead Fabrication gets them until it's turned off.
     au && au.testMode ? el("div", { class: "testnote" }, [
-      el("p", {}, [el("strong", { text: "Test mode: " }), "each morning, one bump goes to ", el("strong", { text: "Test Lead Fabrication" }), " only, with its meme, so you can see how it lands. No real company gets anything. Coming up shows what would go out once test mode is off."]),
+      el("p", {}, [el("strong", { text: "Test mode: " }), "each morning, one email goes to ", el("strong", { text: "Test Lead Fabrication" }), " only, with its meme, so you can see how it lands. No real company gets anything."]),
       el("button", { class: "btn small", disabled: state.mailBusy, text: "Turn off test mode", onclick: async () => {
-        if (!confirm("Turn off test mode? From the next morning run, the bumps in Coming up go to the real companies.")) return;
+        if (!confirm("Turn off test mode? From the next morning run, the emails in Coming up go to the real companies.")) return;
         state.mailBusy = true; render();
         await api("/api/automations/test-mode", { on: false }).catch((e) => alert(e.message));
         state.mailBusy = false; reloadAutos();
       } }),
-    ]) : au ? el("button", { class: "linkbtn", text: "Back to test mode", onclick: async () => { await api("/api/automations/test-mode", { on: true }).catch((e) => alert(e.message)); reloadAutos(); } }) : null,
-    au ? el("p", { class: "muted small3", text: `Bumps are written each weekday morning, scheduled in Close for a random minute between 8:11 and 11am their time, and re-checked just before they go: if they've written in, it's pulled back. Up to ${au.dailyCap} a day. Skip any you don't want.` }) : null,
-    el("div", { class: "tabs" }, MAIL_TABS.map(([k, label]) => el("button", {
-      class: `tab${state.mailTab === k ? " on" : ""}`, onclick: () => { state.mailTab = k; render(); },
-    }, [label, el("span", { class: "c mono", text: au ? mailRows(au, k).length : "–" })]))),
-    !au ? el("p", { class: "loading", text: "Loading…" })
-      : !rows.length ? el("p", { class: "empty", text: { upcoming: "No automatic emails due in the next two weeks.", sent: "Nothing sent automatically in the last week.", other: "Nothing skipped or stopped." }[state.mailTab] })
-        : el("div", { class: "grid x3d" }, [
-          el("div", { class: "gr mgr gh" }, ["When", "Account", "To", "Why", "Status", ""].map((h) => el("span", { class: "label", text: h }))),
-          ...rows.flatMap(mailRow),
-        ]),
-    memeLibrary(),
+    ]) : null,
+    ...(au ? mailDashboard(au) : [el("p", { class: "loading", text: "Loading…" })]),
+    au && au.scoreboard && au.scoreboard.length ? scoreboardTable(au.scoreboard) : null,
+    el("div", { class: "mlist" }, [
+      el("div", { class: "mhead" }, [el("h2", { text: "Every email" }), state.mailDay && state.mailTab === "upcoming" ? el("button", { class: "linkbtn small3", text: `Showing ${dayOf(`${state.mailDay}T12:00:00`)} · show all`, onclick: () => { state.mailDay = null; render(); } }) : null]),
+      el("div", { class: "tabs" }, MAIL_TABS.map(([k, label]) => el("button", {
+        class: `tab${state.mailTab === k ? " on" : ""}`, onclick: () => { state.mailTab = k; if (k !== "upcoming") state.mailDay = null; render(); },
+      }, [label, el("span", { class: "c mono", text: au ? mailRows(au, k).length : "–" })]))),
+      !au ? null
+        : !rows.length ? el("p", { class: "empty", text: { upcoming: "No automatic emails due in the next two weeks.", sent: "Nothing sent automatically in the last week.", other: "Nothing skipped or stopped." }[state.mailTab] })
+          : el("div", { class: "grid x3d" }, [
+            el("div", { class: "gr mgr gh" }, ["When", "Account", "Step", "Status", ""].map((h) => el("span", { class: "label", text: h }))),
+            ...rows.flatMap(mailRow),
+          ]),
+    ]),
+    au ? el("details", { class: "mhow" }, [el("summary", { text: "Memes" }), memeLibrary()]) : null,
   ]);
 }
 
@@ -1354,20 +1516,18 @@ function mailRow(m) {
   const when = m.status === "sent" ? m.statusAt : ["scheduled", "planned"].includes(m.status) ? m.scheduledFor : m.statusAt;
   const hold = async (e, on, days) => { e.stopPropagation(); e.currentTarget.disabled = true; await api(`/api/leads/${m.leadId}/hold`, { hold: on, days: days || null }).catch((err) => alert(err.message)); await reloadAutos(); load(true); };
   const row = el("div", { class: `gr mgr${open ? " open" : ""}`, onclick: () => { state.mailOpen[m.id] = !open; render(); } }, [
-    m.future ? el("span", { class: "whenf" }, [el("span", { class: "mono", text: dayOf(when) }), el("span", { class: "sub2", text: "8:11–11am their time" })])
+    m.future ? el("span", { class: "whenf" }, [el("span", { class: "mono", text: dayOf(when) }), el("span", { class: "sub2", text: new Date(when).getDay() === 1 ? "after 10am their time" : "around 8am their time" })])
       : el("span", { class: "mono", text: when ? timeOf(when) : "–" }),
     el("div", { class: "acct macct" }, [
       m.future && m.meme ? el("img", { class: "memethumb", src: m.meme.url, alt: "", loading: "lazy" }) : null,
       el("div", {}, [
         el("a", { class: "co", href: closeLead(m.leadId), target: "_blank", rel: "noopener", text: m.company, onclick: (e) => e.stopPropagation() }),
-        el("span", { class: "sub2", text: m.subject }),
+        el("span", { class: "sub2", text: m.to }),
       ]),
     ]),
-    el("span", { class: "sub2", text: m.to }),
-    el("span", { class: "next", text: m.label }),
+    el("span", { class: "steppill", text: stepOf(m) }),
     el("span", { class: `mstatus ${m.status}`, text: STATUS_TEXT[m.status] || m.status }),
     el("div", { class: "acts" }, [
-      ...(m.future ? [el("span", { class: "muted small3", text: "Cool off" }), ...COOL_OPTIONS.map(([days, label]) => el("button", { class: days ? "btn small" : "linkbtn small3", text: label, title: days ? `Out of the automatic emails for ${label}, then back in on their own` : "Out until you put them back", onclick: (e) => hold(e, true, days) }))] : []),
       m.heldRow ? el("button", { class: "btn small", text: "Put back", onclick: (e) => hold(e, false) }) : null,
       m.status === "scheduled" ? el("button", {
         class: "btn small", text: "Skip",
@@ -1379,6 +1539,7 @@ function mailRow(m) {
   if (!open) return [row];
   return [row, el("div", { class: "detail" }, [
     el("p", { class: "why" }, [el("strong", { text: "Why: " }), m.reason]),
+    m.future ? el("div", { class: "row coolrow", onclick: (e) => e.stopPropagation() }, [el("span", { class: "muted small3", text: "Cool them off for" }), ...COOL_OPTIONS.map(([days, label]) => el("button", { class: days ? "btn small" : "linkbtn small3", text: label, title: days ? `Out of the automatic emails for ${label}, then back in on their own` : "Out until you put them back", onclick: (e) => hold(e, true, days) }))]) : null,
     m.future ? el("p", { class: "why muted", text: "It's scheduled that morning as a reply in their thread. It won't go out if they reply, send a file, or you book a callback first." }) : null,
     m.future && m.preview ? bumpPreview(m) : null,
     m.heldRow ? el("p", { class: "why muted", text: m.heldUntil ? `Cooling off until ${dayOf(m.heldUntil)}${m.heldWhy ? ` (${m.heldWhy})` : ""}; back in the automatic emails on its own after that. Put back to end it early.` : `On hold${m.heldWhy ? ` (${m.heldWhy})` : ""}: no automatic emails until you put them back.` }) : null,

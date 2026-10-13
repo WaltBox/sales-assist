@@ -2,7 +2,8 @@ import { background } from "./background.js";
 import { classifyOpen, lineCardAttachments, RFQ_IN_TAG, RFQ_TAG, taskTitle, type Deps } from "./assistant.js";
 import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
-import { bumpHtml, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
+import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
+import { cadenceFor, CLICK_HOLD_DAYS, isGenericAddress, type Cadence } from "./cadence.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts } from "./rules.js";
@@ -162,6 +163,9 @@ export async function setRfqStatus(d: Deps, leadId: string, stage: RfqStage, not
   forgetBoard(d.rep.closeUserId);
   return { ok: true, note: text };
 }
+/** No account in the sequence goes longer than this (business days) without a touch, email or call (Walt 10/12). */
+export const TOUCH_DAYS = 3;
+export const OCCASIONAL_TOUCH_DAYS = 10;
 /** Opened this many times by a person with no RFQ yet: interested, call now. */
 export const HOT_OPENS = 3;
 export type Event = { at: string; kind: "line_card" | "email" | "reply" | "rfq" | "quote" | "opened" | "filter" | "call" | "note" | "auto"; text: string };
@@ -202,6 +206,17 @@ export type Account = {
    * cadence since the last email. A callback on the books doesn't stop it: the call and the email are different touches.
    */
   bumpDue: boolean;
+  /**
+   * Where the account is in the email sequence (Walt 10/12): which track (talked to the buyer, or the email came
+   * from the front desk), which round, how many emails since the last real conversation, and the gap to the next.
+   * `eligible`: in the sequence at all; `dueAt`: when the next one is due; `clickedAt`: a person clicked a link.
+   */
+  cadence: Cadence & { eligible: boolean; dueAt: string | null; clickedAt: string | null; lastConvo: string | null; nextEmailAt: string | null; lastTouch: string | null };
+  /**
+   * A call the sequence is asking for (10/12), before the daily cap: a click, the intro done with nothing back, or 3
+   * business days with no touch at all. The board turns these into the call flag, in priority order.
+   */
+  callAsk?: { kind: "clicked" | "flag" | "touch"; label: string; detail: string; due: string; rank: number } | null;
   /** Their site, from Close or the buyer's email domain. */
   website: string | null;
   /** How much PVF buying they do at all (Walt 10/5), read from their site; null until it's been read. */
@@ -222,6 +237,8 @@ export function sectionOf(a: Pick<Account, "next" | "seen" | "opens" | "rfq"> & 
   if (k === "rescue") return "seen";
   // A callback you set for later (Steel West, Oct 15) wins: they asked for that time.
   if (a.seen === "opened" && a.opens.person >= HOT_OPENS && !a.rfq && k !== "scheduled") return "hot";
+  // Clicked a link in your email (10/12): the one signal we trust besides a reply.
+  if (k === "bump" && a.next.tag === "Call" && /clicked/.test(a.next.label)) return "hot";
   if (k === "bump") return /auto/.test(a.next.tag) ? "later" : "followup";
   return "later";
 }
@@ -298,7 +315,7 @@ export function bustBoard(d: Deps) {
   forgetBoard(d.rep.closeUserId);
 }
 /** Both the in-memory board and the stored snapshot: a change in Close (a status, a hold) must show on the next read anywhere. */
-function forgetBoard(repId: string) {
+export function forgetBoard(repId: string) {
   for (const k of boardCache.keys()) if (k.startsWith(`${repId}:`)) { boardCache.delete(k); void store.cacheDelete(`board:${k}`).catch(() => undefined); }
   void store.cacheDelete(`board:${repId}:45`).catch(() => undefined);
 }
@@ -385,6 +402,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
     loadProfiles(d.rep.closeUserId),
   ]);
+  const clicks = await clicksFor(d.rep.closeUserId);
+  const nextEmail = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").catch(() => null)) ?? {};
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
   const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId && at(e) >= since.toISOString()
     && (e.attachments ?? []).some((a) => a.filename === LINE_CARD));
@@ -418,8 +437,9 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     autos: autos.filter((a) => a.leadId === leadId),
     rescueDraft: drafts[leadId] ?? null,
     autoOn,
-    gap: arms[leadId] ?? null,
     profile: profiles[leadId] ?? null,
+    clickedAt: clicks[leadId] ?? null,
+    nextEmailAt: nextEmail[leadId] ?? null,
     bounceBodies,
     cooling: cooling[leadId] ?? null,
   }));
@@ -427,6 +447,15 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   // out of the automatic emails (Walt 10/5: West Coast Air Conditioning was Not Interested and still in line for
   // a rescue call). One that already sent an RFQ stays on the RFQs page.
   const accounts = built.filter((a) => !isOwnLead(a) && !(isOutStatus(a.status) && !a.rfq));
+  // The sequence's calls for today (10/12): no cap (Walt: "just use proper logic"). Every one is a call on the board,
+  // in priority order: clicks, then the intro-done flags, then the longest quiet. Whatever isn't called today is still
+  // there tomorrow, higher up because it's been quiet longer; the 3-day rule keeps the volume steady by itself.
+  const asks = accounts.filter((a) => a.callAsk && !a.touchedToday).sort((x, y) => x.callAsk!.rank - y.callAsk!.rank || x.callAsk!.due.localeCompare(y.callAsk!.due));
+  for (const [i, a] of asks.entries()) {
+    a.callAsk!.rank = i;
+    a.next = { kind: "bump", tag: "Call", label: a.callAsk!.label, detail: a.callAsk!.detail, due: a.callAsk!.due, rescue: false };
+    a.section = sectionOf(a);
+  }
   // By section; inside one, oldest first (the longest wait), except hot: most opens first.
   const rank = (a: Account) => SECTION_ORDER.indexOf(a.section);
   accounts.sort((a, b) => rank(a) - rank(b)
@@ -459,6 +488,10 @@ export function buildAccount(x: {
   gap?: number | null;
   /** What their website says they do (RFQ potential), if it's been read. */
   profile?: Profile | null;
+  /** The last time someone there clicked a link in one of our emails. */
+  clickedAt?: string | null;
+  /** The rep picked when the emails start again after a call ("next email in 3 days", 10/12). */
+  nextEmailAt?: string | null;
 }): Account {
   const { d, now, card, lead } = x;
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
@@ -604,6 +637,27 @@ export function buildAccount(x: {
     lastTalk: talkedCalls.map((c) => c.date_created).sort().pop() ?? null,
   };
 
+  // ---------- the email sequence (Walt 10/12) ----------
+  // A real conversation: a connected call of a minute or more that wasn't a voicemail. A front-desk handoff ("let me
+  // give you his email") is usually shorter, so that account starts on the cold track.
+  const convos = talkedCalls.filter((c) => c.duration >= 60).map((c) => c.date_created).sort();
+  const lastConvo = convos[convos.length - 1] ?? null;
+  const potential = potentialFor(x.profile);
+  const sentAutos = (x.autos ?? []).filter((au) => au.status === "sent" && (au.statusAt ?? au.createdAt) > (lastConvo ?? ""));
+  const clickedAt = x.clickedAt && x.clickedAt > (lastConvo ?? "") ? x.clickedAt : null;
+  const cad = cadenceFor({
+    track: convos.length ? "talked" : "cold", round: Math.max(1, convos.length), nth: sentAutos.length,
+    tier: potential?.tier ?? null, generic: isGenericAddress(toAddr), heardBack: replies.some((r) => at(r) > (lastConvo ?? "")) || !!clickedAt,
+  });
+  // A click is a person reading it: a call today, and no email for a few business days.
+  const clickHold = !!clickedAt && businessDaysBetween(new Date(clickedAt), now, tz) < CLICK_HOLD_DAYS;
+  const eligible = !rfq && !bounce && seen !== "bounced" && !!toAddr && !(lastIn && lastIn >= lastOut);
+  // "Next email in 3 days" from the call screen: nothing before that date (only if it was set after the last email).
+  const nextEmailAt = x.nextEmailAt && x.nextEmailAt > lastOut ? x.nextEmailAt : null;
+  const waitPicked = !!nextEmailAt && nextEmailAt > now.toISOString();
+  const dueAt = eligible ? [businessDaysAt(tz, new Date(lastOut), cad.gap, 7, 0).toISOString(), clickHold ? businessDaysAt(tz, new Date(clickedAt!), CLICK_HOLD_DAYS, 7, 0).toISOString() : "", nextEmailAt ?? ""].sort().pop()! : null;
+  const firstName = (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null;
+
   const acct = {
     leadId: card.lead_id, company: lead?.display_name ?? "Unknown account",
     // The name they reply under beats the contact's name in Close (10/1: jives@ is Jennifer, not "Sam Ives").
@@ -614,7 +668,7 @@ export function buildAccount(x: {
     opens: { person: person.length, maybe: maybe.length, filter: filter.length, last: person.map((o) => o.opened_at).pop() ?? null, app: appOf(person[0]?.user_agent) },
     next: scheduledBump(x.autos, d.rep.timeZone, (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null) ?? nextStep({
       seen, cardSentAt: t0, lastOut, lastIn, lastTalk, rfqPromised, tasks: liveTasks, now, tz, company: lead?.display_name ?? "",
-      who: (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null, notFound, markedAt: lastMark?.date_created ?? null, rfq, bounced: bounce ? (blocked ? "blocked" : "bounced") : null, toAddr, autoOn: x.autoOn, gap: x.gap ?? null,
+      who: (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] || null, notFound, markedAt: lastMark?.date_created ?? null, rfq, bounced: bounce ? (blocked ? "blocked" : "bounced") : null, toAddr, autoOn: x.autoOn, gap: cad.gap,
     }),
     events,
     touchedToday,
@@ -625,11 +679,37 @@ export function buildAccount(x: {
     staleTaskIds: staleTasks.map((t) => t.id).filter((id): id is string => !!id),
     // Unopened accounts are in the sequence too (Walt 10/5): "not opened" is a missing pixel, not a missing email.
     // The planner stops them after UNCONFIRMED_MAX_BUMPS until a call, an open or a reply confirms they have it.
-    bumpDue: !rfq && !bounce && seen !== "bounced" && !(lastIn && lastIn >= lastOut) && !!toAddr
-      && businessDaysBetween(new Date(lastOut), now, tz) >= (x.gap && x.gap > 0 ? x.gap : BUMP_AFTER_BUSINESS_DAYS),
+    bumpDue: eligible && !clickHold && !waitPicked && businessDaysBetween(new Date(lastOut), now, tz) >= cad.gap,
+    cadence: { ...cad, eligible, dueAt, clickedAt, lastConvo, nextEmailAt, lastTouch: null as string | null },
     website: lead?.url || siteFromEmail(toAddr),
-    potential: potentialFor(x.profile),
+    potential,
   } as Omit<Account, "section" | "warmth">;
+  // A call the sequence asks for (10/12): a click, the intro done with nothing back, or 3 business days with no touch
+  // of any kind ("they should never go 3-5 days without some form of comms"). Occasional buyers: two weeks. The board
+  // lists them in priority order. Never over a reply to answer, a quote to price, or a callback due.
+  const lastTouch = [lastOut, ...myCalls.map((c) => c.date_created), ...replies.map(at)].sort().pop() ?? null;
+  acct.cadence.lastTouch = lastTouch;
+  const quiet = lastTouch ? businessDaysBetween(new Date(lastTouch), now, tz) : 99;
+  const touchLimit = potential?.tier === "occasional" ? OCCASIONAL_TOUCH_DAYS : TOUCH_DAYS;
+  const paused = !!(x.cooling && (!x.cooling.until || x.cooling.until > now.toISOString())) || (!!lastReplyAt && now.getTime() - Date.parse(lastReplyAt) < 10.5 * DAY);
+  if (eligible && !paused && ["bump", "waiting", "scheduled"].includes(acct.next.kind) && !(acct.next.kind === "bump" && /quote/i.test(acct.next.label))) {
+    const co = (lead?.display_name ?? "").split(/[,(]| - /)[0].replace(/\s+(Inc|LLC|Co|Corp|Company)\.?$/i, "").trim() || "them";
+    // A "name" that's just the email address ("bpayler") isn't one to ask for.
+    const gn = greetName(firstName);
+    // (Close names a contact after the address when it has nothing else: all lowercase, exactly the part before the @.)
+    const rawFirst = (contact?.name ?? personName(card.to?.[0]) ?? "").split(/\s+/)[0] ?? "";
+    const name = gn && rawFirst !== (toAddr.split("@")[0] ?? "") ? gn : null;
+    const emailToday = acct.bumpDue;
+    if (clickHold) {
+      acct.callAsk = { kind: "clicked", rank: 0, due: clickedAt!, label: `Call ${name ?? co}: clicked your email`, detail: `Someone at ${co} clicked the line card or site link in your email ${formatLocal(new Date(clickedAt!), tz, true)}. They're reading it: call today and ask for the RFQ. No automatic email for ${CLICK_HOLD_DAYS} business days.` };
+    } else if (cad.callFlag && acct.next.kind !== "scheduled") {
+      acct.callAsk = cad.track === "cold"
+        ? { kind: "flag", rank: 1, due: now.toISOString(), label: `Call the main line, ask for ${name ?? "the buyer"}`, detail: `${cad.nth} emails and you haven't talked to ${name ?? "the buyer"} yet. Call the main line, ask for them by name, and ask for the RFQ. The emails keep going (${cad.why})` }
+        : { kind: "flag", rank: 1, due: now.toISOString(), label: `Call ${name ?? co}: ${cad.nth} emails since you talked`, detail: `Round ${cad.round} of emails is done and you haven't talked since ${lastConvo ? formatLocal(new Date(lastConvo), tz, true) : "the line card"}. Call and ask for the RFQ; reaching them starts the next round. The emails keep going (${cad.why})` };
+    } else if (quiet >= touchLimit && !emailToday && acct.next.kind !== "scheduled") {
+      acct.callAsk = { kind: "touch", rank: 2, due: lastTouch ?? now.toISOString(), label: `Check in with ${name ?? co}: ${quiet} business days quiet`, detail: `Nothing has gone to ${co} in ${quiet} business days and no email is due today. A quick call keeps you in front of them: ask for ${name ?? "the buyer"} and the RFQ.` };
+    }
+  }
   // The heat map's inputs (10/12): their replies in their own words, opens by distinct day, cooling off.
   const replyNotes = replies.filter((r) => !theirFiles(r.attachments).length).map((r) => ({ at: at(r), text: ownWords(x.bounceBodies?.get(r.id) ?? r.body_text ?? r.subject ?? "") }));
   const openDays = [...new Set(person.map((o) => o.opened_at.slice(0, 10)))].sort().reverse();

@@ -101,7 +101,7 @@ test("rescheduling reads the task back from Close: another rep's task can't be m
   const { rescheduleTask } = await import("../src/queue.js");
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_rsOwn", duration: 0 })] });
   const d: Deps = { close, llm: demoLlm, rep: { ...rep, closeUserId: "user_rsOwn" }, now: () => new Date("2026-09-24T16:00:00Z") };
-  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_rsOwn", rating: "B" });
+  const r = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_rsOwn", rating: "B" });
   await assert.rejects(rescheduleTask(d, "lead_someOtherLead000001", r.task!.id, "2026-09-25T17:00:00Z"), /Can't find/);
   const moved = await rescheduleTask(d, DEMO_LEAD_ID, r.task!.id, "2026-09-25T17:00:00Z");
   assert.equal(moved.due_at, "2026-09-25T10:00:00-07:00");

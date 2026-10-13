@@ -1,12 +1,13 @@
 import { background } from "./background.js";
-import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, type Account } from "./accounts.js";
+import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, forgetBoard, type Account } from "./accounts.js";
 import { reachedToday } from "./dialviews.js";
 import type { Deps } from "./assistant.js";
 import { config } from "./config.js";
-import { bumpBodyFor, FollowUpError, greetName, writeFollowUp } from "./followup.js";
+import { bumpBodyFor, FollowUpError, greetName, writeFollowUp, type BumpPlace } from "./followup.js";
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { clearPick, listMemes, memeFor, memesSeen, memeTrack, type Meme } from "./memes.js";
+import { isGenericAddress } from "./cadence.js";
 
 // Automatic bumps (Walt 9/26). Each weekday morning, every account whose next step is "bump"
 // gets a short reply in its thread, scheduled in Close for a random minute between 8:11 and 11am their time; Close sends it.
@@ -14,7 +15,9 @@ import { clearPick, listMemes, memeFor, memesSeen, memeTrack, type Meme } from "
 // Shortly before each send, the server checks again: if they replied, sent a file, or bounced,
 // the email is pulled back to a draft.
 
-export const DAILY_CAP = 200; // Walt 10/5: the whole wave goes, not 15 a day
+// Walt 10/5: the whole wave goes. 10/12: but steady, not 140 one day and 0 the next: about 80 a day keeps the inbox's
+// reputation, so quotes don't land in junk. Extras go the next business day, the most overdue first.
+export const DAILY_CAP = 80;
 /**
  * The cadence, in business days between an account's automatic emails. It was a 3/5/7 test (Walt 10/2); since
  * 10/5 it's two for everyone (the stored arms from the test were cleared). Kept as a list so a new test is one edit.
@@ -95,7 +98,7 @@ async function planTestBump(d: Deps, now: Date) {
   // Only ever to the test lead's own contact (waltboxwell@gmail.com), never whoever else is on its threads.
   const contactEmail = (await d.close.lead(lead.id)).contacts.flatMap((c) => /main|office/i.test(c.name) ? [] : c.emails.map((e) => e.email))[0];
   if (!contactEmail) return { planned: [], skipped: [{ company: lead.display_name, why: "Test Lead Fabrication has no contact with an email." }], reason: "Test mode." };
-  const out = await writeFollowUp(d, lead.id, { force: true, schedule: { stagger: 0 }, template: { meme, nth: 0 }, onlyTo: contactEmail });
+  const out = await writeFollowUp(d, lead.id, { force: true, schedule: { stagger: 0 }, template: { meme, place: { nth: 0 } }, onlyTo: contactEmail });
   if (out.status === "drafted" && out.to.toLowerCase() !== contactEmail.toLowerCase()) throw new Error(`Test bump addressed to ${out.to}, not ${contactEmail}: stopped.`);
   if (out.status !== "drafted") return { planned: [], skipped: [{ company: lead.display_name, why: out.warning }], reason: "Test mode." };
   const row: Automation = { ...base, id: out.draftId, to: out.to, subject: out.subject, scheduledFor: out.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: "Test mode", meme: out.meme ?? null };
@@ -128,6 +131,20 @@ export async function planBumps(d: Deps, opts: { force?: boolean } = {}) {
 }
 
 const planning = new Set<string>();
+
+/** Where an account is in the sequence, for the email's wording (10/12). */
+export function placeOf(a: Pick<Account, "cadence" | "contact">, now: Date): BumpPlace {
+  const c = a.cadence;
+  return {
+    // "Who handles RFQs" only to a shared inbox with no person on it (10/12: Teagan reads info@ at Knight).
+    nth: c.nth, track: c.track, round: c.round, generic: isGenericAddress(a.contact.email) && !greetName(a.contact.name),
+    talkedDaysAgo: c.lastConvo ? Math.floor((now.getTime() - Date.parse(c.lastConvo)) / DAY) : null,
+  };
+}
+/** An email the board asks for on its own date, outside the sequence: a promised RFQ, or following up on a quote. */
+export const isEmailStep = (a: Pick<Account, "next">) => a.next.kind === "bump" && a.next.tag !== "Call" && /promised|owes an RFQ|quote/i.test(a.next.label);
+/** The tag kept on each sent row, for the scoreboard: track, round, phase. */
+export const seqTag = (a: Pick<Account, "cadence">) => `${a.cadence.track}:r${a.cadence.round}:${a.cadence.phase}`;
 
 /** After any reply, 1.5 weeks with no automatic email (Walt 10/12: "we need to make sure we aren't upsetting people"). */
 export const REPLY_COOLDOWN_DAYS = 10.5;
@@ -184,7 +201,15 @@ async function planDay(d: Deps, now: Date) {
   // Due: the board says bump, or the cadence says so even though a callback is on the books (Walt 10/5).
   // They replied (anything: "nothing yet", "got it", a question): no automatic email for 1.5 weeks (Walt 10/12).
   const replied = board.accounts.filter((a) => repliedRecently(a, now));
-  const { keep: due, dropped } = dedupeDue(board.accounts.filter((a) => (a.next.kind === "bump" || a.bumpDue) && !a.rfq && !held.has(a.leadId) && !repliedRecently(a, now)), recent, { now, tz: d.rep.timeZone, arms });
+  // The gap is the account's own place in the sequence (10/12), not one number for everybody.
+  const gaps = Object.fromEntries(board.accounts.map((a) => [a.leadId, a.cadence.gap]));
+  void arms;
+  // Due: the sequence says so (bumpDue), or the board's next step is an email (a promised RFQ, a quote follow-up).
+  // A call flag is a call, not an email.
+  const emailNext = (a: Account) => isEmailStep(a);
+  const { keep: dueAll, dropped } = dedupeDue(board.accounts.filter((a) => (emailNext(a) || a.bumpDue) && !a.rfq && !held.has(a.leadId) && !repliedRecently(a, now)), recent, { now, tz: d.rep.timeZone, arms: gaps });
+  // The most overdue first, so the daily cap pushes the freshest to tomorrow, not the oldest.
+  const due = dueAll.sort((x, y) => (x.cadence.dueAt ?? "").localeCompare(y.cadence.dueAt ?? ""));
   const planned: Automation[] = [];
   const skipped: Array<{ company: string; why: string }> = [...dropped, ...replied.filter((a) => a.next.kind === "bump" || a.bumpDue).map((a) => ({ company: a.company, why: `They replied ${a.lastReplyAt!.slice(0, 10)}: cooling down until ${new Date(Date.parse(a.lastReplyAt!) + REPLY_COOLDOWN_DAYS * DAY).toISOString().slice(0, 10)}.` }))];
   // Memes (9/30): one per bump, never one the company has already had.
@@ -197,7 +222,8 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: `Daily limit of ${DAILY_CAP} reached; it goes out tomorrow.` });
       continue;
     }
-    const nth = everSent.filter((x) => x.leadId === a.leadId && x.status === "sent").length;
+    const nth = a.cadence.nth;
+    void everSent;
     if (nth >= MAX_BUMPS) {
       skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` });
       continue;
@@ -217,22 +243,21 @@ async function planDay(d: Deps, now: Date) {
       skipped.push({ company: a.company, why: "You talked to them yesterday or today; the email waits." });
       continue;
     }
-    const onCadence = a.next.kind !== "bump";
+    const onCadence = !emailNext(a);
     const base = {
       repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const,
       label: onCadence ? `Get a first RFQ from ${a.contact.name?.split(/\s+/)[0] || a.company}` : a.next.label,
-      reason: unconfirmed ? `No open or reply yet (bump ${nth + 1}). (${a.next.tag}: ${a.next.label} stays on the books.)`
-        : onCadence ? `On the two-business-day cadence: they have the line card and no RFQ yet. (${a.next.tag}: ${a.next.label} stays on the books.)` : a.next.detail,
+      reason: onCadence ? `${a.cadence.why}${a.next.kind !== "bump" || a.next.tag === "Call" ? ` (${a.next.tag}: ${a.next.label} stays on the list.)` : ""}` : a.next.detail,
       createdAt: now.toISOString(), checkedAt: null,
     };
     try {
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
-      const r = await writeFollowUp(d, a.leadId, { schedule: { stagger: i * 6 }, template: { meme, nth, variant: unconfirmed ? "landed" : null } });
+      const r = await writeFollowUp(d, a.leadId, { schedule: { stagger: i * 6 }, template: { meme, place: placeOf(a, now) } });
       if (r.status === "warn") {
         skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") });
         continue;
       }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: unconfirmed ? "landed" : null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: seqTag(a), arm: a.cadence.gap };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -267,7 +292,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
     const meme = await memeFor(d, lead.id, { memes, seen, picks });
     const contactEmail = (await d.close.lead(lead.id)).contacts.flatMap((c) => /main|office/i.test(c.name) ? [] : c.emails.map((e) => e.email))[0];
     if (!contactEmail) return { planned, skipped: [{ company: lead.display_name, why: "Test Lead Fabrication has no contact with an email." }] };
-    const out = await writeFollowUp(d, lead.id, { force: true, schedule: { stagger: 0, now: true }, template: { meme, nth: 0, variant: opts.variant ?? null }, onlyTo: contactEmail });
+    const out = await writeFollowUp(d, lead.id, { force: true, schedule: { stagger: 0, now: true }, template: { meme, place: { nth: 0, variant: opts.variant ?? null } }, onlyTo: contactEmail });
     if (out.status !== "drafted") return { planned, skipped: [{ company: lead.display_name, why: out.warning }] };
     if (out.to.toLowerCase() !== contactEmail.toLowerCase()) throw new Error(`Test bump addressed to ${out.to}, not ${contactEmail}: stopped.`);
     const row: Automation = { repId: d.rep.closeUserId, leadId: lead.id, company: lead.display_name, kind: "bump", label: "Test send", reason: `Checking the ${opts.variant ?? "standard"} email with its meme in an inbox.`, createdAt: now.toISOString(), checkedAt: null, id: out.draftId, to: out.to, subject: out.subject, scheduledFor: out.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: "Test send", meme: out.meme ?? null, variant: opts.variant ?? null, arm: null };
@@ -287,17 +312,20 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
     if (why) skipped.push({ company: a.company, why });
     return !why;
   });
-  const { keep, dropped } = dedupeDue(eligible, recent, { now, tz: d.rep.timeZone, arms });
+  void arms;
+  // You picked these by hand: the sequence's gap doesn't hold them back, only "not twice in two business days".
+  const { keep, dropped } = dedupeDue(eligible, recent, { now, tz: d.rep.timeZone, arms: Object.fromEntries(eligible.map((a) => [a.leadId, Math.min(a.cadence.gap, BUMP_AFTER_BUSINESS_DAYS)])) });
   skipped.push(...dropped);
   for (const [i, a] of keep.entries()) {
-    const nth = everSent.filter((x) => x.leadId === a.leadId && x.status === "sent").length;
+    const nth = a.cadence.nth;
+    void everSent;
     if (nth >= MAX_BUMPS) { skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` }); continue; }
     const base = { repId: d.rep.closeUserId, leadId: a.leadId, company: a.company, kind: "bump" as const, label: a.next.label, reason: a.next.detail, createdAt: now.toISOString(), checkedAt: null };
     try {
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
-      const r = await writeFollowUp(d, a.leadId, { force: true, schedule: { stagger: i * stagger, now: true }, template: { meme, nth, variant: opts.variant ?? null } });
+      const r = await writeFollowUp(d, a.leadId, { force: true, schedule: { stagger: i * stagger, now: true }, template: { meme, place: { ...placeOf(a, now), variant: opts.variant ?? null } } });
       if (r.status === "warn") { skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") }); continue; }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? null, arm: await armFor(d, a.leadId, arms) };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? seqTag(a), arm: a.cadence.gap };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -491,24 +519,60 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
     if (scheduled.has(a.leadId)) continue; // already on its way: it's in the scheduled list
     if (a.rfq) continue; // sent an RFQ: out of the sequence; following up on the quote is the rep's job
     if (repliedRecently(a, now)) continue; // replied in the last 1.5 weeks: cooling down (10/12)
-    // Bumps due now go out the next weekday morning; waiting ones on their due date.
-    const autoWaiting = a.next.kind === "waiting" && a.next.due && /· bump |· email /.test(a.next.label);
-    // The cadence can say "due" when the board shows a call or a rescue (10/5): same rule as the planner.
-    if (a.next.kind !== "bump" && !autoWaiting && !a.bumpDue) continue;
-    const nth = everSent.filter((x) => x.leadId === a.leadId && x.status === "sent").length;
-    const unconfirmed = a.seen === "not_opened" || a.seen === "maybe";
-    if (nth >= MAX_BUMPS || (unconfirmed && nth >= UNCONFIRMED_MAX_BUMPS)) continue;
-    const due = new Date(Math.max(new Date(a.next.kind === "bump" || autoWaiting ? a.next.due ?? now.toISOString() : now.toISOString()).getTime(), now.getTime()));
+    // In the sequence (10/12): the account's own gap from its last email; a promised RFQ or a quote follow-up on its
+    // own date. A call flag doesn't stop the emails underneath it.
+    const emailNext = isEmailStep(a);
+    if (!a.cadence.eligible && !emailNext) continue;
+    const nth = a.cadence.nth;
+    if (nth >= MAX_BUMPS) continue;
+    const dueIso = emailNext ? a.next.due ?? now.toISOString() : a.cadence.dueAt ?? now.toISOString();
+    const due = new Date(Math.max(new Date(dueIso).getTime(), now.getTime()));
     const sendOn = morningOf(due, d.rep.timeZone);
     if (sendOn.getTime() > horizon) continue;
-    const what = unconfirmed ? "Bump (not confirmed)" : /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : /quote/i.test(a.next.label) ? "Follow-up on the quote" : "Bump in the line card thread";
-    const reason = unconfirmed ? `No open or reply yet (bump ${nth + 1}). ${a.next.tag}: ${a.next.label} stays on the books.`
-      : a.next.kind === "bump" || autoWaiting ? a.next.detail : `On the two-business-day cadence: they have the line card and no RFQ yet. ${a.next.tag}: ${a.next.label} stays on the books.`;
+    const c = a.cadence;
+    const what = emailNext && /promised|owes an RFQ/.test(a.next.label) ? "Email asking for their RFQ" : emailNext && /quote/i.test(a.next.label) ? "Follow-up on the quote"
+      : c.phase === "intro" ? `${c.track === "cold" ? "Cold" : `Round ${c.round}`} intro, email ${nth + 1}` : c.phase === "monthly" ? "Monthly email" : "Rhythm email";
+    const reason = emailNext ? a.next.detail : `${c.why}${a.next.tag === "Call" ? ` ${a.next.label}.` : ""}`;
     const meme = memes.length ? await memeFor(d, a.leadId, { memes, seen, picks }) : null;
     const first = greetName(a.contact.name);
-    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), heldUntil: held.has(a.leadId) ? cool[a.leadId]?.until ?? null : null, heldWhy: held.has(a.leadId) ? cool[a.leadId]?.why ?? null : null, meme, preview: bumpBodyFor(first, d.rep.name, nth, unconfirmed ? "landed" : null, localParts(sendOn, d.rep.timeZone).weekday) });
+    out.push({ leadId: a.leadId, company: a.company, to: a.contact.email, sendOn: sendOn.toISOString(), label: what, reason, held: held.has(a.leadId), heldUntil: held.has(a.leadId) ? cool[a.leadId]?.until ?? null : null, heldWhy: held.has(a.leadId) ? cool[a.leadId]?.why ?? null : null, meme, preview: bumpBodyFor(first, d.rep.name, { ...placeOf(a, sendOn), weekday: localParts(sendOn, d.rep.timeZone).weekday }) });
   }
-  return out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
+  // No day over the cap (10/12): the overflow slides to the next business morning, the most overdue keeping their day.
+  out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
+  const perDay = new Map<string, number>();
+  for (const f of out) {
+    if (f.held) continue;
+    let day = localDay(new Date(f.sendOn), d.rep.timeZone);
+    while ((perDay.get(day) ?? 0) >= DAILY_CAP) {
+      const next = morningOf(new Date(new Date(f.sendOn).getTime() + DAY), d.rep.timeZone);
+      f.sendOn = next.toISOString();
+      if (f.preview) f.preview = f.preview; // the wording's weekday line is close enough a day later
+      day = localDay(next, d.rep.timeZone);
+    }
+    perDay.set(day, (perDay.get(day) ?? 0) + 1);
+  }
+  return out.filter((f) => new Date(f.sendOn).getTime() <= horizon).sort((x, y) => x.sendOn.localeCompare(y.sendOn));
+}
+
+/**
+ * "Next email in 3 days" (Walt 10/12): picked on the call screen after you reach someone, since you can hear whether
+ * they're keen or annoyed. The sequence waits until that morning; the next round starts from there.
+ */
+export async function setNextEmail(d: Deps, leadId: string, days: number) {
+  const now = d.now?.() ?? new Date();
+  const n = Math.max(1, Math.min(60, Math.round(days)));
+  const at = morningOf(new Date(now.getTime() + n * DAY), d.rep.timeZone);
+  const map = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").catch(() => null)) ?? {};
+  map[leadId] = at.toISOString();
+  await store.putSetting(d.rep.closeUserId, "nextEmail", map);
+  // Anything already queued sooner than that is pulled back.
+  const rows = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 8 * DAY).toISOString());
+  for (const r of rows.filter((x) => x.status === "scheduled" && x.leadId === leadId && (x.scheduledFor ?? "") < at.toISOString())) {
+    await d.close.unschedule(r.id).catch(() => {});
+    await store.putAutomation({ ...r, status: "stopped", statusAt: now.toISOString(), note: `Pulled back: you set the next email for ${at.toISOString().slice(0, 10)} on the call.` });
+  }
+  forgetBoard(d.rep.closeUserId);
+  return { leadId, nextEmailAt: at.toISOString() };
 }
 
 /** The weekday morning an automatic email would go out on: 9am that day if it's a weekday before 11, else the next weekday. */
@@ -535,6 +599,46 @@ async function mapLimit<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): 
 }
 
 const syncing = new Set<string>();
+/**
+ * Is the sequence working (Walt 10/12: "I want to see more RFQs coming to my email")? Every automatic email since
+ * the sequence started, by track and phase: how many went, how many RFQs came in within 7 days of one (credited to
+ * the last email before it), and how many asked to stop or slow down. Rows from before 10/12 are one "before" line.
+ */
+export type ScoreRow = { key: string; label: string; sent: number; rfqs: number; stops: number };
+const SCORE_LABEL = (key: string) => {
+  const m = /^(cold|talked):r(\d+):(intro|rhythm|monthly)$/.exec(key);
+  if (!m) return key === "before" ? "Before the new sequence (flat 2 days)" : key === "friday" ? "Sent by hand (Friday copy)" : key;
+  const [, track, round, phase] = m;
+  const who = track === "cold" ? "Never talked" : `Talked, round ${Number(round) >= 3 ? "3+" : round}`;
+  return `${who} · ${phase === "intro" ? "intro" : phase === "rhythm" ? "rhythm" : "monthly"}`;
+};
+export async function sequenceScoreboard(d: Deps, now: Date): Promise<ScoreRow[]> {
+  const [rows, board] = await Promise.all([
+    store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 60 * DAY).toISOString()),
+    accountsBoard(d, { maxAgeMs: 10 * 60_000 }).catch(() => ({ accounts: [] as Account[] })),
+  ]);
+  const sent = rows.filter((r) => r.status === "sent");
+  // Round 3+ collapse into one line; older rows (no tag, or "landed") are "before".
+  const keyOf = (r: Automation) => {
+    const v = r.variant ?? "";
+    const m = /^(cold|talked):r(\d+):(intro|rhythm|monthly)$/.exec(v);
+    if (m) return `${m[1]}:r${Math.min(Number(m[2]), 3)}:${m[3]}`;
+    return v === "friday" ? "friday" : "before";
+  };
+  const out = new Map<string, ScoreRow>();
+  const row = (k: string) => out.get(k) ?? (out.set(k, { key: k, label: SCORE_LABEL(k), sent: 0, rfqs: 0, stops: 0 }), out.get(k)!);
+  for (const r of sent) row(keyOf(r)).sent++;
+  const at = (r: Automation) => r.statusAt ?? r.scheduledFor ?? r.createdAt;
+  const lastBefore = (leadId: string, iso: string) => sent.filter((r) => r.leadId === leadId && at(r) <= iso && Date.parse(iso) - Date.parse(at(r)) <= 7 * DAY).sort((a, b) => at(b).localeCompare(at(a)))[0];
+  for (const a of board.accounts) {
+    if (a.rfq) { const r = lastBefore(a.leadId, a.rfq.at); if (r) row(keyOf(r)).rfqs++; }
+    const p = a.warmth?.paused;
+    if (p && ["out", "no_emails", "later"].includes(p.kind) && a.lastReplyAt) { const r = lastBefore(a.leadId, a.lastReplyAt); if (r) row(keyOf(r)).stops++; }
+  }
+  const order = (k: string) => (k === "before" ? 99 : k === "friday" ? 98 : 0);
+  return [...out.values()].sort((x, y) => order(x.key) - order(y.key) || x.key.localeCompare(y.key));
+}
+
 export async function automationsView(d: Deps) {
   // The checks against Close run behind the page, not in front of it (10/8: this list took 61 seconds and every
   // page waited on it). The catch-up job runs the same checks on its own schedule.
@@ -557,7 +661,9 @@ export async function automationsView(d: Deps) {
     return { ...a, body: e?.body_text ?? null };
   });
   const future = await forecast(d).catch(() => [] as Forecast[]);
+  const scoreboard = await sequenceScoreboard(d, now).catch(() => [] as ScoreRow[]);
   return {
+    scoreboard,
     enabled: await automationsOn(d),
     testMode: await testMode(d),
     future: future.filter((f) => !f.held),

@@ -8,7 +8,8 @@ import type { LeadContext } from "./context.js";
 export type History = {
   counts: { calls: number; connected: number; voicemails: number; noAnswer: number; emailsOut: number; replies: number };
   lineCard: { at: string; to: string | null } | null;
-  talked: Array<{ at: string; minutes: number; note: string | null }>;
+  /** Real conversations, newest first, with who picked up (the contact the call was logged to, when Close knows). */
+  talked: Array<{ at: string; minutes: number; note: string | null; who: string | null }>;
   events: Array<{ at: string; kind: "call" | "voicemail" | "no_answer" | "email" | "reply" | "note"; text: string }>;
 };
 
@@ -43,7 +44,8 @@ export function buildHistory(ctx: LeadContext, emails: LeadEmail[]): History {
     const minutes = Math.max(1, Math.round((c.duration ?? 0) / 60));
     if (talkedCall(c)) {
       const note = noteFor(c.date_created) ?? (c.note ? oneLine(c.note, 260) : null);
-      talked.push({ at: c.date_created, minutes, note });
+      const who = (ctx.contacts ?? []).find((x) => x.id === c.contact_id)?.name ?? null;
+      talked.push({ at: c.date_created, minutes, note, who: who && !/main|office|front desk|reception/i.test(who) ? who : null });
       events.push({ at: c.date_created, kind: "call", text: `Call, ${minutes} min${note ? `: ${note}` : ""}` }); // "answered" includes the front desk and voicemail transfers: the note says what happened
     } else if (isVm(c)) events.push({ at: c.date_created, kind: "voicemail", text: "Left a voicemail" });
     else events.push({ at: c.date_created, kind: "no_answer", text: (c.duration ?? 0) > 0 ? `Called, ${c.duration}s, no conversation` : "Called, no answer" });

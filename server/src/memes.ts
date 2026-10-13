@@ -133,13 +133,23 @@ export async function clearPick(d: Deps, leadId: string) {
 // ---------- tracked memes (Walt 10/6): the image and the link go through our server, so a load or a click is logged ----------
 
 /** One tracked email: who it went to and which meme; `emailId` is filled in once Close has created the email. */
-export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[] };
+export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[]; links?: Partial<Record<LinkKind, string[]>> };
 const VIEWS_REP = "memeviews"; // the store's settings table, keyed by token under this fixed "rep"
 export const newToken = () => randomUUID().replace(/-/g, "");
 /** Tracking is on only when PUBLIC_URL is set (a domain of ours). */
 export const trackingOn = () => !!config.publicUrl;
 export const memeImageUrl = (token: string, name: string) => `${config.publicUrl}/m/${token}/${encodeURIComponent(name)}`;
 export const memeViewUrl = (token: string, name: string) => `${memeImageUrl(token, name)}/view`;
+/** The line card and site links in a bump, through our server so a click is logged (Walt 10/12). */
+export type LinkKind = "card" | "site";
+export const linkUrl = (token: string, kind: LinkKind) => `${config.publicUrl}/l/${token}/${kind}`;
+/** Per rep: lead id → the last time someone there clicked a link in one of our emails (a person, not a filter). */
+const CLICKS_KEY = "linkClicks";
+export async function clicksFor(repId: string): Promise<Record<string, string>> {
+  return (await store.getSetting<Record<string, string>>(repId, CLICKS_KEY).catch(() => null)) ?? {};
+}
+/** Mail filters follow links within seconds of delivery to scan them; a click that fast isn't a person. */
+const SCANNER = /bot|crawler|spider|preview|scan|safelinks|proofpoint|mimecast|barracuda|urldefense|python|curl|wget|go-http|java\//i;
 
 export async function trackMeme(t: { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null }) {
   const row: MemeTrack = { ...t, createdAt: new Date().toISOString(), shown: [], clicked: [], agents: [] };
@@ -153,6 +163,30 @@ export async function logMemeEvent(token: string, kind: "shown" | "clicked", age
   row[kind] = [...row[kind], at].slice(-50);
   if (agent && !row.agents.includes(agent)) row.agents = [...row.agents, agent.slice(0, 120)].slice(-5);
   await store.putSetting(VIEWS_REP, token, row).catch(() => undefined);
+  // Opening the meme's link is a person too (10/12): it counts on the account like a line card click.
+  if (kind === "clicked" && agent && !SCANNER.test(agent)) {
+    const clicks = await clicksFor(row.repId);
+    clicks[row.leadId] = at;
+    await store.putSetting(row.repId, CLICKS_KEY, clicks).catch(() => undefined);
+  }
+  return row;
+}
+/**
+ * A click on the line card or site link. Logged on the email, and on the account (the board reads it: a click is a
+ * call today, and no email for a few days). A scanner following the link isn't counted on the account.
+ */
+export async function logLinkClick(token: string, kind: LinkKind, agent: string | null, now = new Date()): Promise<MemeTrack | null> {
+  const row = await store.getSetting<MemeTrack>(VIEWS_REP, token).catch(() => null);
+  if (!row) return null;
+  const at = now.toISOString();
+  row.links = { ...(row.links ?? {}), [kind]: [...(row.links?.[kind] ?? []), at].slice(-50) };
+  if (agent && !row.agents.includes(agent)) row.agents = [...row.agents, agent.slice(0, 120)].slice(-5);
+  await store.putSetting(VIEWS_REP, token, row).catch(() => undefined);
+  if (!SCANNER.test(agent ?? "") && agent) {
+    const clicks = await clicksFor(row.repId);
+    clicks[row.leadId] = at;
+    await store.putSetting(row.repId, CLICKS_KEY, clicks).catch(() => undefined);
+  }
   return row;
 }
 export async function memeTrack(token: string): Promise<MemeTrack | null> {
@@ -176,7 +210,9 @@ export function bumpHtml(body: string, repName: string, meme: Meme | null, token
   const keywords = isSignatureLine(paras[paras.length - 1]) ? paras.pop()! : null;
   const last = paras[paras.length - 1] ?? "";
   const sig = last === repName || last.endsWith(`\n${repName}`) ? paras.pop()! : null; // "Thanks,\nWalt Boxwell" (10/8)
-  const link = (t: string) => t.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`);
+  // A tracked link (10/12) reads as the plain address it lands on, so the email shows westgatesupply.com, not ours.
+  const shown = (u: string) => /\/l\/[a-f0-9]+\/card$/.test(u) ? "https://westgatesupply.com/brand/westgate-line-card.pdf" : /\/l\/[a-f0-9]+\/site$/.test(u) ? "https://westgatesupply.com" : u;
+  const link = (t: string) => t.replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${shown(u)}</a>`);
   const html = paras.map((p) => `<p>${link(esc(p)).replace(/\n/g, "<br>")}</p>`);
   if (meme) {
     const tracked = !!token && trackingOn();
