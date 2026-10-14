@@ -689,7 +689,19 @@ export function buildAccount(x: {
   const convos = talkedCalls.filter((c) => { const t = x.taps?.get(c.id); return t ? t === "reached_buyer" || t === "pms_buy" : c.duration >= 60; }).map((c) => c.date_created).sort();
   const lastConvo = convos[convos.length - 1] ?? null;
   const potential = potentialFor(x.profile);
-  const sentAutos = (x.autos ?? []).filter((au) => au.status === "sent" && (au.statusAt ?? au.createdAt) > (lastConvo ?? ""));
+  // Every email of ours since the last conversation counts, automatic or sent by hand (10/14: Steve at MacDonald-Miller
+  // got a hand follow-up on 10/7 that the count missed, so his 4th email went out as "email 2 of 3"). The line card
+  // itself isn't a follow-up.
+  // From the last conversation (or, never talked, from the first line card): every email of ours after it, except
+  // that first line card itself. A later follow-up that also carries the PDF is still a follow-up (Steve's 10/7).
+  const afterTalk = sentMail.filter((e) => at(e) > (lastConvo ?? "")).sort((a, b) => at(a).localeCompare(at(b)));
+  const isCard = (e: Email) => e.id === card.id || ((e.attachments ?? []).some((f) => f.filename === LINE_CARD) && !(x.autos ?? []).some((au) => au.id === e.id));
+  const firstCard = afterTalk.find(isCard);
+  const sentIds = new Set([
+    ...afterTalk.filter((e) => e !== firstCard && (!firstCard || at(e) > at(firstCard))).map((e) => e.id),
+    ...(x.autos ?? []).filter((au) => au.status === "sent" && (au.statusAt ?? au.createdAt) > (lastConvo ?? "")).map((au) => au.id),
+  ]);
+  const sentAutos = [...sentIds];
   const clickedAt = x.clickedAt && x.clickedAt > (lastConvo ?? "") ? x.clickedAt : null;
   const cad = cadenceFor({
     track: convos.length ? "talked" : "cold", round: Math.max(1, convos.length), nth: sentAutos.length,

@@ -455,4 +455,10 @@ test("bumpDue (10/5): the two-day cadence runs even with a callback on the books
   const real = { ...reply, id: "em_real", body_text: "Thanks. When are you around to talk this week?\n\n> Hi Matt" };
   assert.equal(build([card(), real]).bumpDue, false);
   assert.equal(build([card(), real]).next.kind, "reply");
+  // Every email since the line card counts toward the sequence (10/14, Steve at MacDonald-Miller): a follow-up you
+  // sent by hand, even one carrying the PDF again, and an automatic one.
+  const hand = { ...card(), id: "em_hand", subject: "Re: line card", date_sent: "2026-10-05T16:00:00Z", date_created: "2026-10-05T16:00:00Z" };
+  const auto = { ...card(), id: "em_auto", subject: "Re: line card", attachments: [], date_sent: "2026-10-06T15:00:00Z", date_created: "2026-10-06T15:00:00Z" };
+  assert.equal(build([card(), hand, auto]).cadence.nth, 2);
+  assert.equal(build([card()]).cadence.nth, 0, "the line card itself isn't a follow-up");
 });
