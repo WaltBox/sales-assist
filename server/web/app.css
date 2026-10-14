@@ -343,6 +343,10 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .slrow .co { font-weight: 500; text-decoration: none; }
 .slrow .co:hover { text-decoration: underline; }
 .sl-step.hot { color: var(--red); font-weight: 500; }
+.sl-step.cold { color: var(--amber); }
+.slrow .bad { color: var(--red); }
+.slrow.taskrow { grid-template-columns: 70px minmax(150px, 1fr) minmax(200px, 2fr); }
+.sub2.wrap { white-space: normal; }
 .mcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
 .cal { display: flex; gap: 6px; align-items: flex-end; overflow-x: auto; padding-bottom: 2px; }
 .calday { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; padding: 6px 4px; border: 1.5px solid transparent; background: none; font: inherit; color: var(--ink); cursor: pointer; }
@@ -584,3 +588,18 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .prow.p-out .pk { color: var(--red); }
 .prow .pw { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .prow { grid-template-columns: 1fr 1fr; } .prow .pw { grid-column: 1 / -1; white-space: normal; } }
+
+/* Tasks tab (10/14) */
+.trows { display: flex; flex-direction: column; }
+.trow { display: grid; grid-template-columns: 150px minmax(160px, 1fr) minmax(240px, 2.4fr) 64px; gap: 12px; align-items: baseline; padding: 7px 0; border-bottom: 1px dashed var(--ink-line); font-size: 13.5px; }
+.trow > * { min-width: 0; }
+.trow .co { font-weight: 500; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow .co:hover { text-decoration: underline; }
+.trow .twhen { color: var(--muted); }
+.ttext summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; list-style: none; }
+.ttext summary::-webkit-details-marker { display: none; }
+.ttext[open] summary { white-space: normal; }
+.tday { margin: 10px 0 2px; }
+.tover > summary { cursor: pointer; }
+.h2like { font-family: var(--label); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
+@media (max-width: 900px) { .trow { grid-template-columns: 1fr 64px; } .trow .twhen, .trow .co { grid-column: 1; } }

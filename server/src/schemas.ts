@@ -26,12 +26,7 @@ export const BriefSchema = z.object({
   heads_ups: z.array(z.string()).describe("0–3 short lines the rep would miss in Close; never time of day"),
   what_they_do: z.string().describe("2 short sentences, specific, from their website"),
   capture: z.array(z.string()).describe("2–3 short things to get before hanging up, e.g. \"Renee's direct email\""),
-  // A made-up childhood memory at a real local event (Walt 10/5): told for fun, disclosed as made up on the call.
-  hometown: z.object({
-    event: z.string().describe("A real, well-known recurring event in or near their city: a festival, fair, parade, race, rodeo, air show, or the home team's game (e.g. 'Three Rivers Festival, Fort Wayne', 'Brentwood CornFest', 'Houston Livestock Show and Rodeo'). Must actually exist. If nothing specific is known for that town, use the county fair or the nearest big city's event and say which."),
-    opener: z.string().describe("One spoken sentence that says up front the story is invented and asks if they want to hear it, e.g. 'Quick one before we start: I've got a made-up childhood memory about Fort Wayne, want it?' Must say it's made up."),
-    story: z.string().describe("3 short spoken sentences, first person, the rep as a kid (age 6 to 10) at that real event: ordinary, believable details a local would nod at (the heat, the line for the funnel cake, what they could see from a parent's shoulders), one small vivid moment, no magic, no celebrities, nothing that could be checked and found false about the event itself. e.g. 'My dad took me to the Three Rivers Festival when I was seven and we sat on the bank for the raft race. Somebody's raft came apart right in front of us and the whole crowd cheered them on anyway. I thought that was the greatest thing I had ever seen.'"),
-  }).nullable().describe("null when the location isn't known."),
+  // The made-up childhood memory (10/5) is gone (Walt 10/13: "the made up memory is kinda retarded").
 });
 export type Brief = z.infer<typeof BriefSchema>;
 

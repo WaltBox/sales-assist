@@ -269,7 +269,6 @@ function canned(schema: unknown, task: string): unknown {
       ],
       what_they_do: "Commercial and industrial electrical contractor since 1998. Distribution centers, office TI, critical facilities across California.",
       capture: ["Renee's direct email", "Her direct line", "When the next order list goes out"],
-      hometown: { event: "Brentwood CornFest", opener: "Quick one before we start: I've got a made-up childhood memory about Brentwood, want it?", story: "My mom took me to CornFest when I was eight and it was about a hundred degrees out. I ate two ears of corn on a stick and then got talked into the kiddie tractor pull and lost to a girl half my size. I still think about that tractor pull more than I should." },
     };
   }
   if (schema === AfterCallSchema) {

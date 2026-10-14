@@ -6,7 +6,7 @@ import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type M
 import { cadenceFor, CLICK_HOLD_DAYS, isGenericAddress, type Cadence } from "./cadence.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
-import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts } from "./rules.js";
+import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { realAttachments, theirFiles } from "./stats.js";
 import { warmthFor, type Warmth } from "./warmth.js";
@@ -337,6 +337,41 @@ export const shortTask = (text: string, company = "") => {
   return t.length > 48 ? `${t.slice(0, 47).replace(/\s+\S*$/, "")}…` : t;
 };
 /** A task, said as a goal: "Call whoever handles purchasing" → "Find who buys at Hefco"; "Call Josipa Kristo" → "Reach Josipa Kristo". */
+/**
+ * The Tasks tab (Walt 10/14): your open Close tasks, due today first, then the next 7 days, then the overdue pile.
+ * Since 10/12 a task is only made for a name to call or a time the buyer gave you; most overdue ones are older.
+ */
+export async function tasksView(d: Deps) {
+  const now = d.now?.() ?? new Date();
+  const tz = d.rep.timeZone;
+  const dayOf = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: tz });
+  const today = dayOf(now.toISOString());
+  const weekOut = dayOf(new Date(now.getTime() + 7 * DAY).toISOString());
+  const open = (await d.close.openTasksFor(d.rep.closeUserId)).sort((x, y) => x.date.localeCompare(y.date));
+  const todays = open.filter((t) => dayOf(t.date) === today);
+  const upcoming = open.filter((t) => dayOf(t.date) > today && dayOf(t.date) <= weekOut);
+  const overdue = open.filter((t) => dayOf(t.date) < today);
+  // Company names: from the board's cache, looked up for today's and this week's; the overdue pile uses the cache only.
+  const names = new Map<string, string>();
+  const ids = [...new Set([...todays, ...upcoming].map((t) => t.lead_id))];
+  for (let i = 0; i < ids.length; i += 5) {
+    await Promise.all(ids.slice(i, i + 5).map(async (id) => names.set(id, leadCache.get(id)?.lead?.display_name ?? (await d.close.lead(id).catch(() => null))?.display_name ?? "Unknown account")));
+  }
+  const row = (t: (typeof open)[number]) => ({
+    id: t.id, leadId: t.lead_id, company: names.get(t.lead_id) ?? leadCache.get(t.lead_id)?.lead?.display_name ?? null,
+    title: taskTitle(t.text), text: t.text, due: t.date, created: (t as { date_created?: string }).date_created ?? null,
+  });
+  return { today: todays.map(row), upcoming: upcoming.map(row), overdue: overdue.map(row) };
+}
+/** Done from the Tasks tab: marked complete in Close (it can be reopened there). */
+export async function finishTask(d: Deps, taskId: string) {
+  const open = await d.close.openTasksFor(d.rep.closeUserId);
+  if (!open.some((t) => t.id === taskId)) throw new Error("That task isn't one of your open tasks.");
+  await d.close.completeTask(taskId);
+  forgetBoard(d.rep.closeUserId);
+  return { ok: true, id: taskId };
+}
+
 export function taskGoal(text: string, company: string, co: string) {
   const t = shortTask(text, company);
   if (/whoever handles purchasing|purchasing contact|the buyer\b|who (handles|does) (the )?(purchasing|buying)/i.test(t)) return `Find who buys at ${co}`;
@@ -403,10 +438,16 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     loadProfiles(d.rep.closeUserId),
   ]);
   const clicks = await clicksFor(d.rep.closeUserId);
+  // What you tapped after each call (10/13): "Got a name" was the front desk, whatever the call's length.
+  const taps = new Map((await store.listReviews<{ callId: string | null; outcome: string }>(d.rep.closeUserId, since.toISOString()).catch(() => []))
+    .filter((it) => it.callId).map((it) => [it.callId!, it.outcome]));
   const nextEmail = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").catch(() => null)) ?? {};
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
+  // The line card you sent, not an automatic email that carries it as an attachment (10/13: every bump attaches the
+  // card since 10/6, and each one was read as a fresh line card, resetting the account's start date).
+  const autoIds = new Set(autos.map((au) => au.id));
   const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId && at(e) >= since.toISOString()
-    && (e.attachments ?? []).some((a) => a.filename === LINE_CARD));
+    && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && !autoIds.has(e.id));
   const latestCard = new Map<string, Email>();
   for (const e of cards) if (!latestCard.has(e.lead_id) || at(e) > at(latestCard.get(e.lead_id)!)) latestCard.set(e.lead_id, e);
 
@@ -439,6 +480,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     autoOn,
     profile: profiles[leadId] ?? null,
     clickedAt: clicks[leadId] ?? null,
+    taps,
     nextEmailAt: nextEmail[leadId] ?? null,
     bounceBodies,
     cooling: cooling[leadId] ?? null,
@@ -492,6 +534,8 @@ export function buildAccount(x: {
   clickedAt?: string | null;
   /** The rep picked when the emails start again after a call ("next email in 3 days", 10/12). */
   nextEmailAt?: string | null;
+  /** Call id → what the rep tapped after it (reached_buyer, got_name, …). */
+  taps?: Map<string, string>;
 }): Account {
   const { d, now, card, lead } = x;
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
@@ -640,7 +684,9 @@ export function buildAccount(x: {
   // ---------- the email sequence (Walt 10/12) ----------
   // A real conversation: a connected call of a minute or more that wasn't a voicemail. A front-desk handoff ("let me
   // give you his email") is usually shorter, so that account starts on the cold track.
-  const convos = talkedCalls.filter((c) => c.duration >= 60).map((c) => c.date_created).sort();
+  // What you tapped wins (10/13: FG Haggerty, Rexco, Bullard were front-desk handoffs over a minute long); untapped
+  // calls fall back to the length.
+  const convos = talkedCalls.filter((c) => { const t = x.taps?.get(c.id); return t ? t === "reached_buyer" || t === "pms_buy" : c.duration >= 60; }).map((c) => c.date_created).sort();
   const lastConvo = convos[convos.length - 1] ?? null;
   const potential = potentialFor(x.profile);
   const sentAutos = (x.autos ?? []).filter((au) => au.status === "sent" && (au.statusAt ?? au.createdAt) > (lastConvo ?? ""));

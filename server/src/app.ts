@@ -21,7 +21,7 @@ import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSessi
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
 import { deleteMeme, listMemes, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { finishTask, tasksView, accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
@@ -313,6 +313,9 @@ export function createApp(appDeps: AppDeps) {
   })));
   // Cooling periods (10/6): out of the automatic emails for `days` (or for good), back in on their own after; `hold: false` puts them back now.
   app.post("/api/leads/:leadId/hold", authed, route((req, d) => holdAccount(d, leadId(req), req.body?.hold !== false, { days: Number(req.body?.days) || null, why: typeof req.body?.why === "string" ? req.body.why.slice(0, 200) : null })));
+  // The Tasks tab (10/14): open Close tasks, today, this week, overdue; Done marks one complete in Close.
+  app.get("/api/tasks", authed, route((_req, d) => tasksView(d)));
+  app.post("/api/tasks/:taskId/done", authed, route((req, d) => finishTask(d, String(req.params.taskId))));
   // "Next email in…" on the call screen (10/12): when the email sequence starts again after this call.
   app.post("/api/leads/:leadId/next-email", authed, route((req, d) => setNextEmail(d, leadId(req), Number(req.body?.days) || 3)));
   app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));

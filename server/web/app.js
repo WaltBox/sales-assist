@@ -34,7 +34,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : "accounts"; }
+function pageFromHash() { return location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -87,7 +87,7 @@ async function load(fresh = false) {
   render();
   // Each one draws the moment it arrives (10/8): the RFQ count no longer waits on the automatic emails list.
   const piece = (path, key) => apiRetry(path).then((v) => { state[key] = v; render(); return v; });
-  const results = await Promise.allSettled([piece("/api/stats/today", "today"), piece("/api/automations", "autos"), piece(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`, "rfqLine")]);
+  const results = await Promise.allSettled([piece("/api/stats/today", "today"), piece("/api/automations", "autos"), piece("/api/tasks", "tasks"), piece(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`, "rfqLine")]);
   const failed = results.find((r) => r.status === "rejected");
   if (failed && failed.reason.message !== "Signed out" && !state.error) state.error = failed.reason.message;
   render();
@@ -106,6 +106,7 @@ function render() {
   const err = state.error ? el("p", { class: "empty", text: `Couldn't load everything: ${state.error}` }) : null;
   $app.replaceChildren(topBar(), el("main", {}, state.page === "emails" ? [err, emailsSection()]
     : state.page === "rfqs" ? [err, rfqsPage()]
+    : state.page === "tasks" ? [err, tasksPage()]
       : state.page === "heat" ? [err, heatPage()]
         : [hello(), err, accountsSection()]));
 }
@@ -180,10 +181,11 @@ function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
   return el("header", { class: "top" }, el("div", { class: "in" }, [
     el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), "Westgate", el("span", { class: "sub", text: "Assistant" })]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", onclick: () => go(k),
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
+      k === "tasks" && state.tasks ? el("span", { class: `navc mono${state.tasks.today.length ? " hotc" : ""}`, text: state.tasks.today.length }) : null,
       // Companies that have sent an RFQ, the same 32 as the RFQs page (10/12), not just the ones on the board.
       k === "rfqs" && (state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
       k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => !a.rfq && !HAS_RFQ_STATUS.test(a.status || "") && a.warmth && a.warmth.bucket === "hot").length }) : null,
@@ -1433,6 +1435,22 @@ function mailDashboard(au) {
     calls.length > 12 ? el("p", { class: "sub2", text: `And ${calls.length - 12} more: click "Call them" above.` }) : null,
   ]);
 
+  // 5. Added today (10/14): every account whose line card went out today, and where it starts.
+  const added = accounts.filter((a) => a.cardSentAt && localDay(a.cardSentAt) === today).sort((x, y) => x.cardSentAt.localeCompare(y.cardSentAt));
+  const talkedN = added.filter((a) => a.cadence && a.cadence.track === "talked").length;
+  const addedCard = el("section", { class: "mcard" }, [
+    el("div", { class: "mhead" }, [
+      el("h2", { text: `Added today · ${added.length}` }),
+      el("span", { class: "sub2", text: added.length ? `${talkedN} talked to the buyer, ${added.length - talkedN} from the front desk. Tap a result after every call so each one lands on the right track.` : "Line cards you send today show up here." }),
+    ]),
+    !added.length ? el("p", { class: "empty", text: "No new line cards yet today." }) : el("div", { class: "slrows" }, added.map((a) => el("div", { class: "slrow" }, [
+      el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
+      el("span", { class: "sub2", text: [new Date(a.cardSentAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), a.contact.name].filter(Boolean).join(" · ") }),
+      el("span", { class: `sl-step${a.cadence && a.cadence.track === "talked" ? "" : " cold"}`, text: a.cadence && a.cadence.track === "talked" ? "Talked to the buyer" : "Email from the front desk" }),
+      el("span", { class: a.cadence && a.cadence.eligible ? "sub2" : "sub2 bad", text: a.cadence && a.cadence.eligible && a.cadence.dueAt ? `first email ${dayOf(a.cadence.dueAt).split(",")[0]} ${shortDate(a.cadence.dueAt)}` : `out: ${a.next.label}` }),
+    ]))),
+  ]);
+
   const how = el("details", { class: "mhow" }, [
     el("summary", { text: "How the sequence works" }),
     el("ol", {}, [
@@ -1446,7 +1464,53 @@ function mailDashboard(au) {
       "Every email ends with the same ask: please send me over an RFQ and we'll get you a quote back. They go out around 8am their time, Mondays after 10.",
     ].map((t) => el("li", { text: t }))),
   ]);
-  return [tiles, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
+  return [tiles, addedCard, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
+}
+
+// ---------- Tasks (Walt 10/14: "why wouldn't you just create a new tasks section?") ----------
+// Your open Close tasks: today first, then the next 7 days, then the overdue pile, folded.
+function tasksPage() {
+  const tk = state.tasks;
+  const done = async (t, btn) => {
+    btn.disabled = true; btn.textContent = "…";
+    try {
+      await api(`/api/tasks/${t.id}/done`, {});
+      for (const k of ["today", "upcoming", "overdue"]) tk[k] = tk[k].filter((x) => x.id !== t.id);
+      render();
+    } catch (e) { btn.disabled = false; btn.textContent = "Done"; alert(e.message); }
+  };
+  const when = (iso, withDay) => new Date(iso).toLocaleString([], withDay ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { hour: "numeric", minute: "2-digit" });
+  const row = (t, withDay) => el("div", { class: "trow" }, [
+    el("span", { class: "mono twhen", text: when(t.due, withDay) }),
+    el("a", { class: "co", href: closeLead(t.leadId), target: "_blank", rel: "noopener", text: t.company || "Open lead" }),
+    el("details", { class: "ttext" }, [el("summary", { text: t.title }), el("p", { class: "sub2 wrap", text: t.text })]),
+    el("button", { class: "btn small", text: "Done", title: "Mark it complete in Close", onclick: (e) => done(t, e.currentTarget) }),
+  ]);
+  if (!tk) return el("section", { class: "mdash" }, [el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Tasks" })]), el("p", { class: "loading", text: "Reading your tasks from Close…" })]);
+  const byDay = new Map();
+  for (const t of tk.upcoming) { const d = new Date(t.due).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }); (byDay.get(d) || byDay.set(d, []).get(d)).push(t); }
+  const showAll = !!state.tasksAll;
+  return el("section", { class: "mdash" }, [
+    el("div", { class: "head pagehead" }, [
+      el("h1", { class: "ptitle", text: "Tasks" }),
+      el("button", { class: "btn small", text: "Refresh", onclick: async () => { state.tasks = null; render(); state.tasks = await api("/api/tasks").catch(() => null); render(); } }),
+    ]),
+    el("p", { class: "muted small3", text: "Your open tasks in Close. Since 10/12 a task is only made for a name to call or a time the buyer gave you; the rest of your calls come from Calls to make on the Automatic emails tab. Done marks it complete in Close." }),
+    el("section", { class: "mcard" }, [
+      el("div", { class: "mhead" }, [el("h2", { text: `Due today · ${tk.today.length}` })]),
+      !tk.today.length ? el("p", { class: "empty", text: "Nothing due today." }) : el("div", { class: "trows" }, tk.today.map((t) => row(t, false))),
+    ]),
+    el("section", { class: "mcard" }, [
+      el("div", { class: "mhead" }, [el("h2", { text: `Next 7 days · ${tk.upcoming.length}` })]),
+      !tk.upcoming.length ? el("p", { class: "empty", text: "Nothing coming up this week." })
+        : el("div", { class: "trows" }, [...byDay.entries()].flatMap(([d, list]) => [el("p", { class: "label tday", text: d }), ...list.map((t) => row(t, false))])),
+    ]),
+    el("details", { class: "mcard tover" }, [
+      el("summary", {}, [el("span", { class: "h2like", text: `Overdue · ${tk.overdue.length}` }), el("span", { class: "sub2", text: " Mostly from before 10/12, when every voicemail and no-answer made a callback." })]),
+      el("div", { class: "trows" }, (showAll ? tk.overdue : tk.overdue.slice(-50).reverse()).map((t) => row(t, true))),
+      tk.overdue.length > 50 ? el("button", { class: "linkbtn small3", text: showAll ? "Show the newest 50" : `Show all ${tk.overdue.length}`, onclick: () => { state.tasksAll = !showAll; render(); } }) : null,
+    ]),
+  ]);
 }
 
 function emailsSection() {

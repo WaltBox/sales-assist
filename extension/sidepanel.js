@@ -1493,6 +1493,13 @@ function callStage(st) {
     say: ask ? `Could I speak with ${ask}? … ${intro} I sent you our line card ${whenWords(card && card.at)}. Do you have an RFQ going out this week I can quote?` : null,
   };
 }
+/** The comeback for their most likely pushback, folded: there when they say it, out of the way when they don't. */
+function objectionTap(b) {
+  return el("details", { class: "objtap" }, [
+    el("summary", { text: `If they say "${b.objection.replace(/[.?!]$/, "")}"` }),
+    el("p", { class: "say", text: b.objection_response }),
+  ]);
+}
 function stageBlock(st) {
   const g = callStage(st);
   return el("section", { class: `stagecard k-${g.kind}` }, [
@@ -1572,10 +1579,8 @@ function renderPre() {
   const buying = purchasingLine(st);
   if (buying) page.append(buying);
   page.append(historyBlock(st));
-  if (b.ask || b.objection) page.append(el("section", { class: "plain script" }, [
-    b.ask ? el("div", { class: "block" }, [el("p", { class: "label", text: "The ask" }), el("p", { class: "say", text: b.ask })]) : null,
-    b.objection ? el("div", { class: "block" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { class: "say", text: b.objection_response })]) : null,
-  ]));
+  // 10/13: no separate "The ask" (the Say line ends with it); the comeback is one tap away.
+  if (b.objection) page.append(objectionTap(b));
 
   page.append(lineCardRow(st));
   page.append(rfqButton(st));
@@ -1589,9 +1594,6 @@ function renderPre() {
     b.heads_ups && b.heads_ups.length ? el("section", { class: "heads" }, [el("p", { class: "label", text: "Heads-ups" }), el("ul", {}, b.heads_ups.map((x) => el("li", { text: x })))]) : null,
     b.buys && b.buys.length ? el("section", { class: "plain tagsec" }, [el("p", { class: "label", text: "What they'd buy from us" }), el("ul", { class: "tags" }, b.buys.map((x) => el("li", { text: x })))]) : null,
     purch,
-    b.hometown ? el("section", { class: "plain script hometown" }, [
-      el("div", { class: "block" }, [el("p", { class: "label", text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]),
-    ]) : null,
   ]));
   page.append(el("div", { class: "linkrow" }, [
     listInfo && listInfo.position ? el("span", { class: "muted", text: `Lead ${listInfo.position} of ${listInfo.size >= 200 ? "200+" : listInfo.size}` }) : el("span"),
@@ -1771,12 +1773,10 @@ function renderOnCall() {
         ])),
       ]) : null,
       pitch.opener ? el("div", { class: fu ? "ifask" : "" }, [el("p", { class: "label", text: fu ? "If they ask what we supply" : "Say" }), el("p", { class: fu ? "say2x" : "say" }, highlightSupplies(fu ? pitchOnly(pitch.opener) : pitch.opener, pitch.buys))]) : null,
-      // 10/11: no product tags (the opener names them) and no second pitch; the memory is a tap away.
-      b.hometown ? el("details", { class: "hometown" }, [el("summary", { text: `Made-up memory · ${b.hometown.event}` }), el("p", { class: "say", text: b.hometown.opener }), el("p", { class: "fact", text: b.hometown.story })]) : null,
-      b.ask ? el("div", {}, [el("p", { class: "label", text: "Ask" }), el("p", { class: "ask", text: b.ask })]) : null,
-      // The purchasing cycle (Walt 10/5): the one question this account still needs answered.
+      // 10/13: no made-up memory and no separate Ask (the Say line ends with it). The one purchasing question this
+      // account still needs answered (Walt 10/5), and the comeback a tap away.
       st.purch && st.purch.ask ? el("div", { class: "asknext" }, [el("p", { class: "label", text: "Find out" }), el("p", { class: "ask", text: st.purch.ask.question })]) : null,
-      b.objection ? el("div", { class: "box" }, [el("p", { class: "label", text: `If "${b.objection.replace(/[.?!]$/, "")}"` }), el("p", { text: b.objection_response })]) : null,
+      b.objection ? objectionTap(b) : null,
       b.capture && b.capture.length ? el("div", { class: "checks" }, [
         el("p", { class: "label", text: "Before you hang up" }),
         ...b.capture.map((c) => el("label", {}, [
