@@ -98,7 +98,6 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   await markListLead(d, guest, 1, { outcome: "Voicemail", notes: "Renee out till Monday" });
   const saved = (await getList(repId, guest.id))!;
   assert.equal(saved.leads[1].outcome, "Voicemail");
-  assert.equal(saved.leads[1].leadId, DEMO_LEAD_ID);
   const note = close.writes.find((w) => w.op === "note")!.body as { leadId: string; note: string };
   assert.deepEqual([note.leadId, note.note], [DEMO_LEAD_ID, "[Work trial] Called by Jake Miller (work trial): Voicemail. Notes: Renee out till Monday"]);
   assert.ok(!close.writes.some((w) => w.op === "status" || w.op === "task"), "notes only: no status changes, no tasks");
@@ -119,4 +118,22 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   const named = (await getList(repId, guest.id))!.leads[0];
   assert.equal(named.gotName, "Mike Torres, purchasing, x214");
   assert.match((close.writes.filter((w) => w.op === "note").pop()!.body as { note: string }).note, /^\[Work trial\] Called by Jake Miller \(work trial\): Got a name\. Ask for: Mike Torres, purchasing, x214\.$/);
+});
+
+test("marks in a batch all stick, the answer doesn't wait on Close, and notes come after (10/15)", async () => {
+  const { putList, getList, markListLeads } = await import("../src/guests.js");
+  const repId = "user_guestBatch";
+  const close = new FakeClose();
+  const d: Deps = { close, llm: demoLlm, rep: rep(repId) };
+  const { guest } = await createGuest(repId, "Ulysses");
+  await putList(repId, guest, { rows: Array.from({ length: 5 }, (_, i) => ({ company: `Co ${i}`, phone: `(555) 555-010${i}`, state: "TX" })) });
+  const r = await markListLeads(d, guest, [{ i: 0, outcome: "Voicemail" }, { i: 1, outcome: "No answer" }, { i: 3, outcome: "Got a name", gotName: "Sam" }]);
+  assert.equal(r.called, 3);
+  assert.equal(close.writes.filter((w) => w.op === "note").length, 0, "nothing written to Close before the answer");
+  assert.equal(r.notes.length, 3, "three notes to write afterward");
+  const saved = (await getList(repId, guest.id))!.leads;
+  assert.deepEqual(saved.map((l) => l.outcome), ["Voicemail", "No answer", null, "Got a name", null]);
+  // A later batch keeps the earlier marks.
+  await markListLeads(d, guest, [{ i: 4, outcome: "Wrong number" }]);
+  assert.equal((await getList(repId, guest.id))!.leads.filter((l) => l.outcome).length, 4);
 });

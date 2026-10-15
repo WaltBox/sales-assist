@@ -166,10 +166,31 @@ export async function putList(repId: string, guest: Guest, body: { name?: string
  * The guest marks a lead: an outcome, notes, the email they got. A note goes on the lead in Close when the company
  * is found there (notes only: no status changes, no tasks).
  */
-export async function markListLead(d: Deps, guest: Guest, i: number, patch: { outcome?: string | null; notes?: string | null; email?: string | null; gotName?: string | null }) {
+export type MarkPatch = { outcome?: string | null; notes?: string | null; email?: string | null; gotName?: string | null };
+
+/**
+ * Several marks in one save (10/15): the page queues taps and sends them one request at a time, so two saves never
+ * overwrite each other (that's how marks were getting lost). The Close notes are written after the answer, in the
+ * background, so a tap never waits on Close.
+ */
+export async function markListLeads(d: Deps, guest: Guest, marks: Array<{ i: number } & MarkPatch>) {
   const list = await getList(d.rep.closeUserId, guest.id);
-  const lead = list?.leads.find((l) => l.i === i);
-  if (!list || !lead) throw new GuestError(404, "That lead isn't on your list.");
+  if (!list) throw new GuestError(404, "Upload your list first.");
+  const notes: Array<() => Promise<unknown>> = [];
+  const out: ListLead[] = [];
+  for (const m of marks.slice(0, 200)) {
+    const lead = list.leads.find((l) => l.i === m.i);
+    if (!lead) continue;
+    const r = applyMark(d, guest, lead, m);
+    if (r) notes.push(r);
+    out.push(lead);
+  }
+  await store.putSetting(d.rep.closeUserId, listKey(guest.id), list);
+  return { leads: out, called: list.leads.filter((l) => l.outcome).length, total: list.leads.length, notes };
+}
+
+/** Apply one mark; returns the Close note to write later, if one is due. */
+function applyMark(d: Deps, guest: Guest, lead: ListLead, patch: MarkPatch): (() => Promise<unknown>) | null {
   const before = lead.outcome;
   if (patch.outcome !== undefined) {
     if (patch.outcome !== null && !(OUTCOMES as readonly string[]).includes(patch.outcome)) throw new GuestError(400, "Pick an outcome from the list.");
@@ -181,14 +202,23 @@ export async function markListLead(d: Deps, guest: Guest, i: number, patch: { ou
   const nameBefore = lead.gotName ?? "";
   if (patch.gotName !== undefined) lead.gotName = String(patch.gotName ?? "").trim().slice(0, 120);
   const newName = !!lead.gotName && lead.gotName !== nameBefore;
-  // A new outcome (or the name they got) goes to Close as a note on the company, when it's there.
-  if (lead.outcome && (lead.outcome !== before || newName)) {
-    if (!lead.leadId) lead.leadId = (await findLead(d, lead.company, lead.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
-    // Who made the call, said plainly (Walt 10/15): a work trial, by name.
-    if (lead.leadId) await d.close.createNote(lead.leadId, `[Work trial] Called by ${guest.name} (work trial): ${lead.outcome}.${lead.gotName ? ` Ask for: ${lead.gotName}.` : ""}${lead.notes ? ` Notes: ${lead.notes}` : ""}${lead.email ? ` Email: ${lead.email}` : ""}`, false).catch(() => undefined);
-  }
-  await store.putSetting(d.rep.closeUserId, listKey(guest.id), list);
-  return lead;
+  if (!lead.outcome || (lead.outcome === before && !newName)) return null;
+  const snap = { ...lead };
+  return async () => {
+    const id = snap.leadId ?? (await findLead(d, snap.company, snap.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
+    if (id && !lead.leadId) lead.leadId = id;
+    if (id) await d.close.createNote(id, `[Work trial] Called by ${guest.name} (work trial): ${snap.outcome}.${snap.gotName ? ` Ask for: ${snap.gotName}.` : ""}${snap.notes ? ` Notes: ${snap.notes}` : ""}${snap.email ? ` Email: ${snap.email}` : ""}`, false);
+  };
+}
+
+/** One mark, saved and noted in Close before returning (tests, and the old single-mark route). */
+export async function markListLead(d: Deps, guest: Guest, i: number, patch: MarkPatch) {
+  const list = await getList(d.rep.closeUserId, guest.id);
+  const lead = list?.leads.find((l) => l.i === i);
+  if (!list || !lead) throw new GuestError(404, "That lead isn't on your list.");
+  const r = await markListLeads(d, guest, [{ i, ...patch }]);
+  for (const n of r.notes) await n().catch(() => undefined);
+  return r.leads[0];
 }
 
 /** Counts by outcome, for the rep's Guests tab. */

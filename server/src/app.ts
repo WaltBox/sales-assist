@@ -26,7 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
-import { createGuest, getList, GuestError, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, putList, setGuestActive } from "./guests.js";
+import { createGuest, getList, GuestError, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -281,6 +281,16 @@ export function createApp(appDeps: AppDeps) {
   };
   app.get("/api/guest/:token/list", guestRoute(async (_req, g) => ({ list: await getList(g.repId, g.guest.id) })));
   app.post("/api/guest/:token/list", guestRoute(async (req, g) => ({ list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] }) })));
+  // Taps, batched by the page and sent one save at a time; Close notes go after the answer (10/15).
+  const Mark = z.object({ i: z.number().int().min(0), outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() });
+  app.post("/api/guest/:token/marks", guestRoute(async (req, g) => {
+    const { marks } = z.object({ marks: z.array(Mark).max(200) }).parse(req.body ?? {});
+    const d = await depsFor(g.rep);
+    const r = await markListLeads(d, g.guest, marks);
+    // Never re-saves the list (a second writer is what lost marks before); it only writes the notes.
+    if (r.notes.length) background((async () => { for (const n of r.notes) await n().catch((e) => console.error("guest note:", (e as Error).message)); })(), "guest notes");
+    return { called: r.called, total: r.total };
+  }));
   app.post("/api/guest/:token/list/:i", guestRoute(async (req, g) => {
     const b = z.object({ outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() }).parse(req.body ?? {});
     return { lead: await markListLead(await depsFor(g.rep), g.guest, Number(req.params.i), b) };

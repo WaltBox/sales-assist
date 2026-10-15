@@ -153,18 +153,41 @@
       // Show the pick first, then move on (10/15: jumping straight to the next company looked like nothing happened).
       if (advance) {
         draw();
-        await new Promise((r) => setTimeout(r, 450));
+        await new Promise((r) => setTimeout(r, 250));
         const at = before.findIndex((x) => x.i === l.i); const next = before.slice(at + 1).find((x) => !x.outcome) || filtered()[0]; S.i = next ? next.i : null;
         S.flash = { i: l.i, company: l.company, outcome: patch.outcome, prev };
       }
       remember(); draw();
-      try { await call(`/list/${l.i}`, patch); } catch (err) { S.flash = null; S.msg = { kind: "bad", text: `Didn't save: ${err.message}` }; draw(); }
+      enqueue(l.i, patch);
     }
+    // Saving (10/15): taps queue up here and go to the server one batch at a time, so no save overwrites another and
+    // nothing waits on Close. The queue is kept in the browser too, so closing the tab doesn't lose a tap.
+    const QKEY = `glq:${token}`;
+    let queue = (() => { try { return JSON.parse(localStorage.getItem(QKEY) || "{}"); } catch { return {}; } })();
+    let flushing = false, retryIn = 1000;
+    const keepQueue = () => { try { localStorage.setItem(QKEY, JSON.stringify(queue)); } catch {} };
+    function enqueue(i, patch) { queue[i] = { ...(queue[i] || {}), ...patch, i }; keepQueue(); flush(); }
+    async function flush() {
+      if (flushing) return;
+      const marks = Object.values(queue); if (!marks.length) return;
+      flushing = true; queue = {}; keepQueue();
+      try {
+        await call("/marks", { marks: marks.map((m) => ({ ...m, i: Number(m.i) })) });
+        retryIn = 1000; setSaving(false);
+      } catch (err) {
+        // Put them back (newer taps win) and try again shortly.
+        for (const m of marks) queue[m.i] = { ...m, ...(queue[m.i] || {}) }; keepQueue();
+        setSaving(true, err.message); setTimeout(flush, retryIn); retryIn = Math.min(retryIn * 2, 30000);
+      }
+      flushing = false;
+      if (Object.keys(queue).length) flush();
+    }
+    function setSaving(stuck, why) { S.saveErr = stuck ? why : null; const m = document.getElementById("savestate"); if (m) m.textContent = stuck ? `Not saved yet, retrying (${why})` : ""; }
     async function undo() {
       const f = S.flash; if (!f) return;
       const l = S.list.leads.find((x) => x.i === f.i); if (!l) return;
       S.flash = null; S.i = l.i; l.outcome = f.prev || null; remember(); draw();
-      try { await call(`/list/${l.i}`, { outcome: f.prev || null }); } catch (err) { S.msg = { kind: "bad", text: err.message }; draw(); }
+      enqueue(l.i, { outcome: f.prev || null });
     }
     async function sendCard(l, email) {
       S.busy = true; S.msg = null; draw();
@@ -194,7 +217,7 @@
       ]);
     }
     function listTab() {
-      if (S.list === undefined) { S.list = null; S.loading = true; call("/list").then((r) => { S.list = r.list; S.loading = false; draw(); }).catch((err) => { S.loading = false; S.msg = { kind: "bad", text: err.message }; draw(); }); }
+      if (S.list === undefined) { S.list = null; S.loading = true; call("/list").then((r) => { S.list = r.list; S.loading = false; if (S.list) for (const m of Object.values(queue)) { const l = S.list.leads.find((x) => x.i === Number(m.i)); if (l) Object.assign(l, m, { i: l.i }); } draw(); flush(); }).catch((err) => { S.loading = false; S.msg = { kind: "bad", text: err.message }; draw(); }); }
       if (S.loading) return [h("p", { class: "gsub", text: "Loading your list…" })];
       if (!S.list) return [h("div", { class: "gnarrow" }, [h("h1", { class: "gt" }, ["Your ", h("b", { text: "call list" })]), h("p", { class: "gsub", text: "Upload the sheet you're calling from, then work it here: one company at a time, tap to dial, one tap for how it went." }), uploadBox(false)])];
       const L = S.list.leads, done = L.filter((l) => l.outcome).length;
@@ -206,7 +229,7 @@
       const todo = Object.fromEntries(states.map((s) => [s, L.filter((l) => l.state === s && !l.outcome).length]));
       const head = h("div", { class: "lhead" }, [
         h("div", {}, [h("h1", { class: "gt", text: S.list.name }), h("p", { class: "gsub", style: "margin:0", text: `${L.length} companies · ${rows.length} showing` })]),
-        h("div", { class: "prog" }, [h("div", { class: "label", text: `${done} of ${L.length} called` }), h("div", { class: "bar" }, h("i", { style: `width:${Math.round((done / L.length) * 100)}%` }))]),
+        h("div", { class: "prog" }, [h("div", { class: "label", text: `${done} of ${L.length} called` }), h("div", { class: "bar" }, h("i", { style: `width:${Math.max(done ? 1 : 0, Math.round((done / L.length) * 100))}%` })), h("div", { id: "savestate", class: "gmsg bad", style: "margin-top:4px;font-size:12px", text: S.saveErr ? `Not saved yet, retrying (${S.saveErr})` : "" })]),
       ]);
       const filters = h("div", { class: "filters" }, [
         h("input", { class: "gin", id: "q", placeholder: "Search a company, a name, a city", value: S.q, oninput: (e) => { S.q = e.target.value; remember(); drawSoon(); } }),
