@@ -100,7 +100,10 @@
       MI: "America/Detroit", IN: "America/Indiana/Indianapolis", KY: "America/New_York", OH: "America/New_York", GA: "America/New_York", FL: "America/New_York", SC: "America/New_York",
       NC: "America/New_York", VA: "America/New_York", WV: "America/New_York", PA: "America/New_York", NY: "America/New_York", NJ: "America/New_York", DE: "America/New_York",
       MD: "America/New_York", DC: "America/New_York", CT: "America/New_York", RI: "America/New_York", MA: "America/New_York", VT: "America/New_York", NH: "America/New_York", ME: "America/New_York" };
-    const local = (st) => { const tz = TZ[st]; if (!tz) return null; const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", weekday: "short", hour12: false }).formatToParts(new Date()).map((x) => [x.type, x.value])); return { hr: Number(p.hour) % 24, min: Number(p.minute), wd: p.weekday, label: new Date().toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }) }; };
+    // Each state's local time, worked out once a minute (10/15: building a clock per row on every sort made each tap take ~1s).
+    const FMT = {}, LOCAL = { min: -1, by: {} };
+    const local = (st) => { const m = Math.floor(Date.now() / 60000); if (LOCAL.min !== m) { LOCAL.min = m; LOCAL.by = {}; } if (!(st in LOCAL.by)) LOCAL.by[st] = localNow(st); return LOCAL.by[st]; };
+    const localNow = (st) => { const tz = TZ[st]; if (!tz) return null; FMT[tz] = FMT[tz] || new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", weekday: "short", hour12: false }); const p = Object.fromEntries(FMT[tz].formatToParts(new Date()).map((x) => [x.type, x.value])); return { hr: Number(p.hour) % 24, min: Number(p.minute), wd: p.weekday, label: new Date().toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }) }; };
     const open = (st) => { const t = local(st); return !!t && !["Sat", "Sun"].includes(t.wd) && t.hr >= 8 && t.hr < 17; };
     const eastFirst = (st) => { const t = local(st); return t ? -(t.hr * 60 + t.min) : 0; };
 
@@ -167,8 +170,9 @@
     let flushing = false, retryIn = 1000;
     const keepQueue = () => { try { localStorage.setItem(QKEY, JSON.stringify(queue)); } catch {} };
     function enqueue(i, patch) { queue[i] = { ...(queue[i] || {}), ...patch, i }; keepQueue(); flush(); }
+    let retryTimer = null;
     async function flush() {
-      if (flushing) return;
+      if (flushing || retryTimer) return;
       const marks = Object.values(queue); if (!marks.length) return;
       flushing = true; queue = {}; keepQueue();
       try {
@@ -177,7 +181,9 @@
       } catch (err) {
         // Put them back (newer taps win) and try again shortly.
         for (const m of marks) queue[m.i] = { ...m, ...(queue[m.i] || {}) }; keepQueue();
-        setSaving(true, err.message); setTimeout(flush, retryIn); retryIn = Math.min(retryIn * 2, 30000);
+        // Wait before trying again. Never re-send straight away: that spun in a tight loop (10/15).
+        setSaving(true, err.message); flushing = false; retryTimer = setTimeout(() => { retryTimer = null; flush(); }, retryIn); retryIn = Math.min(retryIn * 2, 30000);
+        return;
       }
       flushing = false;
       if (Object.keys(queue).length) flush();
@@ -193,9 +199,8 @@
       S.busy = true; S.msg = null; draw();
       try {
         const r = await call("/send", { company: l.company, name: personName(l.gotName || l.askFor), email, meme: !!S.meme });
-        S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}.` };
-        // Already marked Wants line card: just save the email (no second note in Close).
-        await mark(l, l.outcome === "Wants line card" ? { email } : { outcome: "Wants line card", email }, true);
+        S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}. Press Save & next when you're done.` };
+        const dr = draftFor(l); dr.outcome = "Wants line card"; dr.email = email; draw();
       } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; draw(); }
     }
     function uploadBox(again) {
@@ -233,52 +238,76 @@
       ]);
       const filters = h("div", { class: "filters" }, [
         h("input", { class: "gin", id: "q", placeholder: "Search a company, a name, a city", value: S.q, oninput: (e) => { S.q = e.target.value; remember(); drawSoon(); } }),
-        h("select", { class: "gin", onchange: (e) => { S.st = e.target.value; S.i = null; remember(); draw(); } }, [h("option", { value: "", text: "All states" }), ...states.map((s) => h("option", { value: s, text: `${s} · ${todo[s]} to call`, selected: S.st === s }))]),
-        h("select", { class: "gin", onchange: (e) => { S.show = e.target.value; S.i = null; remember(); draw(); } }, [["todo", "Not called yet"], ["all", "Everyone"], ...OUTS.map(([o]) => [o, o])].map(([v, t]) => h("option", { value: v, text: t, selected: S.show === v }))),
-        h("label", { class: "chk" }, [h("input", { type: "checkbox", checked: S.inHours, onchange: (e) => { S.inHours = e.target.checked; S.i = null; remember(); draw(); } }), "Open right now (8 to 5 their time)"]),
+        h("select", { class: "gin", onchange: (e) => { commit(); S.st = e.target.value; S.i = null; remember(); draw(); } }, [h("option", { value: "", text: "All states" }), ...states.map((s) => h("option", { value: s, text: `${s} · ${todo[s]} to call`, selected: S.st === s }))]),
+        h("select", { class: "gin", onchange: (e) => { commit(); S.show = e.target.value; S.i = null; remember(); draw(); } }, [["todo", "Not called yet"], ["all", "Everyone"], ...OUTS.map(([o]) => [o, o])].map(([v, t]) => h("option", { value: v, text: t, selected: S.show === v }))),
+        h("label", { class: "chk" }, [h("input", { type: "checkbox", checked: S.inHours, onchange: (e) => { commit(); S.inHours = e.target.checked; S.i = null; remember(); draw(); } }), "Open right now (8 to 5 their time)"]),
       ]);
-      const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => { S.i = l.i; S.msg = null; S.flash = null; remember(); draw(); } }, [
+      const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => moveTo(l.i) }, [
         h("span", { class: "co", text: l.company }), h("span", { class: "oc", text: l.outcome || "" }),
         h("span", { class: "meta", text: [l.city, l.state].filter(Boolean).join(", ") + (t ? ` · ${t.label}` : "") }), h("span"),
       ]); }) : [h("div", { class: "empty", text: "Nobody matches. Change the filters above." })]);
       return [head, filters, h("div", { class: "split" }, [list, cur ? card(cur, rows) : h("div", { class: "box card" }, [h("p", { text: "Nobody left with these filters. Nice work." })])]),
         h("details", { style: "margin-top:18px" }, [h("summary", { text: "Upload a different sheet" }), uploadBox(true)])];
     }
+    // The call card (Walt 10/15): picks are a draft on this company. Nothing is saved, and nothing goes to Close,
+    // until they press "Save & next" (or move to another company); then it's saved once and the one note is written.
+    function draftFor(l) {
+      if (!S.draft || S.draft.i !== l.i) S.draft = { i: l.i, outcome: l.outcome, gotName: l.gotName || "", notes: l.notes || "", email: l.email || "" };
+      return S.draft;
+    }
+    function commit() {
+      const dr = S.draft; if (!dr) return null;
+      const l = S.list.leads.find((x) => x.i === dr.i); if (!l) return null;
+      const patch = {};
+      if ((dr.outcome || null) !== (l.outcome || null)) patch.outcome = dr.outcome || null;
+      if ((dr.gotName || "") !== (l.gotName || "")) patch.gotName = dr.gotName || "";
+      if ((dr.notes || "") !== (l.notes || "")) patch.notes = dr.notes || "";
+      if ((dr.email || "") !== (l.email || "")) patch.email = dr.email || "";
+      S.draft = null;
+      if (!Object.keys(patch).length) return null;
+      const prev = l.outcome;
+      Object.assign(l, patch, patch.outcome !== undefined ? { outcomeAt: patch.outcome ? new Date().toISOString() : null } : {});
+      enqueue(l.i, patch);
+      return patch.outcome !== undefined && patch.outcome ? { i: l.i, company: l.company, outcome: patch.outcome, prev } : null;
+    }
+    function moveTo(i) { const f = commit(); S.flash = f; S.i = i; S.msg = null; remember(); draw(); }
     function card(l, rows) {
       const t = local(l.state);
-      const email = h("input", { class: "gin", id: "lcemail", type: "email", placeholder: "their@company.com", value: l.email || "", autocapitalize: "off", spellcheck: "false" });
-      const meme = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
-      const notes = h("textarea", { class: "gin", rows: 3, placeholder: "Notes: who you spoke to, when to call back, what they buy", onchange: (e) => mark(l, { notes: e.target.value }, false) }); notes.value = l.notes || "";
+      const dr = draftFor(l);
       const at = rows.findIndex((x) => x.i === l.i);
-      const go = (d) => { const n = at >= 0 ? rows[at + d] : (d > 0 ? rows[0] : null); if (n) { S.i = n.i; S.msg = null; S.flash = null; remember(); draw(); } };
+      const nextOf = () => { const after = at >= 0 ? rows.slice(at + 1) : rows; return after.find((x) => !x.outcome && x.i !== l.i) || after[0] || null; };
+      const email = h("input", { class: "gin", id: "lcemail", type: "email", placeholder: "their@company.com", value: dr.email, autocapitalize: "off", spellcheck: "false", oninput: (e) => { dr.email = e.target.value; } });
+      const meme = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
+      const notes = h("textarea", { class: "gin", rows: 3, placeholder: "Notes: who you spoke to, when to call back, what they buy", oninput: (e) => { dr.notes = e.target.value; } }); notes.value = dr.notes;
       const flash = S.flash && S.flash.i !== l.i ? S.flash : null;
+      const next = nextOf();
       return h("div", { class: "box card" }, [
         h("h2", { text: l.company }),
         h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.gotName || l.askFor || "Purchasing manager" })]),
         h("a", { class: "callbtn", href: `tel:${l.phone.replace(/[^\d+]/g, "")}`, text: `Call ${l.phone}` }),
         h("div", { class: "where" }, [h("span", { text: [l.city, l.state].filter(Boolean).join(", ") }), t ? h("span", { class: open(l.state) ? "open" : "shut", text: `${t.label} there · ${open(l.state) ? "open" : "closed"}` }) : null]),
         l.what ? h("p", { class: "what", text: l.what }) : null,
-        // Right where they just tapped: what was saved, and an undo (10/15).
-        flash ? h("div", { class: "flash" }, [h("span", {}, ["✓ Saved ", h("b", { text: flash.outcome }), ` for ${flash.company}. Now: ${l.company}.`]), h("button", { class: "linkb", text: "Undo", onclick: undo })]) : null,
+        flash ? h("div", { class: "flash" }, [h("span", {}, ["✓ Saved ", h("b", { text: flash.outcome }), ` for ${flash.company}.`]), h("button", { class: "linkb", text: "Undo", onclick: undo })]) : null,
         h("div", { class: "label", text: "How did it go?" }),
-        h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${l.outcome === o ? " on" : ""}`, text: o, onclick: () => {
-          // Wants line card is marked like the rest; it stays on this company so they can type the email and send (10/15).
-          // Got a name stays put too, with a box for the name (10/15).
-          if (o === "Got a name" && l.outcome !== o) { S.msg = { kind: "", text: "Marked. Type the name below and press Save name." }; mark(l, { outcome: o }, false); setTimeout(() => document.getElementById("gotname")?.focus(), 0); return; }
-          if (o === "Wants line card" && l.outcome !== o) { S.msg = { kind: "", text: "Marked. Type their email below and press Send line card." }; mark(l, { outcome: o }, false); setTimeout(() => document.getElementById("lcemail")?.focus(), 0); return; }
-          S.msg = null; mark(l, { outcome: l.outcome === o ? null : o }, l.outcome !== o);
+        // A tap only picks (10/15): highlighted, nothing saved yet. Tap again to unpick.
+        h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${dr.outcome === o ? " on" : ""}`, text: o, onclick: () => {
+          dr.outcome = dr.outcome === o ? null : o; S.msg = null; draw();
+          if (dr.outcome === "Got a name") setTimeout(() => document.getElementById("gotname")?.focus(), 0);
+          if (dr.outcome === "Wants line card") setTimeout(() => document.getElementById("lcemail")?.focus(), 0);
         } }))),
-        l.outcome === "Got a name" || l.gotName ? h("div", {}, [
+        dr.outcome === "Got a name" || dr.gotName ? h("div", {}, [
           h("div", { class: "label", text: "Who should we ask for?" }),
-          (() => { const nm = h("input", { class: "gin", id: "gotname", placeholder: "Name, title, direct line or extension", value: l.gotName || "", onkeydown: (e) => { if (e.key === "Enter") e.target.nextSibling?.click(); } });
-            return h("div", { class: "lcrow" }, [nm, h("button", { class: "gbtn", text: "Save name", onclick: () => { if (!nm.value.trim()) { S.msg = { kind: "bad", text: "Type the name first." }; return drawMsg(); } S.msg = { kind: "ok", text: `Saved. Next time ask for ${nm.value.trim()}.` }; mark(l, { gotName: nm.value.trim() }, false); } })]); })(),
+          h("input", { class: "gin", id: "gotname", style: "width:100%;box-sizing:border-box;margin:6px 0 12px", placeholder: "Name, title, direct line or extension", value: dr.gotName, oninput: (e) => { dr.gotName = e.target.value; } }),
         ]) : null,
         h("div", { class: "label", text: "Line card" }),
-        h("div", { class: "lcrow" }, [email, h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card", onclick: () => (email.value.trim() ? sendCard(l, email.value.trim()) : ((S.msg = { kind: "bad", text: "Type their email first." }), drawMsg())) })]),
+        h("div", { class: "lcrow" }, [email, h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card", onclick: () => (dr.email.trim() ? sendCard(l, dr.email.trim()) : ((S.msg = { kind: "bad", text: "Type their email first." }), drawMsg())) })]),
         h("label", { class: "chk", style: "margin:-4px 0 12px" }, [meme, "Add a meme (picks one at random)"]),
         notes,
         h("p", { id: "cardmsg", class: `gmsg ${S.msg ? S.msg.kind : ""}`, text: S.msg ? S.msg.text : "" }),
-        h("div", { class: "navrow" }, [h("button", { class: "gbtn ghost", disabled: at <= 0, text: "← Previous", onclick: () => go(-1) }), h("button", { class: "gbtn ghost", disabled: at >= rows.length - 1 || !rows.length, text: "Next →", onclick: () => go(1) })]),
+        h("div", { class: "navrow" }, [
+          h("button", { class: "gbtn ghost", disabled: at <= 0, text: "← Previous", onclick: () => moveTo(rows[at - 1].i) }),
+          h("button", { class: "gbtn", disabled: !next, text: dr.outcome ? "Save & next →" : "Skip →", onclick: () => next && moveTo(next.i) }),
+        ]),
       ]);
     }
     function drawMsg() { const m = document.getElementById("cardmsg"); if (m) { m.className = `gmsg ${S.msg ? S.msg.kind : ""}`; m.textContent = S.msg ? S.msg.text : ""; } }
@@ -310,9 +339,10 @@
 
     function off(text) { document.getElementById("tabs").replaceChildren(); root.replaceChildren(h("div", { class: "goff gnarrow", text })); }
     function draw() {
-      document.getElementById("tabs").replaceChildren(...[["list", "Call list"], ["send", "Send a line card"]].map(([k, t]) => h("button", { class: S.tab === k ? "on" : "", text: t, onclick: () => { S.tab = k; S.msg = null; remember(); draw(); } })));
+      document.getElementById("tabs").replaceChildren(...[["list", "Call list"], ["send", "Send a line card"]].map(([k, t]) => h("button", { class: S.tab === k ? "on" : "", text: t, onclick: () => { if (S.list) commit(); S.tab = k; S.msg = null; remember(); draw(); } })));
       root.replaceChildren(...(S.tab === "send" ? sendTab() : listTab()).filter(Boolean));
     }
+    window.addEventListener("pagehide", () => { if (S.list) commit(); });
     call("").then((v) => { S.me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));
     // Local times move: redraw each minute unless they're typing.
     setInterval(() => { const a = document.activeElement; if (S.tab === "list" && S.list && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) draw(); }, 60_000);
