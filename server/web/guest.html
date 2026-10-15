@@ -145,7 +145,7 @@
         && (!q || `${l.company} ${l.askFor} ${l.city} ${l.phone}`.toLowerCase().includes(q)))
         .sort((a, b) => (!!a.outcome - !!b.outcome) || (open(b.state) - open(a.state)) || (eastFirst(a.state) - eastFirst(b.state)) || a.company.localeCompare(b.company));
     }
-    const personName = (a) => (/purchasing manager|^buyer$/i.test(a || "") ? null : (a || "").replace(/\s*\(.*\)\s*$/, "").split(/\s+/)[0] || null);
+    const personName = (a) => (/purchasing manager|^buyer$/i.test(a || "") ? null : (a || "").replace(/\s*\(.*\)\s*$/, "").split(/[\s,]+/)[0] || null);
     async function mark(l, patch, advance) {
       const before = filtered();
       const prev = l.outcome;
@@ -169,7 +169,7 @@
     async function sendCard(l, email) {
       S.busy = true; S.msg = null; draw();
       try {
-        const r = await call("/send", { company: l.company, name: personName(l.askFor), email, meme: !!S.meme });
+        const r = await call("/send", { company: l.company, name: personName(l.gotName || l.askFor), email, meme: !!S.meme });
         S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}.` };
         // Already marked Wants line card: just save the email (no second note in Close).
         await mark(l, l.outcome === "Wants line card" ? { email } : { outcome: "Wants line card", email }, true);
@@ -231,7 +231,7 @@
       const flash = S.flash && S.flash.i !== l.i ? S.flash : null;
       return h("div", { class: "box card" }, [
         h("h2", { text: l.company }),
-        h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.askFor || "Purchasing manager" })]),
+        h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.gotName || l.askFor || "Purchasing manager" })]),
         h("a", { class: "callbtn", href: `tel:${l.phone.replace(/[^\d+]/g, "")}`, text: `Call ${l.phone}` }),
         h("div", { class: "where" }, [h("span", { text: [l.city, l.state].filter(Boolean).join(", ") }), t ? h("span", { class: open(l.state) ? "open" : "shut", text: `${t.label} there · ${open(l.state) ? "open" : "closed"}` }) : null]),
         l.what ? h("p", { class: "what", text: l.what }) : null,
@@ -240,9 +240,16 @@
         h("div", { class: "label", text: "How did it go?" }),
         h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${l.outcome === o ? " on" : ""}`, text: o, onclick: () => {
           // Wants line card is marked like the rest; it stays on this company so they can type the email and send (10/15).
+          // Got a name stays put too, with a box for the name (10/15).
+          if (o === "Got a name" && l.outcome !== o) { S.msg = { kind: "", text: "Marked. Type the name below and press Save name." }; mark(l, { outcome: o }, false); setTimeout(() => document.getElementById("gotname")?.focus(), 0); return; }
           if (o === "Wants line card" && l.outcome !== o) { S.msg = { kind: "", text: "Marked. Type their email below and press Send line card." }; mark(l, { outcome: o }, false); setTimeout(() => document.getElementById("lcemail")?.focus(), 0); return; }
           S.msg = null; mark(l, { outcome: l.outcome === o ? null : o }, l.outcome !== o);
         } }))),
+        l.outcome === "Got a name" || l.gotName ? h("div", {}, [
+          h("div", { class: "label", text: "Who should we ask for?" }),
+          (() => { const nm = h("input", { class: "gin", id: "gotname", placeholder: "Name, title, direct line or extension", value: l.gotName || "", onkeydown: (e) => { if (e.key === "Enter") e.target.nextSibling?.click(); } });
+            return h("div", { class: "lcrow" }, [nm, h("button", { class: "gbtn", text: "Save name", onclick: () => { if (!nm.value.trim()) { S.msg = { kind: "bad", text: "Type the name first." }; return drawMsg(); } S.msg = { kind: "ok", text: `Saved. Next time ask for ${nm.value.trim()}.` }; mark(l, { gotName: nm.value.trim() }, false); } })]); })(),
+        ]) : null,
         h("div", { class: "label", text: "Line card" }),
         h("div", { class: "lcrow" }, [email, h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card", onclick: () => (email.value.trim() ? sendCard(l, email.value.trim()) : ((S.msg = { kind: "bad", text: "Type their email first." }), drawMsg())) })]),
         h("label", { class: "chk", style: "margin:-4px 0 12px" }, [meme, "Add a meme (picks one at random)"]),

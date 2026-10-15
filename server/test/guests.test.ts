@@ -111,6 +111,12 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   const sum = listSummary(saved)!;
   assert.deepEqual([sum.total, sum.called, sum.by.Voicemail], [2, 1, 1]);
   const csv = listCsv((await getList(repId, guest.id))!);
-  assert.match(csv.split("\n")[0], /^Company,Phone,Ask for,What they do,City,State,Outcome,Called at,Email \(for line card\),Notes$/);
-  assert.match(csv, /"Rodda Electric, Inc\.",\(925\) 240-6024,Renee \(Purchasing\),,Brentwood,CA,Voicemail,\d{4}-\d{2}-\d{2}T[^,]+,,"Renee out till Monday, try 9am"/);
+  assert.match(csv.split("\n")[0], /^Company,Phone,Ask for,What they do,City,State,Outcome,Called at,Name they got,Email \(for line card\),Notes$/);
+  assert.match(csv, /"Rodda Electric, Inc\.",\(925\) 240-6024,Renee \(Purchasing\),,Brentwood,CA,Voicemail,\d{4}-\d{2}-\d{2}T[^,]+,,,"Renee out till Monday, try 9am"/);
+  // Got a name (10/15): the name is saved and goes into a note in Close.
+  await markListLead(d, guest, 0, { outcome: "Got a name" });
+  await markListLead(d, guest, 0, { gotName: "Mike Torres, purchasing, x214" });
+  const named = (await getList(repId, guest.id))!.leads[0];
+  assert.equal(named.gotName, "Mike Torres, purchasing, x214");
+  assert.match((close.writes.filter((w) => w.op === "note").pop()!.body as { note: string }).note, /^\[Work trial\] Called by Jake Miller \(work trial\): Got a name\. Ask for: Mike Torres, purchasing, x214\.$/);
 });

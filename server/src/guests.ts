@@ -136,6 +136,8 @@ export type Outcome = (typeof OUTCOMES)[number];
 export type ListLead = {
   i: number; company: string; phone: string; askFor: string; what: string; city: string; state: string;
   email: string; notes: string; outcome: Outcome | null; outcomeAt: string | null; leadId: string | null;
+  /** The name they got on the call ("Got a name", 10/15): who to ask for next time. */
+  gotName?: string;
 };
 export type CallList = { name: string; uploadedAt: string; leads: ListLead[] };
 const LIST_MAX = 3000;
@@ -164,7 +166,7 @@ export async function putList(repId: string, guest: Guest, body: { name?: string
  * The guest marks a lead: an outcome, notes, the email they got. A note goes on the lead in Close when the company
  * is found there (notes only: no status changes, no tasks).
  */
-export async function markListLead(d: Deps, guest: Guest, i: number, patch: { outcome?: string | null; notes?: string | null; email?: string | null }) {
+export async function markListLead(d: Deps, guest: Guest, i: number, patch: { outcome?: string | null; notes?: string | null; email?: string | null; gotName?: string | null }) {
   const list = await getList(d.rep.closeUserId, guest.id);
   const lead = list?.leads.find((l) => l.i === i);
   if (!list || !lead) throw new GuestError(404, "That lead isn't on your list.");
@@ -176,11 +178,14 @@ export async function markListLead(d: Deps, guest: Guest, i: number, patch: { ou
   }
   if (patch.notes !== undefined) lead.notes = String(patch.notes ?? "").slice(0, 1000);
   if (patch.email !== undefined) lead.email = String(patch.email ?? "").trim().slice(0, 160);
-  // A new outcome goes to Close as a note on the company, when it's there.
-  if (lead.outcome && lead.outcome !== before) {
+  const nameBefore = lead.gotName ?? "";
+  if (patch.gotName !== undefined) lead.gotName = String(patch.gotName ?? "").trim().slice(0, 120);
+  const newName = !!lead.gotName && lead.gotName !== nameBefore;
+  // A new outcome (or the name they got) goes to Close as a note on the company, when it's there.
+  if (lead.outcome && (lead.outcome !== before || newName)) {
     if (!lead.leadId) lead.leadId = (await findLead(d, lead.company, lead.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
     // Who made the call, said plainly (Walt 10/15): a work trial, by name.
-    if (lead.leadId) await d.close.createNote(lead.leadId, `[Work trial] Called by ${guest.name} (work trial): ${lead.outcome}.${lead.notes ? ` Notes: ${lead.notes}` : ""}${lead.email ? ` Email: ${lead.email}` : ""}`, false).catch(() => undefined);
+    if (lead.leadId) await d.close.createNote(lead.leadId, `[Work trial] Called by ${guest.name} (work trial): ${lead.outcome}.${lead.gotName ? ` Ask for: ${lead.gotName}.` : ""}${lead.notes ? ` Notes: ${lead.notes}` : ""}${lead.email ? ` Email: ${lead.email}` : ""}`, false).catch(() => undefined);
   }
   await store.putSetting(d.rep.closeUserId, listKey(guest.id), list);
   return lead;
@@ -197,7 +202,7 @@ export function listSummary(list: CallList | null) {
 /** The list back as a spreadsheet (CSV), with what the guest filled in. */
 export function listCsv(list: CallList) {
   const q = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-  const head = ["Company", "Phone", "Ask for", "What they do", "City", "State", "Outcome", "Called at", "Email (for line card)", "Notes"];
-  const rows = list.leads.map((l) => [l.company, l.phone, l.askFor, l.what, l.city, l.state, l.outcome ?? "", l.outcomeAt ?? "", l.email, l.notes].map((v) => q(String(v))).join(","));
+  const head = ["Company", "Phone", "Ask for", "What they do", "City", "State", "Outcome", "Called at", "Name they got", "Email (for line card)", "Notes"];
+  const rows = list.leads.map((l) => [l.company, l.phone, l.askFor, l.what, l.city, l.state, l.outcome ?? "", l.outcomeAt ?? "", l.gotName ?? "", l.email, l.notes].map((v) => q(String(v))).join(","));
   return [head.join(","), ...rows].join("\n");
 }

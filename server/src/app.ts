@@ -282,7 +282,7 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/guest/:token/list", guestRoute(async (_req, g) => ({ list: await getList(g.repId, g.guest.id) })));
   app.post("/api/guest/:token/list", guestRoute(async (req, g) => ({ list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] }) })));
   app.post("/api/guest/:token/list/:i", guestRoute(async (req, g) => {
-    const b = z.object({ outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional() }).parse(req.body ?? {});
+    const b = z.object({ outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() }).parse(req.body ?? {});
     return { lead: await markListLead(await depsFor(g.rep), g.guest, Number(req.params.i), b) };
   }));
   // The rep's side: make a link, switch it off or on, see what each guest sent.
