@@ -1,3 +1,4 @@
+import { rfqByStatus } from "./accounts.js";
 import { background } from "./background.js";
 import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, forgetBoard, type Account } from "./accounts.js";
 import { reachedToday } from "./dialviews.js";
@@ -391,6 +392,12 @@ export async function syncAutomations(d: Deps) {
     }
     // Shot down, or marked Not Interested / Bad Fit / Disqualified in Close since it was planned: it doesn't go (Walt 10/5).
     const leadNow = await d.close.lead(a.leadId).catch(() => null);
+    // Marked RFQ Received / Quoted / Customer in Close since it was planned (10/15): they've sent one, so it doesn't go.
+    if (leadNow && rfqByStatus(leadNow.status_label)) {
+      await d.close.unschedule(a.id).catch(() => {});
+      await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: the lead is marked ${leadNow.status_label} in Close. It's a draft in Close now.` });
+      continue;
+    }
     if (leadNow && isOutStatus(leadNow.status_label)) {
       await d.close.unschedule(a.id).catch(() => {});
       await store.putAutomation({ ...a, status: "stopped", statusAt: now.toISOString(), checkedAt: now.toISOString(), note: `Pulled back: the lead is marked ${leadNow.status_label} in Close. It's a draft in Close now.` });

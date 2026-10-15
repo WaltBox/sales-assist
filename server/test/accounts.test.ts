@@ -477,3 +477,9 @@ test("a date they gave becomes one Close task on that day, never a second (10/14
   await scheduleLaterTasks(d, [a], []);
   assert.equal(close.writes.filter((w) => w.op === "task").length, 1, "once per account and date");
 });
+
+test("a lead marked RFQ Received in Close counts as an RFQ: out of the sequence and off the heat map (Jordan Electric, 10/15)", async () => {
+  const { rfqByStatus } = await import("../src/accounts.js");
+  for (const s of ["RFQ Received", "Quoted", "Customer", "rfq received"]) assert.ok(rfqByStatus(s), s);
+  for (const s of ["Sent Line Card", "Qualified", "project managers", null]) assert.ok(!rfqByStatus(s), String(s));
+});

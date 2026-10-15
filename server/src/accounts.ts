@@ -81,6 +81,18 @@ export function isAck(e: { body_text?: string | null; attachments?: unknown; sub
     && !/\b(rfq|quote|pric|send|call|list|spec|order|need|looking|interested|remove|unsubscribe|stop)/i.test(own);
 }
 
+/**
+ * Marked in Close as having an RFQ (Walt 10/15: Jordan Electric was "RFQ Received" since 10/6, an RFQ taken on the
+ * phone, and still got two automatic emails and sat on the heat map). The status counts as an RFQ everywhere.
+ */
+export const rfqByStatus = (label: string | null | undefined) => /^(rfq received|quoted|customer|won|closed won)$/i.test((label ?? "").trim());
+function statusRfq(emails: Array<{ direction: string; subject?: string | null; attachments?: unknown; date_sent?: string | null; date_created?: string | null }>, t0: string, at: (e: never) => string) {
+  // Dated by our quote email when there is one (Jordan: "quote on your 4 inch EMT conduit", 10/6), else the line card.
+  const quote = emails.filter((e) => e.direction === "outgoing" && /\b(quote|quotation|pricing|proposal)\b/i.test(e.subject ?? "")).sort((a, b) => at(a as never).localeCompare(at(b as never)))[0];
+  const when = quote ? at(quote as never) : t0;
+  return { at: when, files: ["Marked RFQ Received in Close"], quotedAt: quote ? when : null };
+}
+
 export function rfqStatus(rfq: { at: string; files: string[]; quotedAt: string | null }, lastIn: string | null, marks: Array<{ note: string; date_created: string }>, handoff: { at: string; who: string } | null = null): RfqStatus {
   const auto: RfqStatus = isPurchaseOrder(rfq.files) ? { stage: "Order in", waitingOn: "westgate", since: rfq.at, note: null, manual: false }
     : !rfq.quotedAt && handoff ? { stage: "With pricing", waitingOn: "westgate", since: handoff.at, note: `${handoff.who} has it`, manual: false }
@@ -629,6 +641,7 @@ export function buildAccount(x: {
   const markText = rfqMark ? rfqMark.note.slice(rfqMark.note.indexOf(RFQ_IN_TAG) + RFQ_IN_TAG.length).trim() : "";
   const rfqBase = rfqMail ? { at: at(rfqMail), files: rfqFiles.length ? rfqFiles : ["Items listed in the email"], quotedAt: quoteMail ? at(quoteMail) : null }
     : rfqMark ? { at: rfqMark.date_created, files: [markText || "Came in outside Close"], quotedAt: x.emails.filter((e) => e.direction === "outgoing" && at(e) > rfqMark.date_created && (realAttachments(e.attachments).some((f) => f !== LINE_CARD) || /\b(quote|quotation|pricing|proposal)\b/i.test(e.subject ?? ""))).map(at).sort()[0] ?? null }
+      : rfqByStatus(lead?.status_label) ? statusRfq(x.emails, t0, at)
       : null;
   // Handed to a teammate to price (Walt looped in Jacob for Josipa, 9/28): a later email of ours copying a westgatesupply.com address.
   const handoff = rfqMail && x.emails.filter((e) => e.direction === "outgoing" && at(e) > at(rfqMail))
