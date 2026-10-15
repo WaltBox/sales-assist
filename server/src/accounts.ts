@@ -4,6 +4,7 @@ import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { cadenceFor, CLICK_HOLD_DAYS, isGenericAddress, type Cadence } from "./cadence.js";
+import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts, zonedTime } from "./rules.js";
@@ -216,7 +217,9 @@ export type Account = {
    * A call the sequence is asking for (10/12), before the daily cap: a click, the intro done with nothing back, or 3
    * business days with no touch at all. The board turns these into the call flag, in priority order.
    */
-  callAsk?: { kind: "clicked" | "flag" | "touch"; label: string; detail: string; due: string; rank: number } | null;
+  callAsk?: { kind: "heat" | "clicked" | "flag" | "touch"; label: string; detail: string; due: string; rank: number; score?: number } | null;
+  /** The heat map, v3 (10/14): who's most likely to send an RFQ soon, a band and the reason in plain words. */
+  heat?: Heat;
   /** Their site, from Close or the buyer's email domain. */
   website: string | null;
   /** How much PVF buying they do at all (Walt 10/5), read from their site; null until it's been read. */
@@ -310,6 +313,30 @@ const boardCache = new Map<string, { at: number; value: Board }>();
 /** How old a stored board snapshot may be before a cold server rebuilds instead. */
 const BOARD_SNAPSHOT_MS = 10 * 60_000;
 type Board = { accounts: Account[]; counts: Record<NextKind, number> };
+/**
+ * "Mid November to early December before I know anything" (Allison at Alcatex, 10/14): a Close task to call them on the
+ * day they gave, made once per account and date, never when an open task already sits within two days of it. This is
+ * the "a time the buyer gave you" kind of task (Walt 10/12).
+ */
+export async function scheduleLaterTasks(d: Deps, accounts: Account[], open: Array<{ lead_id: string; date: string }>) {
+  const made = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "laterTasks").catch(() => null)) ?? {};
+  let changed = false;
+  for (const a of accounts) {
+    const h = a.heat;
+    if (!h || h.band !== "later" || !h.expected || made[a.leadId] === h.expected) continue;
+    const day = Date.parse(`${h.expected}T12:00:00Z`);
+    if (open.some((t) => t.lead_id === a.leadId && Math.abs(Date.parse(t.date) - day) <= 2 * DAY)) { made[a.leadId] = h.expected; changed = true; continue; }
+    const [y, m, dd] = h.expected.split("-").map(Number);
+    const due = zonedTime(y, m, dd, 10, 0, d.rep.timeZone).toISOString();
+    const who = h.who ? `${h.who} at ${a.company}` : a.company;
+    const phone = a.contact.phone ? ` (${a.contact.phone})` : "";
+    await d.close.createTask(a.leadId, `Call ${who}${phone}: ${h.reason.replace(/^Back [A-Z][a-z]{2} \d+: /, "")}. Ask for the RFQ.`, due, d.rep.closeUserId);
+    made[a.leadId] = h.expected;
+    changed = true;
+  }
+  if (changed) await store.putSetting(d.rep.closeUserId, "laterTasks", made);
+}
+
 /** Forget the rep's board so the next read rebuilds it (after a profile read, a rep's answer). */
 export function bustBoard(d: Deps) {
   forgetBoard(d.rep.closeUserId);
@@ -438,9 +465,10 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     loadProfiles(d.rep.closeUserId),
   ]);
   const clicks = await clicksFor(d.rep.closeUserId);
+  const callSignals = await loadCallSignals(d.rep.closeUserId);
   // What you tapped after each call (10/13): "Got a name" was the front desk, whatever the call's length.
-  const taps = new Map((await store.listReviews<{ callId: string | null; outcome: string }>(d.rep.closeUserId, since.toISOString()).catch(() => []))
-    .filter((it) => it.callId).map((it) => [it.callId!, it.outcome]));
+  const taps = new Map((await store.listReviews<{ callId: string | null; outcome: string; auto?: boolean }>(d.rep.closeUserId, since.toISOString()).catch(() => []))
+    .filter((it) => it.callId && !it.auto).map((it) => [it.callId!, it.outcome]));
   const nextEmail = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").catch(() => null)) ?? {};
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
   // The line card you sent, not an automatic email that carries it as an attachment (10/13: every bump attaches the
@@ -482,6 +510,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     clickedAt: clicks[leadId] ?? null,
     taps,
     nextEmailAt: nextEmail[leadId] ?? null,
+    signals: callSignals[leadId] ?? [],
     bounceBodies,
     cooling: cooling[leadId] ?? null,
   }));
@@ -492,7 +521,10 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   // The sequence's calls for today (10/12): no cap (Walt: "just use proper logic"). Every one is a call on the board,
   // in priority order: clicks, then the intro-done flags, then the longest quiet. Whatever isn't called today is still
   // there tomorrow, higher up because it's been quiet longer; the 3-day rule keeps the volume steady by itself.
-  const asks = accounts.filter((a) => a.callAsk && !a.touchedToday).sort((x, y) => x.callAsk!.rank - y.callAsk!.rank || x.callAsk!.due.localeCompare(y.callAsk!.due));
+  // Heat first, hottest first (10/14), then clicks, intro-done flags, and the longest quiet.
+  const kindRank = { heat: 0, clicked: 1, flag: 2, touch: 3 } as const;
+  const asks = accounts.filter((a) => a.callAsk && !a.touchedToday).sort((x, y) => kindRank[x.callAsk!.kind] - kindRank[y.callAsk!.kind]
+    || (y.callAsk!.score ?? 0) - (x.callAsk!.score ?? 0) || x.callAsk!.due.localeCompare(y.callAsk!.due));
   for (const [i, a] of asks.entries()) {
     a.callAsk!.rank = i;
     a.next = { kind: "bump", tag: "Call", label: a.callAsk!.label, detail: a.callAsk!.detail, due: a.callAsk!.due, rescue: false };
@@ -512,6 +544,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   // Keep lead statuses in Close in step with the funnel, and clear callbacks they made moot by replying, in the background.
   void syncStatuses(d, accounts).catch((e) => console.error("[status sync]", (e as Error).message));
   void clearStaleCallbacks(d, accounts).catch((e) => console.error("[stale callbacks]", (e as Error).message));
+  // They gave a date: a task in Close to call them that day (10/14), once.
+  void scheduleLaterTasks(d, accounts, tasks).catch((e) => console.error("[later tasks]", (e as Error).message));
   boardCache.set(key, { at: Date.now(), value });
   void store.cacheSet(`board:${key}`, { at: Date.now(), value }, BOARD_SNAPSHOT_MS).catch(() => undefined);
   return value;
@@ -536,6 +570,8 @@ export function buildAccount(x: {
   nextEmailAt?: string | null;
   /** Call id → what the rep tapped after it (reached_buyer, got_name, …). */
   taps?: Map<string, string>;
+  /** What each call on this lead said, saved by the after-call step (10/14). */
+  signals?: CallSignal[];
 }): Account {
   const { d, now, card, lead } = x;
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
@@ -772,7 +808,21 @@ export function buildAccount(x: {
   const replyNotes = replies.filter((r) => !theirFiles(r.attachments).length).map((r) => ({ at: at(r), text: ownWords(x.bounceBodies?.get(r.id) ?? r.body_text ?? r.subject ?? "") }));
   const openDays = [...new Set(person.map((o) => o.opened_at.slice(0, 10)))].sort().reverse();
   const warmth = warmthFor({ ...acct, replyNotes, openDays, lastOutAt: lastOut, lastOpenAt: person.map((o) => o.opened_at).pop() ?? null, cooling: x.cooling ?? null }, now);
-  return { ...acct, warmth, section: sectionOf(acct) };
+  // Heat v3 (10/14): what they said and did, never how often you dialed.
+  const heat = heatFor({
+    now, tz, company: acct.company, contactName: acct.contact.name, signals: x.signals ?? [], notes: x.notes,
+    replies: replies.filter((r) => !theirFiles(r.attachments).length).map((r) => ({ at: at(r), text: x.bounceBodies?.get(r.id) ?? r.body_text ?? r.subject ?? "" })),
+    clickedAt, openDays, lastOutAt: lastOut, rfq: rfq ? { at: rfq.at, quotedAt: rfq.quotedAt } : null,
+    paused: warmth.paused ? { kind: warmth.paused.kind, until: warmth.paused.until, why: warmth.paused.why } : seen === "bounced" ? { kind: "bounced", until: null, why: "The email bounced." } : null,
+    tier: potential?.tier ?? null, rfqTiming: x.profile?.heard?.rfq_timing?.value ?? null,
+  });
+  // They gave a date, or said no: no call until then, whatever else asked for one (10/14: "so we don't accidentally call them").
+  if (heat.band === "later" || heat.band === "off") acct.callAsk = null;
+  // "Call today" goes to the top of Calls to make, with the reason as the label.
+  if (heat.band === "today" && !rfq && ["bump", "waiting", "scheduled"].includes(acct.next.kind) && !(acct.next.kind === "bump" && /quote/i.test(acct.next.label))) {
+    acct.callAsk = { kind: "heat", rank: -1, score: heat.score, due: heat.lastSignal ?? now.toISOString(), label: heat.headline, detail: heat.promise?.quote ? `${heat.reason} They said: "${heat.promise.quote}"` : heat.reason };
+  }
+  return { ...acct, warmth, heat, section: sectionOf(acct) };
 }
 
 /** What to do next, with the calls in mind: a scheduled check-in means hold, not bump. */

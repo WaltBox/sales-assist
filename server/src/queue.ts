@@ -11,6 +11,7 @@ import { businessDaysAt, formatLocal, isBackwardsMove, isOutStatus, isoWithOffse
 import { store } from "./store.js";
 import { extractPurchasing, type Purchasing } from "./purchasing.js";
 import { recordPurchasing } from "./potential.js";
+import { saveCallSignal } from "./heat.js";
 import { markReached } from "./dialviews.js";
 import { detectLineCardRequest, draftLineCardEmail, recordLineCardSend, type EmailFormat, type LineCardState } from "./linecardflow.js";
 
@@ -52,6 +53,8 @@ export type QueueItem = {
   error?: string;
   /** What the rep must see: anything skipped or suppressed (warn), and any Close error (error). Never silent. */
   alerts?: Array<{ level: "warn" | "error"; text: string }>;
+  /** Read from the call with no result tapped (10/14: Alliance and Tray-Tec promised RFQs on calls nobody tapped). */
+  auto?: boolean;
   /** Under 20 seconds: no transcript to read; the dial is logged and nothing else is built. */
   dialOnly?: boolean;
   /** What the buyer said about their purchasing cycle on this call (each with their words), for the rep to confirm. */
@@ -427,6 +430,40 @@ function prettyPhone(ten: string) {
 
 // ---------- background build ----------
 
+/** How long to wait for Close's transcript on a call of a minute or more (10/14). */
+export const LONG_CALL_WAIT_MS = 2 * 3600 * 1000;
+/** A call with no result tapped this long after it ended is read anyway (10/14). */
+export const UNTAPPED_AFTER_MS = 15 * 60 * 1000;
+
+/**
+ * Calls nobody tapped a result for (Walt 10/13: Alliance and Tray-Tec both promised RFQs, and because no result was
+ * tapped the app never read those calls). Any outbound call of a minute or more from the last two days, 15 minutes after it
+ * ended, with no review yet, gets one: the transcript is read and the note, contacts and promise land in Close like a
+ * tapped call. No status change and no task from the tap itself: only what the transcript says.
+ */
+export async function queueUntapped(d: Deps, now = new Date()): Promise<number> {
+  const calls = await d.close.calls({ since: new Date(now.getTime() - 2 * DAY).toISOString(), withTranscripts: false, max: 500 }).catch(() => [] as CloseCall[]);
+  let n = 0;
+  for (const c of calls) {
+    if (c.direction !== "outbound" || (c.user_id && c.user_id !== d.rep.closeUserId) || (c.duration ?? 0) < 60 || !c.lead_id) continue;
+    if (now.getTime() - new Date(c.date_created).getTime() - (c.duration ?? 0) * 1000 < UNTAPPED_AFTER_MS) continue;
+    if ((await store.reviewsForCall<QueueItem>(c.id).catch(() => [])).length) continue;
+    const lead = await d.close.lead(c.lead_id).catch(() => null);
+    if (!lead) continue;
+    const it: QueueItem = {
+      id: randomUUID(), repId: d.rep.closeUserId, leadId: c.lead_id, company: lead.display_name, callId: c.id,
+      outcome: "reached_buyer", auto: true, note: null, rating: null, createdAt: new Date(c.date_created).toISOString(), state: "building",
+      saved: [], savedTaskAt: null, savedStatus: null, outcomeLabel: "No result tapped: read from the call", summary: null, callWith: null, duration: null,
+      taskId: null, smartTask: null, applied: null, proposals: null, coaching: null, warnings: [],
+    };
+    plog(it, `untapped call: ${c.duration}s, read from the transcript`);
+    await save(it);
+    background(advance(d, it.id), "build");
+    n++;
+  }
+  return n;
+}
+
 const hasTranscript = (c: CloseCall | null) => !!(c?.recording_transcript?.utterances?.length || c?.voicemail_transcript?.utterances?.length);
 const LEASE_MS = 5 * 60 * 1000;
 
@@ -453,9 +490,12 @@ export async function advance(d: Deps, id: string) {
       return;
     }
     const waited = Date.now() - new Date(it.createdAt).getTime();
+    // A real conversation (a minute or more) is worth waiting for (10/13: Close took over 3 minutes on 42 calls and
+    // the 3 real ones never got a note). Short ones still give up at the usual wait.
+    const wait = (call?.duration ?? 0) >= 60 ? Math.max(config.transcriptWaitMs, LONG_CALL_WAIT_MS) : config.transcriptWaitMs;
     if (it.callId && !hasTranscript(call)) {
-      if (waited < config.transcriptWaitMs) {
-        plog(it, `wait for transcript: not yet (${Math.round(waited / 1000)}s of ${Math.round(config.transcriptWaitMs / 1000)}s)`);
+      if (waited < wait) {
+        plog(it, `wait for transcript: not yet (${Math.round(waited / 1000)}s of ${Math.round(wait / 1000)}s)`);
         return;
       }
       if (!it.note) {
@@ -463,7 +503,7 @@ export async function advance(d: Deps, id: string) {
         built = true;
         it.state = "failed";
         it.noTranscript = true;
-        it.error = `No transcript for this call. Close didn't produce one within ${Math.round(config.transcriptWaitMs / 60000)} minutes. Rebuild to check again, or add a note to build from what you remember.`;
+        it.error = `No transcript for this call. Close didn't produce one within ${Math.round(wait / 60000)} minutes. Rebuild to check again, or add a note to build from what you remember.`;
         plog(it, "wait for transcript: TIMEOUT, no transcript card");
         await save(it);
         await store.release(it.id);
@@ -598,6 +638,13 @@ async function buildNow(d: Deps, it: QueueItem, call: CloseCall | null, opts: { 
     reconcileAddresses(p, it.warnings);
     // The transcript is the other proof of a conversation (someone on their side spoke).
     if (call && transcript && call.duration >= 20 && call.recording_transcript?.utterances?.some((u) => u.speaker_side === "contact")) void markReached(d, it.leadId);
+    // What this call said, kept on the account for the heat map (10/14): the queue only keeps items 8 days.
+    await saveCallSignal(d, it.leadId, {
+      at: call?.date_created ?? it.createdAt, callId: it.callId, tapped: it.auto ? null : it.outcome, buyer: core.outcome === "conversation",
+      promised: core.rfq_promised, nextOne: core.next_one_promised, softYes: core.soft_yes, noneNow: core.no_current_rfq, benchmark: core.benchmark_agreed,
+      expectedWhen: core.rfq_expected_when?.trim() || null, who: p.contacts[0]?.name ?? null, summary: core.summary ?? null,
+      quote: core.rfq_promised ? core.rfq_promise_quote?.trim() || null : null,
+    }).catch(() => undefined);
     it.purchasing = await purchasingP;
     if (it.purchasing && Object.keys(it.purchasing).length) await recordPurchasing(d, it.leadId, it.purchasing).catch(() => undefined);
     it.proposals = p;

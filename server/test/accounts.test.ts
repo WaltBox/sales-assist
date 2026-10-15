@@ -259,7 +259,7 @@ test("\"RFQ came in\": an [RFQ received] note puts the account on the RFQs page 
   const close = new FakeClose({ calls: [roddaCall()] });
   demoLineCards(close, WED);
   const d: Deps = { close, llm: demoLlm, now: () => WED, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
-  close.extraTasks.push({ id: "task_chase", lead_id: "lead_demoHarborFab000001", assigned_to: DEMO_USER_ID, text: "Call Dana for the RFQ", date: new Date().toISOString(), is_complete: false });
+  close.extraTasks.push({ id: "task_chase", lead_id: "lead_demoHarborFab000001", assigned_to: DEMO_USER_ID, text: "Call Dana for the RFQ", date: WED.toISOString(), is_complete: false });
   const r = await markRfqReceived(d, "lead_demoHarborFab000001", "Materials list, sent to Jacob");
   assert.equal(r.note, "[RFQ received] Materials list, sent to Jacob");
   assert.equal(r.completedTasks, 1);
@@ -461,4 +461,19 @@ test("bumpDue (10/5): the two-day cadence runs even with a callback on the books
   const auto = { ...card(), id: "em_auto", subject: "Re: line card", attachments: [], date_sent: "2026-10-06T15:00:00Z", date_created: "2026-10-06T15:00:00Z" };
   assert.equal(build([card(), hand, auto]).cadence.nth, 2);
   assert.equal(build([card()]).cadence.nth, 0, "the line card itself isn't a follow-up");
+});
+
+test("a date they gave becomes one Close task on that day, never a second (10/14)", async () => {
+  const { scheduleLaterTasks } = await import("../src/accounts.js");
+  const close = new FakeClose();
+  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: "user_latertask", timeZone: tz } };
+  const a = { leadId: "lead_alcatex", company: "Alcatex, Inc.", contact: { name: "Allison Boen", email: "a@alcatex.com", phone: "(972) 754-0301" },
+    heat: { band: "later", expected: "2026-11-10", who: "Allison", reason: "Back Nov 10: Allison said \"Mid November to early December\"", headline: "", tags: [], score: 0, lastSignal: null } } as never;
+  await scheduleLaterTasks(d, [a], []);
+  const t = close.writes.filter((w) => w.op === "task");
+  assert.equal(t.length, 1);
+  assert.match((t[0].body as { text: string }).text, /^Call Allison at Alcatex, Inc\. \(\(972\) 754-0301\): Allison said "Mid November/);
+  assert.match((t[0].body as { dueAt: string }).dueAt, /^2026-11-10T/);
+  await scheduleLaterTasks(d, [a], []);
+  assert.equal(close.writes.filter((w) => w.op === "task").length, 1, "once per account and date");
 });

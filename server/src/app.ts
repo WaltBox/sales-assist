@@ -14,7 +14,7 @@ import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
-import {
+import { queueUntapped,
   advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, setLineCardFormat, sweep, waitingFor,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
@@ -26,6 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
+import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -318,6 +319,23 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/tasks/:taskId/done", authed, route((req, d) => finishTask(d, String(req.params.taskId))));
   // "Next email in…" on the call screen (10/12): when the email sequence starts again after this call.
   app.post("/api/leads/:leadId/next-email", authed, route((req, d) => setNextEmail(d, leadId(req), Number(req.body?.days) || 3)));
+  // The whole email thread for the heat map drawer (10/14): both ways, newest first, with their own words split from
+  // the quoted history so it reads like a conversation.
+  app.get("/api/leads/:leadId/emails", authed, route(async (req, d) => {
+    const emails = await d.close.leadEmails(leadId(req));
+    const at = (e: (typeof emails)[number]) => e.date_sent ?? e.date_created ?? "";
+    const split = (body: string) => {
+      const i = body.search(/\n\s*On .{5,160}wrote:|\n-{2,}\s*Original Message|\nFrom: .+\n(Sent|Date): |\n_{5,}|\n>/i);
+      return i > 0 ? { own: body.slice(0, i).trim(), quoted: body.slice(i).trim() } : { own: body.trim(), quoted: "" };
+    };
+    return {
+      emails: emails.filter((e) => ["sent", "inbox", "scheduled", "outbox"].includes(e.status)).sort((a, b) => at(b).localeCompare(at(a))).map((e) => ({
+        id: e.id, direction: e.direction, status: e.status, at: at(e), subject: e.subject, from: e.sender ?? null, to: e.to ?? [],
+        files: (e.attachments ?? []).map((f) => f.filename).filter((f): f is string => !!f && !/^image\d*\.(png|jpe?g|gif)$/i.test(f)),
+        opens: (e.opens ?? []).length, ...split(e.body_text ?? ""),
+      })),
+    };
+  }));
   app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));
   // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
   app.get("/api/memes", authed, route(async (req, d) => {
@@ -518,6 +536,7 @@ export function createApp(appDeps: AppDeps) {
 
   // Catch-up: anything still waiting gets built (Vercel Cron, or every 15s on a local server).
   let lastAutoCheck = 0;
+  let lastUntapped = 0;
   const rfqLineAt = new Map<string, number>();
   const catchUp = async () => {
     // Automatic emails: plan the morning's bumps, and re-check the ones about to go (every few minutes).
@@ -542,8 +561,20 @@ export function createApp(appDeps: AppDeps) {
           rfqLineAt.set(rep.email, Date.now());
           await rfqTimeline(d, { fresh: true }).catch((err) => console.error(`rfq line ${rep.email}:`, (err as Error).message));
         }
+        // Their words for promises made before the quote was saved, a few a pass (10/14).
+        if (!config.demo) await accountsBoard(d).then((b) => backfillPromiseQuotes(d, b.accounts)).then((n) => { if (n) bustBoard(d); })
+          .catch((err) => console.error(`promise quotes ${rep.email}:`, (err as Error).message));
         // Today's call list gets its briefs written ahead of the first call (10/6).
         if (!config.demo) await accountsBoard(d).then((b) => warmLeads(d, callListIds(b.accounts))).catch((err) => console.error(`warm ${rep.email}:`, (err as Error).message));
+      }
+    }
+    // Calls nobody tapped a result for, every 10 minutes (10/14).
+    if (Date.now() - lastUntapped > 10 * 60_000) {
+      lastUntapped = Date.now();
+      for (const rep of await allReps().catch(() => [])) {
+        const d = await depsFor(rep).catch(() => null);
+        if (d && !config.demo) await queueUntapped(d).then((n) => { if (n) console.info(`[untapped] ${rep.email}: reading ${n} call(s) with no result tapped`); })
+          .catch((err) => console.error(`untapped ${rep.email}:`, (err as Error).message));
       }
     }
     const waiting = await waitingFor(null);

@@ -670,3 +670,15 @@ test("call plan: reached the buyer, no RFQs now, check-in set for later → don'
   ctx.tasks = [];
   assert.deepEqual(callPlanOf(ctx, [], last, NOW, "America/Los_Angeles"), { action: "call", reason: null, due: null });
 });
+
+test("a call of a minute or more with no result tapped is read anyway, once (10/14: Alliance and Tray-Tec)", async () => {
+  const { queueUntapped, listQueue } = await import("../src/queue.js");
+  const ended = new Date(Date.now() - 40 * 60_000).toISOString();
+  const close = new FakeClose({ calls: [roddaCall({ id: "acti_untapped1", duration: 120, date_created: ended, user_id: "user_untapped" } as never), roddaCall({ id: "acti_short1", duration: 30, date_created: ended, user_id: "user_untapped" } as never)] });
+  const d = { ...deps(close), now: () => new Date(), rep: { ...rep, closeUserId: "user_untapped" } };
+  const n = await queueUntapped(d);
+  assert.equal(n, 1, "the 2-minute call, not the 30-second one");
+  assert.equal(await queueUntapped(d), 0, "never twice for the same call");
+  const it = (await listQueue(d)).find((x) => x.callId === "acti_untapped1");
+  assert.ok(it?.auto, "marked as read without a tap");
+});

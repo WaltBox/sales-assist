@@ -114,6 +114,11 @@ export const AfterCallSchema = z.object({
   next_one_promised: z.boolean().describe("True if they have nothing now but said they'll send the NEXT one when it comes up ('I'll send you the next one', 'next time something comes up I'll shoot it your way'). False if they're sending something that exists now."),
   soft_yes: z.boolean().describe("True if the buyer already signaled they'd bring us work: 'send your info and we'll consider you', 'we'll keep you in mind for the next one', 'we'll add you to our bid list', 'maybe next week' about an upcoming quote. Just agreeing to receive the line card or info ('sure, send it', 'if you'd like to, you can') is NOT a soft yes."),
   rfq_promised: z.boolean().describe("True only if someone on the call said they will send a list, RFQ, drawing, or takeoff (or 'send it over'). An offer to maybe look isn't a promise."),
+  // Their words when they promised it (10/14: "quote them on what they said"), for the chase call.
+  rfq_promise_quote: z.string().optional().describe("Only when rfq_promised is true: the buyer's exact words promising to send it, verbatim from the transcript, one or two sentences ('Yeah, let me pull that list together and I'll shoot it over to you this afternoon'). Empty string otherwise."),
+  // When work is coming (10/14: Vinny at Seahurst said a couple of RFQs land "middle of next week"); the heat map
+  // moves them up on that day.
+  rfq_expected_when: z.string().optional().describe("When the buyer said an RFQ, list or project is coming, in their words as a time phrase: 'middle of next week', 'Monday', 'end of the month', 'after the first of the year', 'next week'. Empty string if they didn't say when."),
   proposals: ProposalsSchema.omit({ email: true }),
 });
 export type AfterCall = z.infer<typeof AfterCallSchema>;
