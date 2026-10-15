@@ -60,6 +60,9 @@
     .outs button.good { border-color: #1f6b3a; } .outs button.good.on { background: #1f6b3a; }
     .lcrow { display: flex; gap: 8px; margin: 6px 0 12px; }
     .lcrow .gin { flex: 1; min-width: 0; }
+    .flash { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0 0 12px; padding: 9px 12px; background: #e7f3ea; border: 1.5px solid #1f6b3a; color: #1f6b3a; font-size: 14px; }
+    .linkb { font: inherit; font-weight: 700; background: none; border: 0; color: #1f6b3a; text-decoration: underline; cursor: pointer; padding: 0; }
+    .outs button { transition: background .1s ease; }
     .navrow { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
     .up { border: 2px dashed var(--ink); background: #fff; padding: 28px; text-align: center; }
     .up p { margin: 0 0 14px; }
@@ -145,10 +148,23 @@
     const personName = (a) => (/purchasing manager|^buyer$/i.test(a || "") ? null : (a || "").replace(/\s*\(.*\)\s*$/, "").split(/\s+/)[0] || null);
     async function mark(l, patch, advance) {
       const before = filtered();
+      const prev = l.outcome;
       Object.assign(l, patch, patch.outcome !== undefined ? { outcomeAt: patch.outcome ? new Date().toISOString() : null } : {});
-      if (advance) { const at = before.findIndex((x) => x.i === l.i); const next = before.slice(at + 1).find((x) => !x.outcome) || filtered()[0]; S.i = next ? next.i : null; }
+      // Show the pick first, then move on (10/15: jumping straight to the next company looked like nothing happened).
+      if (advance) {
+        draw();
+        await new Promise((r) => setTimeout(r, 450));
+        const at = before.findIndex((x) => x.i === l.i); const next = before.slice(at + 1).find((x) => !x.outcome) || filtered()[0]; S.i = next ? next.i : null;
+        S.flash = { i: l.i, company: l.company, outcome: patch.outcome, prev };
+      }
       remember(); draw();
-      try { await call(`/list/${l.i}`, patch); } catch (err) { S.msg = { kind: "bad", text: err.message }; draw(); }
+      try { await call(`/list/${l.i}`, patch); } catch (err) { S.flash = null; S.msg = { kind: "bad", text: `Didn't save: ${err.message}` }; draw(); }
+    }
+    async function undo() {
+      const f = S.flash; if (!f) return;
+      const l = S.list.leads.find((x) => x.i === f.i); if (!l) return;
+      S.flash = null; S.i = l.i; l.outcome = f.prev || null; remember(); draw();
+      try { await call(`/list/${l.i}`, { outcome: f.prev || null }); } catch (err) { S.msg = { kind: "bad", text: err.message }; draw(); }
     }
     async function sendCard(l, email) {
       S.busy = true; S.msg = null; draw();
@@ -198,7 +214,7 @@
         h("select", { class: "gin", onchange: (e) => { S.show = e.target.value; S.i = null; remember(); draw(); } }, [["todo", "Not called yet"], ["all", "Everyone"], ...OUTS.map(([o]) => [o, o])].map(([v, t]) => h("option", { value: v, text: t, selected: S.show === v }))),
         h("label", { class: "chk" }, [h("input", { type: "checkbox", checked: S.inHours, onchange: (e) => { S.inHours = e.target.checked; S.i = null; remember(); draw(); } }), "Open right now (8 to 5 their time)"]),
       ]);
-      const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => { S.i = l.i; S.msg = null; remember(); draw(); } }, [
+      const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => { S.i = l.i; S.msg = null; S.flash = null; remember(); draw(); } }, [
         h("span", { class: "co", text: l.company }), h("span", { class: "oc", text: l.outcome || "" }),
         h("span", { class: "meta", text: [l.city, l.state].filter(Boolean).join(", ") + (t ? ` · ${t.label}` : "") }), h("span"),
       ]); }) : [h("div", { class: "empty", text: "Nobody matches. Change the filters above." })]);
@@ -211,13 +227,16 @@
       const meme = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
       const notes = h("textarea", { class: "gin", rows: 3, placeholder: "Notes: who you spoke to, when to call back, what they buy", onchange: (e) => mark(l, { notes: e.target.value }, false) }); notes.value = l.notes || "";
       const at = rows.findIndex((x) => x.i === l.i);
-      const go = (d) => { const n = at >= 0 ? rows[at + d] : (d > 0 ? rows[0] : null); if (n) { S.i = n.i; S.msg = null; remember(); draw(); } };
+      const go = (d) => { const n = at >= 0 ? rows[at + d] : (d > 0 ? rows[0] : null); if (n) { S.i = n.i; S.msg = null; S.flash = null; remember(); draw(); } };
+      const flash = S.flash && S.flash.i !== l.i ? S.flash : null;
       return h("div", { class: "box card" }, [
         h("h2", { text: l.company }),
         h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.askFor || "Purchasing manager" })]),
         h("a", { class: "callbtn", href: `tel:${l.phone.replace(/[^\d+]/g, "")}`, text: `Call ${l.phone}` }),
         h("div", { class: "where" }, [h("span", { text: [l.city, l.state].filter(Boolean).join(", ") }), t ? h("span", { class: open(l.state) ? "open" : "shut", text: `${t.label} there · ${open(l.state) ? "open" : "closed"}` }) : null]),
         l.what ? h("p", { class: "what", text: l.what }) : null,
+        // Right where they just tapped: what was saved, and an undo (10/15).
+        flash ? h("div", { class: "flash" }, [h("span", {}, ["✓ Saved ", h("b", { text: flash.outcome }), ` for ${flash.company}. Now: ${l.company}.`]), h("button", { class: "linkb", text: "Undo", onclick: undo })]) : null,
         h("div", { class: "label", text: "How did it go?" }),
         h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${l.outcome === o ? " on" : ""}`, text: o, onclick: () => {
           // Wants line card is marked like the rest; it stays on this company so they can type the email and send (10/15).
