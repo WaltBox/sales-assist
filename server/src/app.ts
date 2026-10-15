@@ -26,7 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
-import { createGuest, GuestError, guestFor, guestSend, guestView, listGuests, setGuestActive } from "./guests.js";
+import { createGuest, getList, GuestError, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, putList, setGuestActive } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -43,7 +43,10 @@ export function createApp(appDeps: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   // Keep the raw body: Close signs its webhook calls over the exact bytes.
-  app.use(express.json({ limit: "256kb", verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } }));
+  const jsonSmall = express.json({ limit: "256kb", verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } });
+  // A guest's call list upload can be a few thousand rows (10/15).
+  const jsonList = express.json({ limit: "4mb" });
+  app.use((req, res, next) => (req.method === "POST" && /^\/api\/guest\/[^/]+\/list$/.test(req.path) ? jsonList : jsonSmall)(req, res, next));
   app.use(cors({
     origin: (origin, cb) => cb(null, !origin || config.demo || config.allowedOrigins.includes(origin)),
     allowedHeaders: ["authorization", "content-type"],
@@ -268,9 +271,32 @@ export function createApp(appDeps: AppDeps) {
       res.json(await guestSend(d, g.guest, body));
     } catch (err) { next(err); }
   });
+  // The call list: the guest uploads their sheet, then marks each call.
+  const guestRoute = (fn: (req: Request, g: NonNullable<Awaited<ReturnType<typeof guestFromToken>>>) => Promise<unknown>) => async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const g = await guestFromToken(String(req.params.token));
+      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      res.json(await fn(req, g));
+    } catch (err) { next(err); }
+  };
+  app.get("/api/guest/:token/list", guestRoute(async (_req, g) => ({ list: await getList(g.repId, g.guest.id) })));
+  app.post("/api/guest/:token/list", guestRoute(async (req, g) => ({ list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] }) })));
+  app.post("/api/guest/:token/list/:i", guestRoute(async (req, g) => {
+    const b = z.object({ outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional() }).parse(req.body ?? {});
+    return { lead: await markListLead(await depsFor(g.rep), g.guest, Number(req.params.i), b) };
+  }));
   // The rep's side: make a link, switch it off or on, see what each guest sent.
   const guestLink = (req: Request, token: string) => `${(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0]}://${req.get("host")}/g/${token}`;
-  app.get("/api/guests", authed, route(async (_req, d) => ({ guests: (await listGuests(d.rep.closeUserId)).map(({ tokenHash: _h, ...g }) => g) })));
+  app.get("/api/guests", authed, route(async (_req, d) => ({ guests: await Promise.all((await listGuests(d.rep.closeUserId)).map(async ({ tokenHash: _h, ...g }) => ({ ...g, list: listSummary(await getList(d.rep.closeUserId, g.id)) }))) })));
+  app.get("/api/guests/:id/list.csv", authed, async (req, res, next) => {
+    try {
+      const d = res.locals.deps as Deps;
+      const list = await getList(d.rep.closeUserId, String(req.params.id));
+      if (!list) throw new GuestError(404, "That guest hasn't uploaded a list.");
+      res.type("text/csv").setHeader("content-disposition", `attachment; filename="${list.name.replace(/[^\w .-]/g, "")}.csv"`);
+      res.send(listCsv(list));
+    } catch (err) { next(err); }
+  });
   app.post("/api/guests", authed, route(async (req, d) => {
     const { guest, token } = await createGuest(d.rep.closeUserId, String(req.body?.name ?? ""));
     const { tokenHash: _h, ...g } = guest;

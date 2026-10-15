@@ -1595,7 +1595,7 @@ function guestsPage() {
   const today = (x) => x.sends.filter((s) => new Date(s.at).toDateString() === new Date().toDateString()).length;
   return el("section", {}, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Guests" })]),
-    el("p", { class: "muted small3", text: "A guest link sends line cards from your email, and that's all it does. They type a company, a name and an email; it goes out from your Close account with the PDF, the lead is found or added in Close with a note saying who sent it, and the account joins your email sequence like any line card. Turn a link off and it stops working at once." }),
+    el("p", { class: "muted small3", text: "A guest link does two things: a call list they upload and work through (outcomes go to Close as notes on the company), and line cards sent from your email. They type a company, a name and an email; it goes out from your Close account with the PDF, the lead is found or added in Close with a note saying who sent it, and the account joins your email sequence like any line card. Turn a link off and it stops working at once." }),
     el("div", { class: "gnew" }, g.link ? [
       el("p", {}, [el("strong", { text: `Link for ${g.for}` }), " (copy it now; it isn't shown again):"]),
       el("div", { class: "glinkrow" }, [el("input", { class: "glink", value: g.link, readonly: true, onclick: (e) => e.target.select() }), el("button", { class: "btn small", text: g.copied ? "Copied" : "Copy", onclick: () => copy(g.link) })]),
@@ -1614,6 +1614,17 @@ function guestsPage() {
             el("span", { class: "sub2", text: `${x.active ? "Active" : `Off since ${new Date(x.offAt).toLocaleDateString()}`} · ${today(x)} today · ${x.sends.length} total · made ${new Date(x.createdAt).toLocaleDateString()}` }),
             el("button", { class: x.active ? "btn small" : "btn small primary", text: x.active ? "Turn off" : "Turn back on", onclick: () => toggle(x) }),
           ]),
+          // Their call list (10/15): how far along, how it's going, and the sheet back with their outcomes.
+          x.list ? el("div", { class: "gi-list" }, [
+            el("span", {}, [el("strong", { text: x.list.name }), ` · ${x.list.called} of ${x.list.total} called`]),
+            ...Object.entries(x.list.by).sort((a, b) => b[1] - a[1]).map(([o, n]) => el("span", { class: "gi-oc", text: `${o} ${n}` })),
+            el("button", { class: "linkbtn small3", text: "Download with their outcomes", onclick: async () => {
+              const res = await fetch(`/api/guests/${x.id}/list.csv`, { headers: { authorization: `Bearer ${token}` } });
+              if (!res.ok) { state.guestsErr = "Couldn't download that list."; return render(); }
+              const url = URL.createObjectURL(await res.blob());
+              const a = el("a", { href: url, download: `${x.list.name} - ${x.name}.csv` }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+            } }),
+          ]) : el("p", { class: "sub2", text: "No call list uploaded yet." }),
           x.sends.length ? el("details", { class: "gi-sends" }, [el("summary", { text: "What they sent" }),
             el("ul", {}, x.sends.slice(0, 100).map((s) => el("li", {}, [
               el("a", { href: closeLead(s.leadId), target: "_blank", rel: "noopener", text: s.company }),

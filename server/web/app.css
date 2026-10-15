@@ -749,3 +749,5 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .gi-head .btn { margin-left: auto; }
 .gi-sends { margin-top: 8px; font-size: 13px; }
 .gi-sends ul { margin: 6px 0 0; padding-left: 18px; }
+.gi-list { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 8px; font-size: 13px; }
+.gi-oc { font-family: var(--label); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--ink-line); }

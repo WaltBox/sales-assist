@@ -74,3 +74,42 @@ test("a guest send is refused when the link is off, the address is bad, or the d
   await assert.rejects(guestSend(d, guest, { company: "X", email: "a@b.com" }), /turned off/);
   assert.ok(!close.writes.some((w) => w.op === "email"), "nothing sent");
 });
+
+test("call list (10/15): the guest's sheet loads, each call is marked, a note goes on the company in Close, and it comes back as a CSV", async () => {
+  const { putList, getList, markListLead, listSummary, listCsv } = await import("../src/guests.js");
+  const repId = "user_guestList";
+  const close = new FakeClose();
+  const d: Deps = { close, llm: demoLlm, rep: rep(repId) };
+  const { guest } = await createGuest(repId, "Jake Miller");
+  const rows = [
+    { company: "Accel Fire Systems, Inc.", phone: "(888) 952-2235", askFor: "Purchasing manager", what: "Fire protection", city: "Anchorage", state: "ak" },
+    { company: "Rodda Electric, Inc.", phone: "(925) 240-6024", askFor: "Renee (Purchasing)", what: "", city: "Brentwood", state: "CA", outcome: "not a real outcome" },
+    { company: "", phone: "(000) 000-0000" }, // no company: dropped
+  ];
+  const list = await putList(repId, guest, { name: "Worktrial leads", rows });
+  assert.equal(list.leads.length, 2);
+  assert.equal(list.leads[0].state, "AK", "state upper-cased");
+  assert.equal(list.leads[1].outcome, null, "an outcome that isn't one of ours is ignored");
+  await assert.rejects(putList(repId, guest, { rows: [{ company: "", phone: "" }] }), /company and a phone/);
+
+  // Marking a call: the outcome sticks, and the company in Close gets a note (found by name).
+  close.findLeadsResult = [{ id: DEMO_LEAD_ID, display_name: "Rodda Electric, Inc." }];
+  await markListLead(d, guest, 1, { outcome: "Voicemail", notes: "Renee out till Monday" });
+  const saved = (await getList(repId, guest.id))!;
+  assert.equal(saved.leads[1].outcome, "Voicemail");
+  assert.equal(saved.leads[1].leadId, DEMO_LEAD_ID);
+  const note = close.writes.find((w) => w.op === "note")!.body as { leadId: string; note: string };
+  assert.deepEqual([note.leadId, note.note], [DEMO_LEAD_ID, "[Guest] Jake Miller called: Voicemail. Renee out till Monday"]);
+  assert.ok(!close.writes.some((w) => w.op === "status" || w.op === "task"), "notes only: no status changes, no tasks");
+  // Same outcome again: no second note. A bad outcome is refused.
+  await markListLead(d, guest, 1, { notes: "Renee out till Monday, try 9am" });
+  assert.equal(close.writes.filter((w) => w.op === "note").length, 1);
+  await assert.rejects(markListLead(d, guest, 1, { outcome: "Sold them a boat" }), /Pick an outcome/);
+  await assert.rejects(markListLead(d, guest, 99, { outcome: "Voicemail" }), /isn't on your list/);
+
+  const sum = listSummary(saved)!;
+  assert.deepEqual([sum.total, sum.called, sum.by.Voicemail], [2, 1, 1]);
+  const csv = listCsv((await getList(repId, guest.id))!);
+  assert.match(csv.split("\n")[0], /^Company,Phone,Ask for,What they do,City,State,Outcome,Called at,Email \(for line card\),Notes$/);
+  assert.match(csv, /"Rodda Electric, Inc\.",\(925\) 240-6024,Renee \(Purchasing\),,Brentwood,CA,Voicemail,\d{4}-\d{2}-\d{2}T[^,]+,,"Renee out till Monday, try 9am"/);
+});

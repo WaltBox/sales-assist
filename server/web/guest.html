@@ -4,89 +4,263 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Westgate Supply · Send a line card</title>
+  <title>Westgate Supply · Calls</title>
   <link rel="icon" href="/brand/world-mark-filled.svg">
   <link rel="stylesheet" href="/app.css">
   <style>
     body { background: var(--paper); margin: 0; }
-    .gwrap { max-width: 620px; margin: 0 auto; padding: 40px 16px 72px; display: block; }
     .top .gchip { margin-left: auto; font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; padding: 4px 9px; border: 1px solid rgba(255,255,255,.5); color: #fff; }
-    h1.gt { font-family: var(--display); font-weight: 800; text-transform: uppercase; font-size: 40px; line-height: 1; margin: 0 0 10px; color: var(--ink); }
+    .gtabs { display: flex; gap: 6px; }
+    .gtabs button { font-family: var(--label); letter-spacing: .1em; text-transform: uppercase; font-size: 12px; padding: 7px 12px; background: transparent; color: rgba(255,255,255,.8); border: 1px solid transparent; cursor: pointer; }
+    .gtabs button.on { color: #fff; border-color: rgba(255,255,255,.55); background: rgba(255,255,255,.08); }
+    .gwrap { max-width: 1240px; margin: 0 auto; padding: 28px 20px 72px; display: block; }
+    .gnarrow { max-width: 620px; margin: 0 auto; }
+    h1.gt { font-family: var(--display); font-weight: 800; text-transform: uppercase; font-size: 36px; line-height: 1; margin: 0 0 10px; color: var(--ink); }
     h1.gt b { color: var(--red); }
-    .gsub { color: var(--muted, #55555c); margin: 0 0 22px; font-size: 15px; }
-    .gcard { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 22px; }
+    .gsub { color: var(--muted, #55555c); margin: 0 0 20px; font-size: 15px; }
+    .box { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 20px; }
     .gfield { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-    .gfield input { font: inherit; font-size: 16px; padding: 10px 12px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); border-radius: 0; }
-    .gfield input:focus { outline: 2px solid var(--red); outline-offset: 1px; }
-    .gsend { width: 100%; font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 15px; padding: 14px; border: 1.5px solid var(--ink); background: var(--red); color: #fff; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); transition: transform .08s ease, box-shadow .08s ease; }
-    .gsend:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: none; }
-    .gsend:disabled { opacity: .6; cursor: default; }
-    .gmsg { margin: 12px 0 0; font-size: 15px; }
-    .gmsg.ok { color: #1f6b3a; }
-    .gmsg.bad { color: var(--red); }
-    .gcount { margin: 18px 0 8px; display: flex; justify-content: space-between; align-items: baseline; }
+    input.gin, select.gin, textarea.gin { font: inherit; font-size: 15px; padding: 9px 11px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); border-radius: 0; }
+    textarea.gin { width: 100%; box-sizing: border-box; resize: vertical; }
+    input.gin:focus, select.gin:focus, textarea.gin:focus { outline: 2px solid var(--red); outline-offset: 1px; }
+    .gbtn { font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 14px; padding: 12px 14px; border: 1.5px solid var(--ink); background: var(--red); color: #fff; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); transition: transform .08s ease, box-shadow .08s ease; }
+    .gbtn.ghost { background: #fff; color: var(--ink); }
+    .gbtn:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: none; }
+    .gbtn:disabled { opacity: .55; cursor: default; }
+    .gmsg { margin: 10px 0 0; font-size: 14px; min-height: 1em; }
+    .gmsg.ok { color: #1f6b3a; } .gmsg.bad { color: var(--red); }
+    .goff { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 22px; font-size: 16px; }
+    .lhead { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .prog { min-width: 240px; flex: 0 1 360px; }
+    .prog .bar { height: 10px; border: 1.5px solid var(--ink); background: #fff; margin-top: 6px; }
+    .prog .bar i { display: block; height: 100%; background: var(--red); }
+    .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+    .filters input.gin { flex: 1 1 220px; }
+    .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+    .split { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 860px) { .split { grid-template-columns: 1fr; } .split .card { order: -1; } }
+    .rows { background: #fff; border: 1.5px solid var(--ink); max-height: 70vh; overflow: auto; }
+    .rows button { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; text-align: left; font: inherit; padding: 9px 12px; border: 0; border-bottom: 1px solid rgba(17,17,20,.1); background: #fff; cursor: pointer; color: var(--ink); }
+    .rows button:hover { background: #f6f3ea; }
+    .rows button.on { background: var(--navy); color: #fff; }
+    .rows .co { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rows .meta { font-size: 12px; opacity: .7; }
+    .rows .oc { font-family: var(--label); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; align-self: center; }
+    .rows .empty { padding: 16px; font-size: 14px; color: var(--muted, #55555c); }
+    .card h2 { font-family: var(--display); font-weight: 800; font-size: 28px; line-height: 1.05; margin: 0 0 4px; }
+    .card .ask { font-size: 16px; margin: 0 0 14px; }
+    .callbtn { display: flex; align-items: center; justify-content: center; text-decoration: none; font-family: var(--label); letter-spacing: .1em; font-size: 20px; padding: 14px; border: 1.5px solid var(--ink); background: var(--navy); color: #fff; box-shadow: 4px 4px 0 var(--ink); margin-bottom: 12px; }
+    .where { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; margin-bottom: 12px; }
+    .where .open { color: #1f6b3a; font-weight: 700; } .where .shut { color: var(--red); font-weight: 700; }
+    .what { font-size: 15px; line-height: 1.45; margin: 0 0 16px; color: #2a2a30; }
+    .outs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 14px; }
+    @media (max-width: 560px) { .outs { grid-template-columns: repeat(2, 1fr); } }
+    .outs button { font: inherit; font-size: 13px; font-weight: 600; padding: 10px 6px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); cursor: pointer; }
+    .outs button.on { background: var(--ink); color: #fff; }
+    .outs button.good { border-color: #1f6b3a; } .outs button.good.on { background: #1f6b3a; }
+    .lcrow { display: flex; gap: 8px; margin: 6px 0 12px; }
+    .lcrow .gin { flex: 1; min-width: 0; }
+    .navrow { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
+    .up { border: 2px dashed var(--ink); background: #fff; padding: 28px; text-align: center; }
+    .up p { margin: 0 0 14px; }
     .glist { list-style: none; margin: 0; padding: 0; }
     .glist li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(17,17,20,.12); font-size: 14px; }
-    .glist li span:last-child { color: var(--muted, #55555c); white-space: nowrap; }
-    .goff { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 22px; font-size: 16px; }
-    .glist li a { color: inherit; }
+    .gcount { margin: 18px 0 8px; display: flex; justify-content: space-between; align-items: baseline; }
   </style>
 </head>
 <body>
   <header class="top"><div class="in">
-    <div class="brand"><img src="/brand/world-mark-filled.svg" alt="">Westgate<span class="sub">Line card</span></div>
+    <div class="brand"><img src="/brand/world-mark-filled.svg" alt="">Westgate<span class="sub">Calls</span></div>
+    <nav class="gtabs" id="tabs"></nav>
     <span class="gchip">Guest</span>
   </div></header>
-  <main class="gwrap">
-    <div id="g"></div>
-  </main>
+  <main class="gwrap"><div id="g"></div></main>
   <script>
     const token = location.pathname.split("/").filter(Boolean)[1] || "";
     const root = document.getElementById("g");
-    const h = (tag, props = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null || v === false) continue; if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v); } for (const c of [].concat(kids)) if (c) n.append(c); return n; };
-    const when = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    let me = null;
+    const h = (tag, props = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null || v === false) continue; if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else if (k === "value") n.value = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v); } for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c); return n; };
+    const S = { tab: "list", me: null, list: undefined, i: null, q: "", st: "", show: "todo", inHours: false, busy: false, msg: null };
+    try { Object.assign(S, JSON.parse(localStorage.getItem(`gl:${token}`) || "{}")); } catch {}
+    const remember = () => { try { localStorage.setItem(`gl:${token}`, JSON.stringify({ tab: S.tab, i: S.i, q: S.q, st: S.st, show: S.show, inHours: S.inHours })); } catch {} };
     async function call(path, body) {
       const res = await fetch(`/api/guest/${encodeURIComponent(token)}${path}`, { method: body ? "POST" : "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw Object.assign(new Error(data.error || `Something went wrong (${res.status}).`), { status: res.status });
       return data;
     }
-    function off(text) { root.replaceChildren(h("div", { class: "goff", text })); }
-    function draw(msg) {
-      const company = h("input", { id: "co", autocomplete: "off", placeholder: "Company name", required: true });
-      const name = h("input", { id: "nm", autocomplete: "off", placeholder: "First name (optional)" });
-      const email = h("input", { id: "em", type: "email", inputmode: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "their@company.com", required: true });
-      const btn = h("button", { class: "gsend", type: "submit", text: "Send line card" });
-      const note = h("p", { class: `gmsg ${msg ? msg.kind : ""}`, text: msg ? msg.text : "" });
-      const form = h("form", { class: "gcard", onsubmit: async (e) => {
-        e.preventDefault();
-        btn.disabled = true; btn.textContent = "Sending…"; note.textContent = ""; note.className = "gmsg";
-        try {
-          const r = await call("/send", { company: company.value, name: name.value || null, email: email.value });
-          me = await call("");
-          draw({ kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` });
-          document.getElementById("co").focus();
-        } catch (err) {
-          if (err.status === 403) return off(err.message);
-          btn.disabled = false; btn.textContent = "Send line card";
-          note.className = "gmsg bad"; note.textContent = err.message;
-        }
-      } }, [
-        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]),
-        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]),
-        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]),
-        btn, note,
-      ]);
-      root.replaceChildren(...[
-        h("h1", { class: "gt" }, ["Send a ", h("b", { text: "line card" })]),
-        h("p", { class: "gsub", text: `Hi ${me.name.split(" ")[0]}! It goes out from walt@westgatesupply.com with the line card attached. Read the email back to them before you send.` }),
-        form,
-        h("div", { class: "gcount" }, [h("span", { class: "label", text: "Sent today" }), h("span", { text: `${me.today} of ${me.cap}` })]),
-        me.recent.length ? h("ul", { class: "glist" }, me.recent.map((s) => h("li", {}, [h("span", { text: `${s.company} · ${s.to}` }), h("span", { text: when(s.at) })]))) : null,
-      ].filter(Boolean));
+
+    // Where each state is, and whether it's business hours there.
+    const TZ = { AK: "America/Anchorage", HI: "Pacific/Honolulu", WA: "America/Los_Angeles", OR: "America/Los_Angeles", CA: "America/Los_Angeles", NV: "America/Los_Angeles",
+      AZ: "America/Phoenix", ID: "America/Boise", MT: "America/Denver", WY: "America/Denver", UT: "America/Denver", CO: "America/Denver", NM: "America/Denver",
+      ND: "America/Chicago", SD: "America/Chicago", NE: "America/Chicago", KS: "America/Chicago", OK: "America/Chicago", TX: "America/Chicago", MN: "America/Chicago", IA: "America/Chicago",
+      MO: "America/Chicago", AR: "America/Chicago", LA: "America/Chicago", WI: "America/Chicago", IL: "America/Chicago", MS: "America/Chicago", AL: "America/Chicago", TN: "America/Chicago",
+      MI: "America/Detroit", IN: "America/Indiana/Indianapolis", KY: "America/New_York", OH: "America/New_York", GA: "America/New_York", FL: "America/New_York", SC: "America/New_York",
+      NC: "America/New_York", VA: "America/New_York", WV: "America/New_York", PA: "America/New_York", NY: "America/New_York", NJ: "America/New_York", DE: "America/New_York",
+      MD: "America/New_York", DC: "America/New_York", CT: "America/New_York", RI: "America/New_York", MA: "America/New_York", VT: "America/New_York", NH: "America/New_York", ME: "America/New_York" };
+    const local = (st) => { const tz = TZ[st]; if (!tz) return null; const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", weekday: "short", hour12: false }).formatToParts(new Date()).map((x) => [x.type, x.value])); return { hr: Number(p.hour) % 24, min: Number(p.minute), wd: p.weekday, label: new Date().toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }) }; };
+    const open = (st) => { const t = local(st); return !!t && !["Sat", "Sun"].includes(t.wd) && t.hr >= 8 && t.hr < 17; };
+    const eastFirst = (st) => { const t = local(st); return t ? -(t.hr * 60 + t.min) : 0; };
+
+    // Reading the guest's sheet: CSV here, Excel through SheetJS when needed.
+    function parseCsv(text) {
+      const rows = []; let row = [], cell = "", q = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (q) { if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c; }
+        else if (c === '"') q = true;
+        else if (c === ",") { row.push(cell); cell = ""; }
+        else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+        else cell += c;
+      }
+      if (cell || row.length) { row.push(cell); rows.push(row); }
+      return rows.filter((r) => r.some((x) => x.trim()));
     }
-    call("").then((v) => { me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));
+    const FIELDS = [["company", /company|account|business|^name$/i], ["phone", /phone|number|tel/i], ["askFor", /ask|contact|buyer|person|who/i], ["what", /what|description|about|they do/i],
+      ["city", /city|town/i], ["state", /^state|province|^st$/i], ["email", /email/i], ["notes", /note/i], ["outcome", /outcome|result/i]];
+    function toRows(table) {
+      const head = table[0].map((x) => String(x).trim());
+      const col = {};
+      for (const [k, re] of FIELDS) { const at = head.findIndex((x, j) => re.test(x) && !Object.values(col).includes(j)); if (at >= 0) col[k] = at; }
+      return table.slice(1).map((r) => Object.fromEntries(Object.entries(col).map(([k, j]) => [k, r[j] ?? ""])));
+    }
+    async function readFile(file) {
+      if (/\.xlsx?$/i.test(file.name)) {
+        if (!window.XLSX) await new Promise((ok, no) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"; s.onload = ok; s.onerror = () => no(new Error("Couldn't open Excel files right now. Save it as CSV and try again.")); document.head.append(s); });
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        return toRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" }));
+      }
+      return toRows(parseCsv(await file.text()));
+    }
+
+    // The call list.
+    const OUTS = [["Reached buyer", "good"], ["Wants line card", "good"], ["Sending an RFQ", "good"], ["Got a name", ""], ["Voicemail", ""], ["No answer", ""], ["Not interested", ""], ["Wrong number", ""]];
+    function filtered() {
+      const q = S.q.trim().toLowerCase();
+      return S.list.leads.filter((l) => (!S.st || l.state === S.st)
+        && (S.show === "all" || (S.show === "todo" ? !l.outcome : l.outcome === S.show))
+        && (!S.inHours || open(l.state))
+        && (!q || `${l.company} ${l.askFor} ${l.city} ${l.phone}`.toLowerCase().includes(q)))
+        .sort((a, b) => (!!a.outcome - !!b.outcome) || (open(b.state) - open(a.state)) || (eastFirst(a.state) - eastFirst(b.state)) || a.company.localeCompare(b.company));
+    }
+    const personName = (a) => (/purchasing manager|^buyer$/i.test(a || "") ? null : (a || "").replace(/\s*\(.*\)\s*$/, "").split(/\s+/)[0] || null);
+    async function mark(l, patch, advance) {
+      const before = filtered();
+      Object.assign(l, patch, patch.outcome !== undefined ? { outcomeAt: patch.outcome ? new Date().toISOString() : null } : {});
+      if (advance) { const at = before.findIndex((x) => x.i === l.i); const next = before.slice(at + 1).find((x) => !x.outcome) || filtered()[0]; S.i = next ? next.i : null; }
+      remember(); draw();
+      try { await call(`/list/${l.i}`, patch); } catch (err) { S.msg = { kind: "bad", text: err.message }; draw(); }
+    }
+    async function sendCard(l, email) {
+      S.busy = true; S.msg = null; draw();
+      try {
+        const r = await call("/send", { company: l.company, name: personName(l.askFor), email });
+        S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}.` };
+        await mark(l, { outcome: "Wants line card", email }, true);
+      } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; draw(); }
+    }
+    function uploadBox(again) {
+      const input = h("input", { type: "file", accept: ".csv,.xlsx,.xls", style: "display:none", onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        if (again && !confirm(`Replace your current list with ${f.name}?`)) return;
+        S.busy = true; S.msg = null; draw();
+        try {
+          const rows = await readFile(f);
+          S.list = (await call("/list", { name: f.name.replace(/\.[^.]+$/, ""), rows })).list; S.i = null; S.busy = false;
+          S.msg = { kind: "ok", text: `${S.list.leads.length} companies loaded.` };
+        } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; }
+        remember(); draw();
+      } });
+      return h("div", { class: "up" }, [
+        h("p", { text: again ? "Load a different sheet. It replaces the one you're working now." : "Upload your call sheet (CSV or Excel). It needs a company and a phone column; who to ask for, what they do, city and state are picked up when they're there." }),
+        h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Reading it…" : "Choose a file", onclick: () => input.click() }), input,
+        S.msg && !S.list ? h("p", { class: `gmsg ${S.msg.kind}`, text: S.msg.text }) : null,
+      ]);
+    }
+    function listTab() {
+      if (S.list === undefined) { S.list = null; S.loading = true; call("/list").then((r) => { S.list = r.list; S.loading = false; draw(); }).catch((err) => { S.loading = false; S.msg = { kind: "bad", text: err.message }; draw(); }); }
+      if (S.loading) return [h("p", { class: "gsub", text: "Loading your list…" })];
+      if (!S.list) return [h("div", { class: "gnarrow" }, [h("h1", { class: "gt" }, ["Your ", h("b", { text: "call list" })]), h("p", { class: "gsub", text: "Upload the sheet you're calling from, then work it here: one company at a time, tap to dial, one tap for how it went." }), uploadBox(false)])];
+      const L = S.list.leads, done = L.filter((l) => l.outcome).length;
+      const rows = filtered();
+      if (S.i == null || !rows.some((l) => l.i === S.i)) S.i = rows[0] ? rows[0].i : null;
+      const cur = L.find((l) => l.i === S.i) || null;
+      const states = [...new Set(L.map((l) => l.state).filter(Boolean))].sort();
+      const todo = Object.fromEntries(states.map((s) => [s, L.filter((l) => l.state === s && !l.outcome).length]));
+      const head = h("div", { class: "lhead" }, [
+        h("div", {}, [h("h1", { class: "gt", text: S.list.name }), h("p", { class: "gsub", style: "margin:0", text: `${L.length} companies · ${rows.length} showing` })]),
+        h("div", { class: "prog" }, [h("div", { class: "label", text: `${done} of ${L.length} called` }), h("div", { class: "bar" }, h("i", { style: `width:${Math.round((done / L.length) * 100)}%` }))]),
+      ]);
+      const filters = h("div", { class: "filters" }, [
+        h("input", { class: "gin", id: "q", placeholder: "Search a company, a name, a city", value: S.q, oninput: (e) => { S.q = e.target.value; remember(); drawSoon(); } }),
+        h("select", { class: "gin", onchange: (e) => { S.st = e.target.value; S.i = null; remember(); draw(); } }, [h("option", { value: "", text: "All states" }), ...states.map((s) => h("option", { value: s, text: `${s} · ${todo[s]} to call`, selected: S.st === s }))]),
+        h("select", { class: "gin", onchange: (e) => { S.show = e.target.value; S.i = null; remember(); draw(); } }, [["todo", "Not called yet"], ["all", "Everyone"], ...OUTS.map(([o]) => [o, o])].map(([v, t]) => h("option", { value: v, text: t, selected: S.show === v }))),
+        h("label", { class: "chk" }, [h("input", { type: "checkbox", checked: S.inHours, onchange: (e) => { S.inHours = e.target.checked; S.i = null; remember(); draw(); } }), "Open right now (8 to 5 their time)"]),
+      ]);
+      const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => { S.i = l.i; S.msg = null; remember(); draw(); } }, [
+        h("span", { class: "co", text: l.company }), h("span", { class: "oc", text: l.outcome || "" }),
+        h("span", { class: "meta", text: [l.city, l.state].filter(Boolean).join(", ") + (t ? ` · ${t.label}` : "") }), h("span"),
+      ]); }) : [h("div", { class: "empty", text: "Nobody matches. Change the filters above." })]);
+      return [head, filters, h("div", { class: "split" }, [list, cur ? card(cur, rows) : h("div", { class: "box card" }, [h("p", { text: "Nobody left with these filters. Nice work." })])]),
+        h("details", { style: "margin-top:18px" }, [h("summary", { text: "Upload a different sheet" }), uploadBox(true)])];
+    }
+    function card(l, rows) {
+      const t = local(l.state);
+      const email = h("input", { class: "gin", type: "email", placeholder: "their@company.com", value: l.email || "", autocapitalize: "off", spellcheck: "false" });
+      const notes = h("textarea", { class: "gin", rows: 3, placeholder: "Notes: who you spoke to, when to call back, what they buy", onchange: (e) => mark(l, { notes: e.target.value }, false) }); notes.value = l.notes || "";
+      const at = rows.findIndex((x) => x.i === l.i);
+      const go = (d) => { const n = rows[at + d]; if (n) { S.i = n.i; S.msg = null; remember(); draw(); } };
+      return h("div", { class: "box card" }, [
+        h("h2", { text: l.company }),
+        h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.askFor || "Purchasing manager" })]),
+        h("a", { class: "callbtn", href: `tel:${l.phone.replace(/[^\d+]/g, "")}`, text: `Call ${l.phone}` }),
+        h("div", { class: "where" }, [h("span", { text: [l.city, l.state].filter(Boolean).join(", ") }), t ? h("span", { class: open(l.state) ? "open" : "shut", text: `${t.label} there · ${open(l.state) ? "open" : "closed"}` }) : null]),
+        l.what ? h("p", { class: "what", text: l.what }) : null,
+        h("div", { class: "label", text: "How did it go?" }),
+        h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${l.outcome === o ? " on" : ""}`, text: o, onclick: () => {
+          if (o === "Wants line card" && l.outcome !== o) { email.focus(); S.msg = { kind: "", text: "Type their email below and press Send line card." }; return drawMsg(); }
+          S.msg = null; mark(l, { outcome: l.outcome === o ? null : o }, l.outcome !== o);
+        } }))),
+        h("div", { class: "label", text: "Line card" }),
+        h("div", { class: "lcrow" }, [email, h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card", onclick: () => (email.value.trim() ? sendCard(l, email.value.trim()) : ((S.msg = { kind: "bad", text: "Type their email first." }), drawMsg())) })]),
+        notes,
+        h("p", { id: "cardmsg", class: `gmsg ${S.msg ? S.msg.kind : ""}`, text: S.msg ? S.msg.text : "" }),
+        h("div", { class: "navrow" }, [h("button", { class: "gbtn ghost", disabled: at <= 0, text: "← Previous", onclick: () => go(-1) }), h("button", { class: "gbtn ghost", disabled: at < 0 || at >= rows.length - 1, text: "Next →", onclick: () => go(1) })]),
+      ]);
+    }
+    function drawMsg() { const m = document.getElementById("cardmsg"); if (m) { m.className = `gmsg ${S.msg ? S.msg.kind : ""}`; m.textContent = S.msg ? S.msg.text : ""; } }
+    let soon = 0;
+    function drawSoon() { clearTimeout(soon); soon = setTimeout(() => { const pos = document.getElementById("q")?.selectionStart; draw(); const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(pos, pos); } catch {} } }, 180); }
+
+    // The quick send, for a call that isn't on the list.
+    function sendTab() {
+      const company = h("input", { class: "gin", id: "co", autocomplete: "off", placeholder: "Company name", required: true });
+      const name = h("input", { class: "gin", id: "nm", autocomplete: "off", placeholder: "First name (optional)" });
+      const email = h("input", { class: "gin", id: "em", type: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "their@company.com", required: true });
+      const btn = h("button", { class: "gbtn", type: "submit", style: "width:100%", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card" });
+      const form = h("form", { class: "box", onsubmit: async (e) => {
+        e.preventDefault(); const v = { company: company.value, name: name.value || null, email: email.value }; S.busy = true; S.msg = null; draw();
+        try { const r = await call("/send", v); S.me = await call(""); S.busy = false; S.msg = { kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` }; }
+        catch (err) { if (err.status === 403) return off(err.message); S.busy = false; S.msg = { kind: "bad", text: err.message }; }
+        draw();
+      } }, [h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]), btn,
+        S.msg ? h("p", { class: `gmsg ${S.msg.kind}`, text: S.msg.text }) : null]);
+      return [h("div", { class: "gnarrow" }, [
+        h("h1", { class: "gt" }, ["Send a ", h("b", { text: "line card" })]),
+        h("p", { class: "gsub", text: "For a call that isn't on your list. It goes out from walt@westgatesupply.com with the line card attached. Read the email back to them before you send." }),
+        form,
+        h("div", { class: "gcount" }, [h("span", { class: "label", text: "Sent today" }), h("span", { text: `${S.me.today} of ${S.me.cap}` })]),
+        S.me.recent.length ? h("ul", { class: "glist" }, S.me.recent.map((s) => h("li", {}, [h("span", { text: `${s.company} · ${s.to}` }), h("span", { text: new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) })]))) : null,
+      ])];
+    }
+
+    function off(text) { document.getElementById("tabs").replaceChildren(); root.replaceChildren(h("div", { class: "goff gnarrow", text })); }
+    function draw() {
+      document.getElementById("tabs").replaceChildren(...[["list", "Call list"], ["send", "Send a line card"]].map(([k, t]) => h("button", { class: S.tab === k ? "on" : "", text: t, onclick: () => { S.tab = k; S.msg = null; remember(); draw(); } })));
+      root.replaceChildren(...(S.tab === "send" ? sendTab() : listTab()).filter(Boolean));
+    }
+    call("").then((v) => { S.me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));
+    // Local times move: redraw each minute unless they're typing.
+    setInterval(() => { const a = document.activeElement; if (S.tab === "list" && S.list && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) draw(); }, 60_000);
   </script>
 </body>
 </html>

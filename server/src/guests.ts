@@ -127,3 +127,75 @@ export async function guestSend(d: Deps, guest: Guest, req: { company: string; n
 export function guestView(g: Guest, now = new Date()) {
   return { name: g.name, today: g.sends.filter((s) => sameDay(s.at, now)).length, cap: GUEST_DAILY_CAP, recent: g.sends.slice(0, 15).map((s) => ({ at: s.at, company: s.company, to: s.to })) };
 }
+
+// ---------- the call list (Walt 10/15): the guest uploads their sheet and calls from it here ----------
+
+export const OUTCOMES = ["Reached buyer", "Wants line card", "Sending an RFQ", "Got a name", "Voicemail", "No answer", "Not interested", "Wrong number"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+export type ListLead = {
+  i: number; company: string; phone: string; askFor: string; what: string; city: string; state: string;
+  email: string; notes: string; outcome: Outcome | null; outcomeAt: string | null; leadId: string | null;
+};
+export type CallList = { name: string; uploadedAt: string; leads: ListLead[] };
+const LIST_MAX = 3000;
+const listKey = (guestId: string) => `guestList:${guestId}`;
+
+export async function getList(repId: string, guestId: string): Promise<CallList | null> {
+  return store.getSetting<CallList>(repId, listKey(guestId));
+}
+
+/** A new list from the guest's sheet (already split into rows in their browser); replaces any earlier one. */
+export async function putList(repId: string, guest: Guest, body: { name?: string; rows: Array<Record<string, unknown>> }): Promise<CallList> {
+  const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const rows = (body.rows ?? []).slice(0, LIST_MAX);
+  const leads: ListLead[] = rows.map((r, i) => ({
+    i, company: s(r.company, 160), phone: s(r.phone, 40), askFor: s(r.askFor, 120) || "Purchasing manager", what: s(r.what, 400),
+    city: s(r.city, 60), state: s(r.state, 30).toUpperCase().slice(0, 2), email: s(r.email, 160), notes: s(r.notes, 1000),
+    outcome: (OUTCOMES as readonly string[]).includes(s(r.outcome, 40)) ? (s(r.outcome, 40) as Outcome) : null, outcomeAt: null, leadId: null,
+  })).filter((l) => l.company && l.phone);
+  if (!leads.length) throw new GuestError(400, "Couldn't find any rows with a company and a phone number in that file.");
+  const list: CallList = { name: s(body.name, 80) || "Call list", uploadedAt: new Date().toISOString(), leads };
+  await store.putSetting(repId, listKey(guest.id), list);
+  return list;
+}
+
+/**
+ * The guest marks a lead: an outcome, notes, the email they got. A note goes on the lead in Close when the company
+ * is found there (notes only: no status changes, no tasks).
+ */
+export async function markListLead(d: Deps, guest: Guest, i: number, patch: { outcome?: string | null; notes?: string | null; email?: string | null }) {
+  const list = await getList(d.rep.closeUserId, guest.id);
+  const lead = list?.leads.find((l) => l.i === i);
+  if (!list || !lead) throw new GuestError(404, "That lead isn't on your list.");
+  const before = lead.outcome;
+  if (patch.outcome !== undefined) {
+    if (patch.outcome !== null && !(OUTCOMES as readonly string[]).includes(patch.outcome)) throw new GuestError(400, "Pick an outcome from the list.");
+    lead.outcome = (patch.outcome as Outcome | null) ?? null;
+    lead.outcomeAt = patch.outcome ? (d.now?.() ?? new Date()).toISOString() : null;
+  }
+  if (patch.notes !== undefined) lead.notes = String(patch.notes ?? "").slice(0, 1000);
+  if (patch.email !== undefined) lead.email = String(patch.email ?? "").trim().slice(0, 160);
+  // A new outcome goes to Close as a note on the company, when it's there.
+  if (lead.outcome && lead.outcome !== before) {
+    if (!lead.leadId) lead.leadId = (await findLead(d, lead.company, lead.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
+    if (lead.leadId) await d.close.createNote(lead.leadId, `[Guest] ${guest.name} called: ${lead.outcome}.${lead.notes ? ` ${lead.notes}` : ""}`, false).catch(() => undefined);
+  }
+  await store.putSetting(d.rep.closeUserId, listKey(guest.id), list);
+  return lead;
+}
+
+/** Counts by outcome, for the rep's Guests tab. */
+export function listSummary(list: CallList | null) {
+  if (!list) return null;
+  const by: Record<string, number> = {};
+  for (const l of list.leads) if (l.outcome) by[l.outcome] = (by[l.outcome] ?? 0) + 1;
+  return { name: list.name, uploadedAt: list.uploadedAt, total: list.leads.length, called: list.leads.filter((l) => l.outcome).length, by };
+}
+
+/** The list back as a spreadsheet (CSV), with what the guest filled in. */
+export function listCsv(list: CallList) {
+  const q = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const head = ["Company", "Phone", "Ask for", "What they do", "City", "State", "Outcome", "Called at", "Email (for line card)", "Notes"];
+  const rows = list.leads.map((l) => [l.company, l.phone, l.askFor, l.what, l.city, l.state, l.outcome ?? "", l.outcomeAt ?? "", l.email, l.notes].map((v) => q(String(v))).join(","));
+  return [head.join(","), ...rows].join("\n");
+}
