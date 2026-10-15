@@ -736,3 +736,16 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .dr-heat.b-later strong { color: var(--navy); }
 .hquote { font-style: italic; font-size: 13px; line-height: 1.4; color: var(--ink); border-left: 3px solid var(--red); padding: 2px 0 2px 9px; background: #fff6f7; }
 .dr-heat .hquote { background: transparent; }
+
+/* guest links (10/15) */
+.gnew { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 18px; padding: 14px; background: var(--white); border: 1.5px solid var(--ink-line); }
+.gnew .heatq { flex: 1 1 260px; }
+.glinkrow { display: flex; gap: 8px; width: 100%; }
+.glink { flex: 1; font: inherit; font-size: 13px; padding: 8px 10px; border: 1.5px solid var(--ink); background: var(--paper); }
+.glist2 { display: flex; flex-direction: column; gap: 10px; }
+.gitem { background: var(--white); border: 1.5px solid var(--ink-line); padding: 12px 14px; }
+.gitem.off { opacity: .6; }
+.gi-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.gi-head .btn { margin-left: auto; }
+.gi-sends { margin-top: 8px; font-size: 13px; }
+.gi-sends ul { margin: 6px 0 0; padding-left: 18px; }

@@ -26,6 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
+import { createGuest, GuestError, guestFor, guestSend, guestView, listGuests, setGuestActive } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -238,6 +239,47 @@ export function createApp(appDeps: AppDeps) {
         next(err);
       }
     };
+
+  // ---------- guest links (Walt 10/15): one page that sends line cards from the rep's account, nothing else ----------
+  const repIdCache = new Map<string, { repId: string; rep: Rep }>();
+  const guestFromToken = async (token: string) => {
+    for (const rep of await allReps()) {
+      let hit = repIdCache.get(rep.email);
+      if (!hit) { const d = await depsFor(rep).catch(() => null); if (!d) continue; hit = { repId: d.rep.closeUserId, rep }; repIdCache.set(rep.email, hit); }
+      const found = await guestFor(token, [hit.repId]);
+      if (found) return { ...found, rep: hit.rep };
+    }
+    return null;
+  };
+  app.get("/g/:token", (_req, res) => res.sendFile(path.resolve(ROOT, "web", "guest.html")));
+  app.get("/api/guest/:token", async (req, res, next) => {
+    try {
+      const g = await guestFromToken(String(req.params.token));
+      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      res.json(guestView(g.guest));
+    } catch (err) { next(err); }
+  });
+  app.post("/api/guest/:token/send", async (req, res, next) => {
+    try {
+      const g = await guestFromToken(String(req.params.token));
+      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      const body = z.object({ company: z.string().max(200), name: z.string().max(100).nullable().optional(), email: z.string().max(200) }).parse(req.body ?? {});
+      const d = await depsFor(g.rep);
+      res.json(await guestSend(d, g.guest, body));
+    } catch (err) { next(err); }
+  });
+  // The rep's side: make a link, switch it off or on, see what each guest sent.
+  const guestLink = (req: Request, token: string) => `${(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0]}://${req.get("host")}/g/${token}`;
+  app.get("/api/guests", authed, route(async (_req, d) => ({ guests: (await listGuests(d.rep.closeUserId)).map(({ tokenHash: _h, ...g }) => g) })));
+  app.post("/api/guests", authed, route(async (req, d) => {
+    const { guest, token } = await createGuest(d.rep.closeUserId, String(req.body?.name ?? ""));
+    const { tokenHash: _h, ...g } = guest;
+    return { guest: g, link: guestLink(req, token) };
+  }));
+  app.post("/api/guests/:id/active", authed, route(async (req, d) => {
+    const { tokenHash: _h, ...g } = await setGuestActive(d.rep.closeUserId, String(req.params.id), req.body?.active !== false);
+    return { guest: g };
+  }));
 
   app.get("/api/me", authed, route(async (_req, d) => ({
     rep: d.rep,
@@ -596,6 +638,7 @@ export function createApp(appDeps: AppDeps) {
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof BadRequest) res.status(400).json({ error: err.message });
+    else if (err instanceof GuestError) res.status(err.status).json({ error: err.message });
     else if (err instanceof AuthError) res.status(err.status).json({ error: err.message, ...(err.status === 428 ? { needsCloseKey: true } : {}) });
     else if (err instanceof z.ZodError) res.status(400).json({ error: "Bad request", details: z.prettifyError(err) });
     else if (err instanceof DuplicateApplyError) res.status(409).json({ error: err.message });

@@ -141,7 +141,9 @@ export class FakeClose implements Close {
   async phoneNumbers() { return [{ number: "+17372582165", user_id: DEMO_USER_ID, label: null }, { number: "+17372349440", user_id: "user_someoneelse", label: "Berni" }]; }
   statusChanges: Array<{ lead_id: string; date_created: string; old_status_label: string | null; new_status_label: string }> = [];
   async statusChangesSince(since: string) { return this.statusChanges.filter((s) => s.date_created >= since); }
-  async findLeads(_query: string) { return [] as Array<{ id: string; display_name: string }>; }
+  findLeadsResult: Array<{ id: string; display_name: string }> = [];
+  async findLeads(_query: string) { return this.findLeadsResult; }
+  async createLead(body: { name: string; contactName: string | null; email: string; phone?: string | null }) { const r = this.record("lead-create", body) as { id: string }; return { id: r.id, display_name: body.name }; }
   async completeTask(taskId: string) {
     const t = this.tasks_.get(taskId) ?? this.extraTasks.find((x) => x.id === taskId);
     if (t) t.is_complete = true;

@@ -34,7 +34,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
+function pageFromHash() { return location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -107,6 +107,7 @@ function render() {
   $app.replaceChildren(topBar(), el("main", {}, state.page === "emails" ? [err, emailsSection()]
     : state.page === "rfqs" ? [err, rfqsPage()]
     : state.page === "tasks" ? [err, tasksPage()]
+    : state.page === "guests" ? [err, guestsPage()]
       : state.page === "heat" ? [err, heatPage()]
         : [hello(), err, accountsSection()]));
 }
@@ -181,7 +182,7 @@ function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
   return el("header", { class: "top" }, el("div", { class: "in" }, [
     el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), "Westgate", el("span", { class: "sub", text: "Assistant" })]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"], ["guests", "Guests"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", onclick: () => go(k),
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
@@ -1569,6 +1570,59 @@ function mailDashboard(au) {
 
 // ---------- Tasks (Walt 10/14: "why wouldn't you just create a new tasks section?") ----------
 // Your open Close tasks: today first, then the next 7 days, then the overdue pile, folded.
+// ---------- guest links (Walt 10/15): a private link that only sends line cards from your account ----------
+async function loadGuests() {
+  try { state.guests = (await api("/api/guests")).guests; } catch (e) { state.guestsErr = e.message; }
+  render();
+}
+function guestsPage() {
+  if (state.guests === undefined) { state.guests = null; loadGuests(); }
+  const g = state.guestNew || {};
+  const create = async () => {
+    const name = (g.name || "").trim();
+    if (!name) { state.guestNew = { ...g, error: "Type their name first." }; return render(); }
+    state.guestNew = { ...g, busy: true, error: null }; render();
+    try {
+      const r = await api("/api/guests", { name });
+      state.guestNew = { link: r.link, for: r.guest.name };
+      await loadGuests();
+    } catch (e) { state.guestNew = { ...g, busy: false, error: e.message }; render(); }
+  };
+  const toggle = async (x) => {
+    try { await api(`/api/guests/${x.id}/active`, { active: !x.active }); await loadGuests(); } catch (e) { state.guestsErr = e.message; render(); }
+  };
+  const copy = (text) => { try { navigator.clipboard.writeText(text); state.guestNew = { ...state.guestNew, copied: true }; render(); } catch {} };
+  const today = (x) => x.sends.filter((s) => new Date(s.at).toDateString() === new Date().toDateString()).length;
+  return el("section", {}, [
+    el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Guests" })]),
+    el("p", { class: "muted small3", text: "A guest link sends line cards from your email, and that's all it does. They type a company, a name and an email; it goes out from your Close account with the PDF, the lead is found or added in Close with a note saying who sent it, and the account joins your email sequence like any line card. Turn a link off and it stops working at once." }),
+    el("div", { class: "gnew" }, g.link ? [
+      el("p", {}, [el("strong", { text: `Link for ${g.for}` }), " (copy it now; it isn't shown again):"]),
+      el("div", { class: "glinkrow" }, [el("input", { class: "glink", value: g.link, readonly: true, onclick: (e) => e.target.select() }), el("button", { class: "btn small", text: g.copied ? "Copied" : "Copy", onclick: () => copy(g.link) })]),
+      el("button", { class: "linkbtn small3", text: "Make another", onclick: () => { state.guestNew = {}; render(); } }),
+    ] : [
+      el("input", { class: "heatq", placeholder: "Guest's name, e.g. Jake Miller", value: g.name || "", oninput: (e) => { state.guestNew = { ...state.guestNew, name: e.target.value }; }, onkeydown: (e) => { if (e.key === "Enter") create(); } }),
+      el("button", { class: "btn", disabled: !!g.busy, text: g.busy ? "Making it…" : "Make a guest link", onclick: create }),
+      g.error ? el("span", { class: "bad small", text: g.error }) : null,
+    ]),
+    state.guestsErr ? el("p", { class: "empty", text: state.guestsErr }) : null,
+    state.guests === null ? el("p", { class: "loading", text: "Loading guests…" })
+      : !state.guests.length ? el("p", { class: "empty", text: "No guest links yet." })
+        : el("div", { class: "glist2" }, state.guests.slice().reverse().map((x) => el("div", { class: `gitem${x.active ? "" : " off"}` }, [
+          el("div", { class: "gi-head" }, [
+            el("strong", { text: x.name }),
+            el("span", { class: "sub2", text: `${x.active ? "Active" : `Off since ${new Date(x.offAt).toLocaleDateString()}`} · ${today(x)} today · ${x.sends.length} total · made ${new Date(x.createdAt).toLocaleDateString()}` }),
+            el("button", { class: x.active ? "btn small" : "btn small primary", text: x.active ? "Turn off" : "Turn back on", onclick: () => toggle(x) }),
+          ]),
+          x.sends.length ? el("details", { class: "gi-sends" }, [el("summary", { text: "What they sent" }),
+            el("ul", {}, x.sends.slice(0, 100).map((s) => el("li", {}, [
+              el("a", { href: closeLead(s.leadId), target: "_blank", rel: "noopener", text: s.company }),
+              ` · ${s.name ? `${s.name} ` : ""}${s.to}${s.newLead ? " · new lead" : ""} · ${new Date(s.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`,
+            ])))]) : null,
+        ]))),
+  ]);
+}
+
 function tasksPage() {
   const tk = state.tasks;
   const done = async (t, btn) => {

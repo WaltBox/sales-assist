@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Westgate Supply · Send a line card</title>
+  <link rel="icon" href="/brand/world-mark-filled.svg">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    body { background: var(--paper); margin: 0; }
+    .gwrap { max-width: 620px; margin: 0 auto; padding: 40px 16px 72px; display: block; }
+    .top .gchip { margin-left: auto; font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; padding: 4px 9px; border: 1px solid rgba(255,255,255,.5); color: #fff; }
+    h1.gt { font-family: var(--display); font-weight: 800; text-transform: uppercase; font-size: 40px; line-height: 1; margin: 0 0 10px; color: var(--ink); }
+    h1.gt b { color: var(--red); }
+    .gsub { color: var(--muted, #55555c); margin: 0 0 22px; font-size: 15px; }
+    .gcard { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 22px; }
+    .gfield { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .gfield input { font: inherit; font-size: 16px; padding: 10px 12px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); border-radius: 0; }
+    .gfield input:focus { outline: 2px solid var(--red); outline-offset: 1px; }
+    .gsend { width: 100%; font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 15px; padding: 14px; border: 1.5px solid var(--ink); background: var(--red); color: #fff; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); transition: transform .08s ease, box-shadow .08s ease; }
+    .gsend:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: none; }
+    .gsend:disabled { opacity: .6; cursor: default; }
+    .gmsg { margin: 12px 0 0; font-size: 15px; }
+    .gmsg.ok { color: #1f6b3a; }
+    .gmsg.bad { color: var(--red); }
+    .gcount { margin: 18px 0 8px; display: flex; justify-content: space-between; align-items: baseline; }
+    .glist { list-style: none; margin: 0; padding: 0; }
+    .glist li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(17,17,20,.12); font-size: 14px; }
+    .glist li span:last-child { color: var(--muted, #55555c); white-space: nowrap; }
+    .goff { background: #fff; border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 22px; font-size: 16px; }
+    .glist li a { color: inherit; }
+  </style>
+</head>
+<body>
+  <header class="top"><div class="in">
+    <div class="brand"><img src="/brand/world-mark-filled.svg" alt="">Westgate<span class="sub">Line card</span></div>
+    <span class="gchip">Guest</span>
+  </div></header>
+  <main class="gwrap">
+    <div id="g"></div>
+  </main>
+  <script>
+    const token = location.pathname.split("/").filter(Boolean)[1] || "";
+    const root = document.getElementById("g");
+    const h = (tag, props = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null || v === false) continue; if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v); } for (const c of [].concat(kids)) if (c) n.append(c); return n; };
+    const when = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    let me = null;
+    async function call(path, body) {
+      const res = await fetch(`/api/guest/${encodeURIComponent(token)}${path}`, { method: body ? "POST" : "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(data.error || `Something went wrong (${res.status}).`), { status: res.status });
+      return data;
+    }
+    function off(text) { root.replaceChildren(h("div", { class: "goff", text })); }
+    function draw(msg) {
+      const company = h("input", { id: "co", autocomplete: "off", placeholder: "Company name", required: true });
+      const name = h("input", { id: "nm", autocomplete: "off", placeholder: "First name (optional)" });
+      const email = h("input", { id: "em", type: "email", inputmode: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "their@company.com", required: true });
+      const btn = h("button", { class: "gsend", type: "submit", text: "Send line card" });
+      const note = h("p", { class: `gmsg ${msg ? msg.kind : ""}`, text: msg ? msg.text : "" });
+      const form = h("form", { class: "gcard", onsubmit: async (e) => {
+        e.preventDefault();
+        btn.disabled = true; btn.textContent = "Sending…"; note.textContent = ""; note.className = "gmsg";
+        try {
+          const r = await call("/send", { company: company.value, name: name.value || null, email: email.value });
+          me = await call("");
+          draw({ kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` });
+          document.getElementById("co").focus();
+        } catch (err) {
+          if (err.status === 403) return off(err.message);
+          btn.disabled = false; btn.textContent = "Send line card";
+          note.className = "gmsg bad"; note.textContent = err.message;
+        }
+      } }, [
+        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]),
+        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]),
+        h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]),
+        btn, note,
+      ]);
+      root.replaceChildren(...[
+        h("h1", { class: "gt" }, ["Send a ", h("b", { text: "line card" })]),
+        h("p", { class: "gsub", text: `Hi ${me.name.split(" ")[0]}! It goes out from walt@westgatesupply.com with the line card attached. Read the email back to them before you send.` }),
+        form,
+        h("div", { class: "gcount" }, [h("span", { class: "label", text: "Sent today" }), h("span", { text: `${me.today} of ${me.cap}` })]),
+        me.recent.length ? h("ul", { class: "glist" }, me.recent.map((s) => h("li", {}, [h("span", { text: `${s.company} · ${s.to}` }), h("span", { text: when(s.at) })]))) : null,
+      ].filter(Boolean));
+    }
+    call("").then((v) => { me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));
+  </script>
+</body>
+</html>

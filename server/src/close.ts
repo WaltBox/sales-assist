@@ -344,6 +344,14 @@ export class CloseClient {
   }
 
   /** Leads matching a Close search query (e.g. name:"Test Lead Fabrication"). */
+  /** A new lead with one contact (a guest's line card to a company not in Close yet, 10/15). */
+  createLead(body: { name: string; contactName: string | null; email: string; phone?: string | null }) {
+    return this.request<{ id: string; display_name: string; contacts?: Array<{ id: string }> }>("POST", "/lead/", {
+      name: body.name,
+      contacts: [{ ...(body.contactName ? { name: body.contactName } : {}), emails: [{ email: body.email, type: "office" }], ...(body.phone ? { phones: [{ phone: body.phone, type: "office" }] } : {}) }],
+    });
+  }
+
   async findLeads(query: string) {
     const p = new URLSearchParams({ query, _fields: "id,display_name", _limit: "25" });
     return (await this.request<{ data: Array<{ id: string; display_name: string }> }>("GET", `/lead/?${p}`)).data;
