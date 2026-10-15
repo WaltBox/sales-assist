@@ -153,9 +153,10 @@
     async function sendCard(l, email) {
       S.busy = true; S.msg = null; draw();
       try {
-        const r = await call("/send", { company: l.company, name: personName(l.askFor), email });
+        const r = await call("/send", { company: l.company, name: personName(l.askFor), email, meme: !!S.meme });
         S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}.` };
-        await mark(l, { outcome: "Wants line card", email }, true);
+        // Already marked Wants line card: just save the email (no second note in Close).
+        await mark(l, l.outcome === "Wants line card" ? { email } : { outcome: "Wants line card", email }, true);
       } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; draw(); }
     }
     function uploadBox(again) {
@@ -182,7 +183,8 @@
       if (!S.list) return [h("div", { class: "gnarrow" }, [h("h1", { class: "gt" }, ["Your ", h("b", { text: "call list" })]), h("p", { class: "gsub", text: "Upload the sheet you're calling from, then work it here: one company at a time, tap to dial, one tap for how it went." }), uploadBox(false)])];
       const L = S.list.leads, done = L.filter((l) => l.outcome).length;
       const rows = filtered();
-      if (S.i == null || !rows.some((l) => l.i === S.i)) S.i = rows[0] ? rows[0].i : null;
+      // The company on screen stays there after it's marked (it may no longer match "Not called yet") until they move on.
+      if (S.i == null || !L.some((l) => l.i === S.i)) S.i = rows[0] ? rows[0].i : null;
       const cur = L.find((l) => l.i === S.i) || null;
       const states = [...new Set(L.map((l) => l.state).filter(Boolean))].sort();
       const todo = Object.fromEntries(states.map((s) => [s, L.filter((l) => l.state === s && !l.outcome).length]));
@@ -205,10 +207,11 @@
     }
     function card(l, rows) {
       const t = local(l.state);
-      const email = h("input", { class: "gin", type: "email", placeholder: "their@company.com", value: l.email || "", autocapitalize: "off", spellcheck: "false" });
+      const email = h("input", { class: "gin", id: "lcemail", type: "email", placeholder: "their@company.com", value: l.email || "", autocapitalize: "off", spellcheck: "false" });
+      const meme = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
       const notes = h("textarea", { class: "gin", rows: 3, placeholder: "Notes: who you spoke to, when to call back, what they buy", onchange: (e) => mark(l, { notes: e.target.value }, false) }); notes.value = l.notes || "";
       const at = rows.findIndex((x) => x.i === l.i);
-      const go = (d) => { const n = rows[at + d]; if (n) { S.i = n.i; S.msg = null; remember(); draw(); } };
+      const go = (d) => { const n = at >= 0 ? rows[at + d] : (d > 0 ? rows[0] : null); if (n) { S.i = n.i; S.msg = null; remember(); draw(); } };
       return h("div", { class: "box card" }, [
         h("h2", { text: l.company }),
         h("p", { class: "ask" }, ["Ask for ", h("b", { text: l.askFor || "Purchasing manager" })]),
@@ -217,14 +220,16 @@
         l.what ? h("p", { class: "what", text: l.what }) : null,
         h("div", { class: "label", text: "How did it go?" }),
         h("div", { class: "outs" }, OUTS.map(([o, cls]) => h("button", { class: `${cls}${l.outcome === o ? " on" : ""}`, text: o, onclick: () => {
-          if (o === "Wants line card" && l.outcome !== o) { email.focus(); S.msg = { kind: "", text: "Type their email below and press Send line card." }; return drawMsg(); }
+          // Wants line card is marked like the rest; it stays on this company so they can type the email and send (10/15).
+          if (o === "Wants line card" && l.outcome !== o) { S.msg = { kind: "", text: "Marked. Type their email below and press Send line card." }; mark(l, { outcome: o }, false); setTimeout(() => document.getElementById("lcemail")?.focus(), 0); return; }
           S.msg = null; mark(l, { outcome: l.outcome === o ? null : o }, l.outcome !== o);
         } }))),
         h("div", { class: "label", text: "Line card" }),
         h("div", { class: "lcrow" }, [email, h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card", onclick: () => (email.value.trim() ? sendCard(l, email.value.trim()) : ((S.msg = { kind: "bad", text: "Type their email first." }), drawMsg())) })]),
+        h("label", { class: "chk", style: "margin:-4px 0 12px" }, [meme, "Add a meme (picks one at random)"]),
         notes,
         h("p", { id: "cardmsg", class: `gmsg ${S.msg ? S.msg.kind : ""}`, text: S.msg ? S.msg.text : "" }),
-        h("div", { class: "navrow" }, [h("button", { class: "gbtn ghost", disabled: at <= 0, text: "← Previous", onclick: () => go(-1) }), h("button", { class: "gbtn ghost", disabled: at < 0 || at >= rows.length - 1, text: "Next →", onclick: () => go(1) })]),
+        h("div", { class: "navrow" }, [h("button", { class: "gbtn ghost", disabled: at <= 0, text: "← Previous", onclick: () => go(-1) }), h("button", { class: "gbtn ghost", disabled: at >= rows.length - 1 || !rows.length, text: "Next →", onclick: () => go(1) })]),
       ]);
     }
     function drawMsg() { const m = document.getElementById("cardmsg"); if (m) { m.className = `gmsg ${S.msg ? S.msg.kind : ""}`; m.textContent = S.msg ? S.msg.text : ""; } }
@@ -237,12 +242,13 @@
       const name = h("input", { class: "gin", id: "nm", autocomplete: "off", placeholder: "First name (optional)" });
       const email = h("input", { class: "gin", id: "em", type: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "their@company.com", required: true });
       const btn = h("button", { class: "gbtn", type: "submit", style: "width:100%", disabled: S.busy, text: S.busy ? "Sending…" : "Send line card" });
+      const memeBox = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
       const form = h("form", { class: "box", onsubmit: async (e) => {
-        e.preventDefault(); const v = { company: company.value, name: name.value || null, email: email.value }; S.busy = true; S.msg = null; draw();
+        e.preventDefault(); const v = { company: company.value, name: name.value || null, email: email.value, meme: !!S.meme }; S.busy = true; S.msg = null; draw();
         try { const r = await call("/send", v); S.me = await call(""); S.busy = false; S.msg = { kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` }; }
         catch (err) { if (err.status === 403) return off(err.message); S.busy = false; S.msg = { kind: "bad", text: err.message }; }
         draw();
-      } }, [h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]), btn,
+      } }, [h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]), h("label", { class: "chk", style: "margin:0 0 14px" }, [memeBox, "Add a meme (picks one at random)"]), btn,
         S.msg ? h("p", { class: `gmsg ${S.msg.kind}`, text: S.msg.text }) : null]);
       return [h("div", { class: "gnarrow" }, [
         h("h1", { class: "gt" }, ["Send a ", h("b", { text: "line card" })]),

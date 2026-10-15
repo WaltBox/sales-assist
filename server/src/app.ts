@@ -266,7 +266,7 @@ export function createApp(appDeps: AppDeps) {
     try {
       const g = await guestFromToken(String(req.params.token));
       if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
-      const body = z.object({ company: z.string().max(200), name: z.string().max(100).nullable().optional(), email: z.string().max(200) }).parse(req.body ?? {});
+      const body = z.object({ company: z.string().max(200), name: z.string().max(100).nullable().optional(), email: z.string().max(200), meme: z.boolean().optional() }).parse(req.body ?? {});
       const d = await depsFor(g.rep);
       res.json(await guestSend(d, g.guest, body));
     } catch (err) { next(err); }

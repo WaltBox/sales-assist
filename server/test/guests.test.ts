@@ -41,8 +41,9 @@ test("a guest send goes out from the rep's account with the line card, notes who
   assert.equal(email.sender, '"Walt Boxwell" <walt@westgatesupply.com>', "from the rep, not the guest");
   assert.equal(email.attachments[0].filename, "Westgate_Supply_Line_Card.pdf", "the line card rides along, so the account joins the sequence");
   assert.match(email.body, /^Hi Dana,\n\nJake suggested I send this your way\./);
-  const note = close.writes.find((w) => w.op === "note" && /\[Guest\]/.test((w.body as { note: string }).note))!.body as { note: string };
-  assert.match(note.note, /^\[Guest\] Jake Miller sent the line card to Dana <dana@brandnewfab\.com>/);
+  const note = close.writes.find((w) => w.op === "note" && /\[Work trial\]/.test((w.body as { note: string }).note))!.body as { note: string };
+  assert.match(note.note, /^\[Work trial\] Jake Miller \(work trial\) sent the line card to Dana <dana@brandnewfab\.com>\.$/);
+  assert.equal((close.writes.filter((w) => w.op === "email").pop()!.body as { html: string | null }).html, null, "no meme unless they ask for one");
 
   // Already in Close (found by the address): no new lead.
   close.findLeadsResult = [{ id: DEMO_LEAD_ID, display_name: "Rodda Electric, Inc." }];
@@ -99,7 +100,7 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   assert.equal(saved.leads[1].outcome, "Voicemail");
   assert.equal(saved.leads[1].leadId, DEMO_LEAD_ID);
   const note = close.writes.find((w) => w.op === "note")!.body as { leadId: string; note: string };
-  assert.deepEqual([note.leadId, note.note], [DEMO_LEAD_ID, "[Guest] Jake Miller called: Voicemail. Renee out till Monday"]);
+  assert.deepEqual([note.leadId, note.note], [DEMO_LEAD_ID, "[Work trial] Called by Jake Miller (work trial): Voicemail. Notes: Renee out till Monday"]);
   assert.ok(!close.writes.some((w) => w.op === "status" || w.op === "task"), "notes only: no status changes, no tasks");
   // Same outcome again: no second note. A bad outcome is refused.
   await markListLead(d, guest, 1, { notes: "Renee out till Monday, try 9am" });

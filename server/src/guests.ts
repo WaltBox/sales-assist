@@ -88,7 +88,7 @@ export async function findLead(d: Deps, company: string, email: string): Promise
  * Send the line card for a guest, from the rep's account: find or create the lead, send it the way the call
  * screen does (PDF attached, a meme, "<guest> suggested I send this your way"), and note who sent it.
  */
-export async function guestSend(d: Deps, guest: Guest, req: { company: string; name?: string | null; email: string }) {
+export async function guestSend(d: Deps, guest: Guest, req: { company: string; name?: string | null; email: string; meme?: boolean }) {
   const now = d.now?.() ?? new Date();
   const company = req.company.trim().slice(0, 120);
   const email = req.email.trim().toLowerCase();
@@ -106,7 +106,8 @@ export async function guestSend(d: Deps, guest: Guest, req: { company: string; n
     const made = await d.close.createLead({ name: company, contactName: name, email });
     lead = { id: made.id, name: made.display_name ?? company };
   }
-  const meme = await memeFor(d, lead.id).catch(() => null);
+  // No meme unless they tick "Add a meme" (Walt 10/15); then one this company hasn't had.
+  const meme = req.meme ? await memeFor(d, lead.id).catch(() => null) : null;
   let r;
   try {
     r = await sendLineCard(d, lead.id, { to: email, name, referredBy: g.name.split(/\s+/)[0], format: "pdf_only", meme });
@@ -114,7 +115,7 @@ export async function guestSend(d: Deps, guest: Guest, req: { company: string; n
     if (err instanceof LineCardError) throw new GuestError(400, err.message);
     throw err;
   }
-  await d.close.createNote(lead.id, `[Guest] ${g.name} sent the line card to ${name ? `${name} <${email}>` : email} from the guest link.`, false).catch(() => undefined);
+  await d.close.createNote(lead.id, `[Work trial] ${g.name} (work trial) sent the line card to ${name ? `${name} <${email}>` : email}${meme ? ` with the ${meme.name.replace(/\.[a-z0-9]+$/i, "")} meme` : ""}.`, false).catch(() => undefined);
   const send: GuestSend = { at: now.toISOString(), company: lead.name, to: email, name, leadId: lead.id, newLead };
   // Re-read before saving: another send from the same link could have landed meanwhile.
   const fresh = await listGuests(d.rep.closeUserId);
@@ -178,7 +179,8 @@ export async function markListLead(d: Deps, guest: Guest, i: number, patch: { ou
   // A new outcome goes to Close as a note on the company, when it's there.
   if (lead.outcome && lead.outcome !== before) {
     if (!lead.leadId) lead.leadId = (await findLead(d, lead.company, lead.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
-    if (lead.leadId) await d.close.createNote(lead.leadId, `[Guest] ${guest.name} called: ${lead.outcome}.${lead.notes ? ` ${lead.notes}` : ""}`, false).catch(() => undefined);
+    // Who made the call, said plainly (Walt 10/15): a work trial, by name.
+    if (lead.leadId) await d.close.createNote(lead.leadId, `[Work trial] Called by ${guest.name} (work trial): ${lead.outcome}.${lead.notes ? ` Notes: ${lead.notes}` : ""}${lead.email ? ` Email: ${lead.email}` : ""}`, false).catch(() => undefined);
   }
   await store.putSetting(d.rep.closeUserId, listKey(guest.id), list);
   return lead;
