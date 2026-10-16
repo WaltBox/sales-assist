@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Deps } from "./assistant.js";
+import type { LeadEmail } from "./close.js";
 import { store } from "./store.js";
 import { LineCardError, sendLineCard } from "./linecard.js";
 import { memeFor } from "./memes.js";
@@ -13,7 +14,9 @@ import { memeFor } from "./memes.js";
  */
 
 export type GuestSend = { at: string; company: string; to: string; name: string | null; leadId: string; newLead: boolean };
-export type Guest = { id: string; name: string; tokenHash: string; createdAt: string; active: boolean; offAt: string | null; sends: GuestSend[] };
+export type Guest = { id: string; name: string; tokenHash: string; createdAt: string; active: boolean; offAt: string | null; sends: GuestSend[];
+  /** Their own email, CC'd on every line card they send (10/16). */
+  ccEmail?: string | null };
 
 const KEY = "guests";
 /** A day's sends per link: plenty for a full day of calling, and a cap if a link ends up somewhere it shouldn't. */
@@ -110,7 +113,7 @@ export async function guestSend(d: Deps, guest: Guest, req: { company: string; n
   const meme = req.meme ? await memeFor(d, lead.id).catch(() => null) : null;
   let r;
   try {
-    r = await sendLineCard(d, lead.id, { to: email, name, referredBy: g.name.split(/\s+/)[0], format: "pdf_only", meme });
+    r = await sendLineCard(d, lead.id, { to: email, name, referredBy: g.name.split(/\s+/)[0], format: "pdf_only", meme, cc: g.ccEmail ? [g.ccEmail] : [] });
   } catch (err) {
     if (err instanceof LineCardError) throw new GuestError(400, err.message);
     throw err;
@@ -124,9 +127,21 @@ export async function guestSend(d: Deps, guest: Guest, req: { company: string; n
   return { sent: true, company: lead.name, to: email, newLead, threaded: r.threaded, today: (fg?.sends ?? []).filter((s) => sameDay(s.at, now)).length, cap: GUEST_DAILY_CAP };
 }
 
+/** The guest's own email, CC'd on every line card they send; empty clears it. */
+export async function setGuestCc(repId: string, guestId: string, raw: string | null) {
+  const cc = String(raw ?? "").trim().toLowerCase().slice(0, 160);
+  if (cc && !EMAIL.test(cc)) throw new GuestError(400, `"${raw}" doesn't look like an email address.`);
+  const guests = await listGuests(repId);
+  const g = guests.find((x) => x.id === guestId);
+  if (!g || !g.active) throw new GuestError(403, "This link has been turned off.");
+  g.ccEmail = cc || null;
+  await saveGuests(repId, guests);
+  return { ccEmail: g.ccEmail };
+}
+
 /** What the guest page shows: their name, today's count, their last sends. Nothing else of the rep's. */
 export function guestView(g: Guest, now = new Date()) {
-  return { name: g.name, today: g.sends.filter((s) => sameDay(s.at, now)).length, cap: GUEST_DAILY_CAP, recent: g.sends.slice(0, 15).map((s) => ({ at: s.at, company: s.company, to: s.to })) };
+  return { name: g.name, ccEmail: g.ccEmail ?? null, today: g.sends.filter((s) => sameDay(s.at, now)).length, cap: GUEST_DAILY_CAP, recent: g.sends.slice(0, 15).map((s) => ({ at: s.at, company: s.company, to: s.to })) };
 }
 
 // ---------- the call list (Walt 10/15): the guest uploads their sheet and calls from it here ----------
@@ -206,7 +221,12 @@ function applyMark(d: Deps, guest: Guest, lead: ListLead, patch: MarkPatch): (()
   const snap = { ...lead };
   return async () => {
     const id = snap.leadId ?? (await findLead(d, snap.company, snap.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
-    if (id && !lead.leadId) lead.leadId = id;
+    if (id && !lead.leadId) {
+      lead.leadId = id;
+      // Remember which Close lead this row is, for the follow-ups tab (kept apart from the list so it never races a save).
+      const ids = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, idsKey(guest.id)).catch(() => null)) ?? {};
+      if (ids[snap.i] !== id) await store.putSetting(d.rep.closeUserId, idsKey(guest.id), { ...ids, [snap.i]: id }).catch(() => undefined);
+    }
     if (id) await d.close.createNote(id, `[Work trial] Called by ${guest.name} (work trial): ${snap.outcome}.${snap.gotName ? ` Ask for: ${snap.gotName}.` : ""}${snap.notes ? ` Notes: ${snap.notes}` : ""}${snap.email ? ` Email: ${snap.email}` : ""}`, false);
   };
 }
@@ -235,4 +255,96 @@ export function listCsv(list: CallList) {
   const head = ["Company", "Phone", "Ask for", "What they do", "City", "State", "Outcome", "Called at", "Name they got", "Email (for line card)", "Notes"];
   const rows = list.leads.map((l) => [l.company, l.phone, l.askFor, l.what, l.city, l.state, l.outcome ?? "", l.outcomeAt ?? "", l.gotName ?? "", l.email, l.notes].map((v) => q(String(v))).join(","));
   return [head.join(","), ...rows].join("\n");
+}
+
+// ---------- follow-ups (Walt 10/15): the guest sees where the companies they called stand now ----------
+
+const idsKey = (guestId: string) => `guestLeadIds:${guestId}`;
+const followKey = (guestId: string) => `guestFollow:${guestId}`;
+/** Statuses Walt has taken over: the RFQ is in, the guest doesn't need to call. */
+const RFQ_STATUSES = /rfq|quoted|customer|vendor/i;
+const FOLLOW_TTL_MS = 10 * 60 * 1000;
+const FOLLOW_MAX = 200;
+
+export type FollowUp = {
+  i: number | null; company: string; phone: string; askFor: string; state: string;
+  outcome: string | null; calledAt: string | null; notes: string;
+  /** From Close: the lead's status now, the last line card email, its opens, and any reply after it. */
+  inClose: boolean; status: string | null; rfq: boolean;
+  lineCardAt: string | null; lineCardTo: string | null; opens: number; lastOpenAt: string | null; repliedAt: string | null;
+};
+
+async function eachLimit<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
+  let at = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (at < items.length) await fn(items[at++]); }));
+}
+
+const isLineCard = (e: LeadEmail) => e.direction === "outgoing" && e.status === "sent"
+  && ((e.attachments ?? []).some((a) => /line.?card/i.test(a.filename ?? "")) || /line card/i.test(`${e.subject ?? ""} ${(e.body_text ?? "").slice(0, 400)}`));
+
+/**
+ * Everyone the guest called (any outcome) and everyone they sent a line card to, with where each stands in Close.
+ * Line cards first, so tomorrow they call back the people who got one. Cached ten minutes; `fresh` skips it.
+ */
+export async function guestFollowUps(d: Deps, guest: Guest, opts: { fresh?: boolean } = {}): Promise<{ at: string; rows: FollowUp[] }> {
+  const repId = d.rep.closeUserId;
+  const now = d.now?.() ?? new Date();
+  // What Close said about each company, kept ten minutes per company: new calls show at once, and only stale
+  // companies are looked up again.
+  type Seen = { at: string; status: string | null; lineCardAt: string | null; lineCardTo: string | null; opens: number; lastOpenAt: string | null; replies: string[] };
+  const seen = (await store.getSetting<Record<string, Seen>>(repId, followKey(guest.id))) ?? {};
+  let seenChanged = false;
+  const list = await getList(repId, guest.id);
+  const g = (await listGuests(repId)).find((x) => x.id === guest.id) ?? guest;
+  const ids = (await store.getSetting<Record<string, string>>(repId, idsKey(guest.id))) ?? {};
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const rows: Array<FollowUp & { leadId: string | null; email: string }> = [];
+  for (const l of (list?.leads ?? []).filter((x) => x.outcome)) {
+    const send = g.sends.find((s) => (l.email && s.to === l.email.toLowerCase()) || norm(s.company) === norm(l.company));
+    rows.push({ i: l.i, company: l.company, phone: l.phone, askFor: l.gotName || l.askFor, state: l.state, outcome: l.outcome, calledAt: l.outcomeAt, notes: l.notes,
+      leadId: ids[l.i] ?? l.leadId ?? send?.leadId ?? null, email: l.email || send?.to || "",
+      inClose: false, status: null, rfq: false, lineCardAt: send?.at ?? null, lineCardTo: send?.to ?? null, opens: 0, lastOpenAt: null, repliedAt: null });
+  }
+  // Line cards sent from the "Send a line card" tab for companies that aren't on the sheet.
+  for (const s of g.sends) {
+    if (rows.some((r) => r.leadId === s.leadId || norm(r.company) === norm(s.company))) continue;
+    rows.push({ i: null, company: s.company, phone: "", askFor: s.name ?? "", state: "", outcome: "Wants line card", calledAt: s.at, notes: "",
+      leadId: s.leadId, email: s.to, inClose: false, status: null, rfq: false, lineCardAt: s.at, lineCardTo: s.to, opens: 0, lastOpenAt: null, repliedAt: null });
+  }
+  rows.sort((a, b) => (b.calledAt ?? "").localeCompare(a.calledAt ?? ""));
+  const work = rows.slice(0, FOLLOW_MAX);
+
+  let found = false;
+  await eachLimit(work, 4, async (r) => {
+    try {
+      if (!r.leadId) {
+        r.leadId = (await findLead(d, r.company, r.email || "nobody@invalid.invalid").catch(() => null))?.id ?? null;
+        if (r.leadId && r.i != null) { ids[r.i] = r.leadId; found = true; }
+      }
+      if (!r.leadId) return;
+      let c = seen[r.leadId];
+      if (opts.fresh || !c || now.getTime() - Date.parse(c.at) > FOLLOW_TTL_MS) {
+        const [lead, emails] = await Promise.all([d.close.lead(r.leadId), d.close.leadEmails(r.leadId).catch(() => [] as LeadEmail[])]);
+        const when = (e: LeadEmail) => e.date_sent ?? e.date_created ?? "";
+        const card = emails.filter(isLineCard).sort((a, b) => when(b).localeCompare(when(a)))[0];
+        const opens = (card?.opens ?? []).map((o) => o.opened_at).sort();
+        c = { at: now.toISOString(), status: (lead as { status_label?: string }).status_label ?? null, lineCardAt: card ? when(card) || null : null, lineCardTo: card?.to?.[0] ?? null,
+          opens: opens.length, lastOpenAt: opens.at(-1) ?? null, replies: emails.filter((e) => e.direction === "incoming").map(when).filter(Boolean).sort() };
+        seen[r.leadId] = c; seenChanged = true;
+      }
+      r.inClose = true;
+      r.status = c.status;
+      r.rfq = !!r.status && RFQ_STATUSES.test(r.status);
+      if (c.lineCardAt) { r.lineCardAt = c.lineCardAt; r.lineCardTo = c.lineCardTo ?? r.lineCardTo; r.opens = c.opens; r.lastOpenAt = c.lastOpenAt; }
+      const since = r.lineCardAt ?? r.calledAt ?? "";
+      r.repliedAt = c.replies.filter((x) => x > since).at(-1) ?? null;
+    } catch { /* one company failing to load shouldn't hide the rest */ }
+  });
+  if (found) await store.putSetting(repId, idsKey(guest.id), ids);
+
+  const rank = (r: FollowUp) => (r.rfq ? 6 : r.repliedAt ? 0 : r.lineCardAt && r.opens ? 1 : r.lineCardAt ? 2 : r.outcome === "Sending an RFQ" ? 3 : r.outcome === "Got a name" || r.outcome === "Reached buyer" ? 4 : 5);
+  const out = work.map(({ leadId: _l, email: _e, ...r }) => r).sort((a, b) => rank(a) - rank(b) || (b.lineCardAt ?? b.calledAt ?? "").localeCompare(a.lineCardAt ?? a.calledAt ?? ""));
+  if (seenChanged) await store.putSetting(repId, followKey(guest.id), seen);
+  return { at: now.toISOString(), rows: out };
 }

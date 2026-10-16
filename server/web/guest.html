@@ -68,7 +68,24 @@
     .up p { margin: 0 0 14px; }
     .glist { list-style: none; margin: 0; padding: 0; }
     .glist li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(17,17,20,.12); font-size: 14px; }
+    .ccbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -8px 0 20px; padding: 10px 14px; background: #fff; border: 1.5px solid var(--ink); font-size: 14px; }
+    .ccbar .gin { flex: 1 1 220px; min-width: 0; padding: 7px 10px; font-size: 14px; }
+    .ccbar .gbtn { font-size: 12px; padding: 8px 12px; }
+    .ccbar.set { border-color: #1f6b3a; color: #1f6b3a; }
     .gcount { margin: 18px 0 8px; display: flex; justify-content: space-between; align-items: baseline; }
+    .gfu { display: grid; gap: 12px; }
+    .gfu .item { background: #fff; border: 1.5px solid var(--ink); padding: 14px 16px; display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: start; }
+    .gfu .item.hot { border-color: #1f6b3a; box-shadow: 4px 4px 0 #1f6b3a; }
+    .gfu .item.done { opacity: .6; }
+    .gfu .co { font-weight: 700; font-size: 17px; }
+    .gfu .line { font-size: 14px; color: #2a2a30; }
+    .gfu .line b { color: var(--ink); }
+    .gfu .tag { display: inline-block; font-family: var(--label); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--ink); margin-right: 6px; }
+    .gfu .tag.g { background: #1f6b3a; border-color: #1f6b3a; color: #fff; }
+    .gfu .tag.r { background: var(--red); border-color: var(--red); color: #fff; }
+    .gfu .acts { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 150px; }
+    .gfu .acts a, .gfu .acts button { text-align: center; text-decoration: none; font-size: 12px; padding: 9px 10px; }
+    @media (max-width: 560px) { .gfu .item { grid-template-columns: 1fr; } .gfu .acts { flex-direction: row; } .gfu .acts > * { flex: 1; } }
   </style>
 </head>
 <body>
@@ -337,10 +354,77 @@
       ])];
     }
 
+    // Follow-ups (Walt 10/15): everyone they called, with where each company stands in Close now. Line cards first,
+    // so the next day they call back the people who got one.
+    const when = (iso) => { if (!iso) return ""; const d = new Date(iso), t = new Date(); const day = d.toDateString() === t.toDateString() ? "today" : (new Date(t - 864e5).toDateString() === d.toDateString() ? "yesterday" : d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })); return `${day} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`; };
+    function loadFollow(fresh) {
+      S.fuLoading = true; S.fuErr = null; draw();
+      call(`/followups${fresh ? "?fresh=1" : ""}`).then((r) => { S.fu = r; S.fuLoading = false; draw(); }).catch((err) => { S.fuLoading = false; S.fuErr = err.message; draw(); });
+    }
+    function logCall(i) { S.tab = "list"; S.show = "all"; S.st = ""; S.q = ""; S.inHours = false; S.i = i; S.draft = null; remember(); draw(); }
+    function followTab() {
+      if (S.fu === undefined && !S.fuLoading) { S.fu = null; loadFollow(false); }
+      const head = h("div", { class: "lhead" }, [
+        h("div", {}, [h("h1", { class: "gt" }, ["Follow", h("b", { text: "-ups" })]), h("p", { class: "gsub", style: "margin:0", text: "Everyone you've called, and where they stand now. Line cards first: call those back." })]),
+        h("div", { style: "display:flex;gap:8px;align-items:center" }, [
+          S.fu ? h("span", { class: "gsub", style: "margin:0;font-size:13px", text: `Updated ${when(S.fu.at)}` }) : null,
+          h("button", { class: "gbtn ghost", disabled: S.fuLoading, text: S.fuLoading ? "Checking Close…" : "Refresh", onclick: () => loadFollow(true) }),
+        ]),
+      ]);
+      if (S.fuErr) return [head, h("p", { class: "gmsg bad", text: S.fuErr })];
+      if (!S.fu) return [head, h("p", { class: "gsub", text: "Checking Close for everyone you've called. This takes a few seconds the first time." })];
+      const show = S.fuShow || "cards";
+      const all = S.fu.rows;
+      const cards = all.filter((r) => r.lineCardAt && !r.rfq);
+      const rows = show === "cards" ? cards : show === "rfq" ? all.filter((r) => r.rfq) : all;
+      const filters = h("div", { class: "filters" }, [["cards", `Got a line card · ${cards.length}`], ["all", `Everyone I called · ${all.length}`], ["rfq", `RFQ in · ${all.filter((r) => r.rfq).length}`]].map(([k, t]) =>
+        h("button", { class: `gbtn ${show === k ? "" : "ghost"}`, style: "font-size:12px;padding:8px 12px", text: t, onclick: () => { S.fuShow = k; draw(); } })));
+      const item = (r) => {
+        const tags = [];
+        if (r.rfq) tags.push(h("span", { class: "tag g", text: r.status }));
+        else if (r.repliedAt) tags.push(h("span", { class: "tag r", text: `Replied ${when(r.repliedAt)}` }));
+        if (!r.rfq && r.status) tags.push(h("span", { class: "tag", text: r.status }));
+        if (!r.inClose) tags.push(h("span", { class: "tag", text: "Not in Close" }));
+        const lines = [
+          h("div", { class: "co", text: r.company }),
+          tags.length ? h("div", {}, tags) : null,
+          r.lineCardAt ? h("div", { class: "line" }, [h("b", { text: "Line card: " }), `sent ${when(r.lineCardAt)}${r.lineCardTo ? ` to ${r.lineCardTo}` : ""}. `, r.opens ? h("b", { text: `Opened ${r.opens}×, last ${when(r.lastOpenAt)}.` }) : "Not opened yet."]) : null,
+          h("div", { class: "line" }, [h("b", { text: "Your call: " }), `${r.outcome || "Called"}${r.calledAt ? `, ${when(r.calledAt)}` : ""}.`, r.askFor ? ` Ask for ${r.askFor}.` : ""]),
+          r.notes ? h("div", { class: "line", text: `Notes: ${r.notes}` }) : null,
+        ];
+        const acts = h("div", { class: "acts" }, [
+          r.phone ? h("a", { class: "gbtn", href: `tel:${r.phone.replace(/[^\d+]/g, "")}`, text: `Call ${r.phone}` }) : null,
+          r.i != null ? h("button", { class: "gbtn ghost", text: "Log this call", onclick: () => logCall(r.i) }) : null,
+        ]);
+        return h("div", { class: `item ${r.rfq ? "done" : r.repliedAt || r.opens ? "hot" : ""}` }, [h("div", {}, lines), acts]);
+      };
+      return [head, filters, rows.length ? h("div", { class: "gfu" }, rows.map(item)) : h("p", { class: "gsub", text: show === "cards" ? "No line cards yet. When you send one, it shows up here so you can call them back." : "Nobody here yet." })];
+    }
+
+    // Their own email (Walt 10/16): typed in once, kept on their link, and CC'd on every line card they send.
+    function ccBar() {
+      const saved = S.me && S.me.ccEmail;
+      if (saved && !S.ccEdit) return h("div", { class: "ccbar set" }, [h("span", {}, ["✓ Every line card you send CCs you at ", h("b", { text: saved }), "."]), h("button", { class: "linkb", text: "Change", onclick: () => { S.ccEdit = true; draw(); } })]);
+      const input = h("input", { class: "gin", id: "ccme", type: "email", autocapitalize: "off", spellcheck: "false", placeholder: "you@email.com", value: S.ccDraft ?? (saved || ""), oninput: (e) => { S.ccDraft = e.target.value; } });
+      const save = async () => {
+        S.ccBusy = true; S.ccErr = null; draw();
+        try { const r = await call("/cc", { ccEmail: document.getElementById("ccme").value }); S.me.ccEmail = r.ccEmail; S.ccEdit = false; S.ccDraft = null; }
+        catch (err) { S.ccErr = err.message; }
+        S.ccBusy = false; draw();
+      };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+      return h("div", { class: "ccbar" }, [
+        h("span", { text: "Your email, so you're CC'd on every line card you send:" }), input,
+        h("button", { class: "gbtn", disabled: S.ccBusy, text: S.ccBusy ? "Saving…" : "Save", onclick: save }),
+        saved ? h("button", { class: "linkb", text: "Cancel", onclick: () => { S.ccEdit = false; draw(); } }) : null,
+        S.ccErr ? h("span", { class: "gmsg bad", style: "margin:0;flex-basis:100%", text: S.ccErr }) : null,
+      ]);
+    }
+
     function off(text) { document.getElementById("tabs").replaceChildren(); root.replaceChildren(h("div", { class: "goff gnarrow", text })); }
     function draw() {
-      document.getElementById("tabs").replaceChildren(...[["list", "Call list"], ["send", "Send a line card"]].map(([k, t]) => h("button", { class: S.tab === k ? "on" : "", text: t, onclick: () => { if (S.list) commit(); S.tab = k; S.msg = null; remember(); draw(); } })));
-      root.replaceChildren(...(S.tab === "send" ? sendTab() : listTab()).filter(Boolean));
+      document.getElementById("tabs").replaceChildren(...[["list", "Call list"], ["follow", "Follow-ups"], ["send", "Send a line card"]].map(([k, t]) => h("button", { class: S.tab === k ? "on" : "", text: t, onclick: () => { if (S.list) commit(); S.tab = k; S.msg = null; remember(); draw(); if (k === "follow" && S.fu && !S.fuLoading) loadFollow(false); } })));
+      root.replaceChildren(ccBar(), ...(S.tab === "send" ? sendTab() : S.tab === "follow" ? followTab() : listTab()).filter(Boolean));
     }
     window.addEventListener("pagehide", () => { if (S.list) commit(); });
     call("").then((v) => { S.me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));

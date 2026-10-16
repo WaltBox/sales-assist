@@ -68,7 +68,7 @@ test("a guest send is refused when the link is off, the address is bad, or the d
   await assert.rejects(guestSend(d, guest, { company: "  ", email: "a@b.com" }), /company name/);
   // A day's worth already sent.
   const all = await listGuests(repId);
-  all[0].sends = Array.from({ length: GUEST_DAILY_CAP }, (_, i) => ({ at: new Date().toISOString(), company: `C${i}`, to: `x${i}@y.com`, name: null, leadId: "l", newLead: false }));
+  all.find((x) => x.id === guest.id)!.sends = Array.from({ length: GUEST_DAILY_CAP }, (_, i) => ({ at: new Date().toISOString(), company: `C${i}`, to: `x${i}@y.com`, name: null, leadId: "l", newLead: false }));
   await store.putSetting(repId, "guests", all);
   await assert.rejects(guestSend(d, guest, { company: "X", email: "a@b.com" }), new RegExp(`${GUEST_DAILY_CAP} line cards today`));
   await setGuestActive(repId, guest.id, false);
@@ -136,4 +136,62 @@ test("marks in a batch all stick, the answer doesn't wait on Close, and notes co
   // A later batch keeps the earlier marks.
   await markListLeads(d, guest, [{ i: 4, outcome: "Wrong number" }]);
   assert.equal((await getList(repId, guest.id))!.leads.filter((l) => l.outcome).length, 4);
+});
+
+test("follow-ups (10/15): everyone they called, with the Close status, line card opens and replies; line cards first", async () => {
+  const { putList, markListLeads, guestFollowUps } = await import("../src/guests.js");
+  const repId = "user_guestFollow";
+  const close = new FakeClose();
+  let now = new Date("2026-10-15T18:00:00Z");
+  const d: Deps = { close, llm: demoLlm, rep: rep(repId), now: () => now };
+  const { guest } = await createGuest(repId, "Ulysses");
+  await putList(repId, guest, { rows: [
+    { company: "Rodda Electric, Inc.", phone: "(925) 240-6024", state: "CA" },
+    { company: "Nobody Home LLC", phone: "(555) 555-0101", state: "TX" },
+    { company: "Not Called Yet Co", phone: "(555) 555-0102", state: "TX" },
+  ] });
+  await markListLeads(d, guest, [{ i: 0, outcome: "Wants line card", email: "renee@roddaelectric.com" }, { i: 1, outcome: "Voicemail" }]);
+  // Rodda is in Close with a line card that was opened twice and a reply after it; Nobody Home isn't in Close.
+  close.findLeadsResult = [{ id: DEMO_LEAD_ID, display_name: "Rodda Electric, Inc." }];
+  close.leadStatus.set(DEMO_LEAD_ID, "Sent Line Card");
+  close.sentWithOpens = [
+    { id: "e1", status: "sent", direction: "outgoing", subject: "Westgate Supply line card", date_sent: "2026-10-15T17:00:00Z", opens: [{ opened_at: "2026-10-15T17:05:00Z", opened_by: null }, { opened_at: "2026-10-15T17:40:00Z", opened_by: null }], to: ["renee@roddaelectric.com"], attachments: [{ filename: "Westgate_Supply_Line_Card.pdf" }] },
+    { id: "e2", status: "inbox", direction: "incoming", subject: "Re: line card", date_sent: "2026-10-15T17:50:00Z", opens: null },
+  ];
+  const origFind = close.findLeads.bind(close);
+  close.findLeads = (async (q: string) => (/rodda/i.test(q) ? origFind(q) : [])) as never;
+
+  const r = await guestFollowUps(d, guest);
+  assert.deepEqual(r.rows.map((x) => x.company), ["Rodda Electric, Inc.", "Nobody Home LLC"], "only who they called, line cards first");
+  const rodda = r.rows[0];
+  assert.deepEqual([rodda.status, rodda.opens, rodda.lastOpenAt, rodda.repliedAt, rodda.lineCardTo, rodda.rfq], ["Sent Line Card", 2, "2026-10-15T17:40:00Z", "2026-10-15T17:50:00Z", "renee@roddaelectric.com", false]);
+  assert.equal(r.rows[1].inClose, false);
+  assert.ok(!close.writes.some((w) => w.op !== "note"), "reading only: nothing changed in Close");
+
+  // Cached per company: a status change shows after ten minutes, or at once with fresh.
+  close.leadStatus.set(DEMO_LEAD_ID, "RFQ Received");
+  assert.equal((await guestFollowUps(d, guest)).rows[0].status, "Sent Line Card");
+  const f = await guestFollowUps(d, guest, { fresh: true });
+  assert.equal(f.rows.find((x) => x.company.startsWith("Rodda"))!.rfq, true);
+  assert.equal(f.rows[0].company, "Nobody Home LLC", "an RFQ that's in goes to the bottom: Walt has it");
+});
+
+test("the guest's own email (10/16): saved once on the link, CC'd on every line card they send", async () => {
+  const { setGuestCc } = await import("../src/guests.js");
+  const { mailDns } = await import("../src/linecard.js");
+  mailDns.resolveMx = (async () => [{ exchange: "mx.example.com", priority: 10 }]) as never;
+  const repId = "user_guestCc";
+  const close = new FakeClose();
+  const d: Deps = { close, llm: demoLlm, rep: rep(repId) };
+  const { guest } = await createGuest(repId, "Ulysses");
+  await assert.rejects(setGuestCc(repId, guest.id, "not an email"), /doesn't look like an email/);
+  assert.deepEqual(await setGuestCc(repId, guest.id, " Ulysses@Gmail.com "), { ccEmail: "ulysses@gmail.com" });
+  assert.equal(guestView((await listGuests(repId)).find((x) => x.id === guest.id)!).ccEmail, "ulysses@gmail.com", "the page shows it back, so it stays");
+  await guestSend(d, guest, { company: "Brand New Fab LLC", name: "Dana", email: "dana@brandnewfab.com" });
+  const email = close.writes.filter((w) => w.op === "email").pop()!.body as { to: string[]; cc?: string[] };
+  assert.deepEqual([email.to, email.cc], [["dana@brandnewfab.com"], ["ulysses@gmail.com"]]);
+  // Cleared: no CC.
+  await setGuestCc(repId, guest.id, "");
+  await guestSend(d, guest, { company: "Brand New Fab LLC", name: "Dana", email: "dana@brandnewfab.com" });
+  assert.deepEqual((close.writes.filter((w) => w.op === "email").pop()!.body as { cc?: string[] }).cc ?? [], []);
 });

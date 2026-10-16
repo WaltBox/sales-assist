@@ -26,7 +26,7 @@ import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccou
 import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections } from "./validate.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
-import { createGuest, getList, GuestError, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive } from "./guests.js";
+import { createGuest, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -291,6 +291,10 @@ export function createApp(appDeps: AppDeps) {
     if (r.notes.length) background((async () => { for (const n of r.notes) await n().catch((e) => console.error("guest note:", (e as Error).message)); })(), "guest notes");
     return { called: r.called, total: r.total };
   }));
+  // Their own email, CC'd on every line card they send (10/16).
+  app.post("/api/guest/:token/cc", guestRoute(async (req, g) => setGuestCc(g.repId, g.guest.id, typeof req.body?.ccEmail === "string" ? req.body.ccEmail : null)));
+  // Follow-ups (10/15): where the companies they called stand now in Close, line cards first.
+  app.get("/api/guest/:token/followups", guestRoute(async (req, g) => guestFollowUps(await depsFor(g.rep), g.guest, { fresh: req.query.fresh === "1" })));
   app.post("/api/guest/:token/list/:i", guestRoute(async (req, g) => {
     const b = z.object({ outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() }).parse(req.body ?? {});
     return { lead: await markListLead(await depsFor(g.rep), g.guest, Number(req.params.i), b) };
