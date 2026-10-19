@@ -195,6 +195,12 @@ export function createApp(appDeps: AppDeps) {
       if (!ok) throw new AuthError(401, me ? `That API key belongs to ${me.email}, not ${email}.` : "Close didn't accept that API key. Copy it from Close, Settings, API Keys.");
       const u = await store.getUser(email);
       await store.putUser({ email, passwordHash: await hashPassword(body.password), createdAt: u?.createdAt ?? new Date().toISOString(), lastLogin: u?.lastLogin ?? null });
+      // A new key made for this (10/19) becomes the one the app uses, so the old one can be deleted in Close.
+      const stored = await store.getRep(email);
+      if (stored && stored.close_api_key !== key) {
+        await store.putRep({ ...stored, close_api_key: key });
+        for (const k of [...repInfoCache.keys()]) if (k === `email:${email}`) repInfoCache.delete(k);
+      }
       res.json(await signedIn(email));
     } catch (err) { next(err); }
   });
@@ -376,6 +382,26 @@ export function createApp(appDeps: AppDeps) {
       const u = await store.getUser(normalizeEmail(r.email)).catch(() => null);
       return { name: r.name, email: normalizeEmail(r.email), hasPassword: !!u, lastLogin: u?.lastLogin ?? null, you: normalizeEmail(r.email) === normalizeEmail(d.rep.email) };
     })) };
+  }));
+  // Team stats (10/19): each rep's numbers for a period, the same ones they see on their own home page. Owner only.
+  app.get("/api/team/stats", authed, route(async (req, d) => {
+    ownerOnly(d);
+    const period = z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "week");
+    const reps = await allReps();
+    const rows = await Promise.all(reps.map(async (r) => {
+      const email = normalizeEmail(r.email);
+      try {
+        const t = await depsFor(r);
+        const [stats, line] = await Promise.all([
+          periodStats(t, period),
+          rfqTimeline(t, t.rep.closeUserId === d.rep.closeUserId ? {} : { savedOk: true }).catch(() => null),
+        ]);
+        return { email, name: t.rep.name, stats, rfqCompanies: line?.companies ?? null, error: null };
+      } catch (e) {
+        return { email, name: r.name, stats: null, rfqCompanies: null, error: (e as Error).message.slice(0, 160) };
+      }
+    }));
+    return { period, reps: rows };
   }));
   app.post("/api/team/reset-password", authed, route(async (req, d) => {
     ownerOnly(d);

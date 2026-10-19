@@ -770,3 +770,11 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .teamrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 16px; align-items: center; background: #fff; border: 1px solid var(--ink-line, rgba(17,17,20,.2)); padding: 12px 14px; }
 @media (max-width: 640px) { .teamrow { grid-template-columns: 1fr; gap: 6px; } }
 .gmsgok { color: #1f6b3a; background: #e7f3ea; border: 1px solid #1f6b3a; padding: 10px 12px; max-width: 900px; }
+.teampage .teamlist { max-width: 1100px; gap: 14px; }
+.tcard { background: #fff; border: 1.5px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 16px 18px; }
+.tcard.ttotal { background: #f6f3ea; }
+.tcardhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.tcardhead h3 { margin: 0 0 2px; font-family: var(--display); font-weight: 800; font-size: 22px; text-transform: uppercase; }
+.tstats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.tstat { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--ink-line, rgba(17,17,20,.2)); padding: 10px 12px; }
+.tstat b { font-size: 26px; line-height: 1; }

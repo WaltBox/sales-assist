@@ -1601,14 +1601,22 @@ async function loadGuests() {
   try { state.guests = (await api("/api/guests")).guests; } catch (e) { state.guestsErr = e.message; }
   render();
 }
-// ---------- the team (10/19): who's signed up, and a password reset for a teammate (owner only) ----------
+// ---------- the team (10/19): each rep's stats, and a password reset for a teammate. Admin (owner) only. ----------
 async function loadTeam() {
   try { state.team = await api("/api/team"); } catch (e) { state.team = { error: e.message }; }
   render();
 }
+async function loadTeamStats() {
+  const p = state.teamPeriod || "week";
+  state.teamStatsLoading = true; render();
+  try { state.teamStats = await api(`/api/team/stats?p=${p}`); } catch (e) { state.teamStats = { error: e.message }; }
+  state.teamStatsLoading = false; render();
+}
 function teamPage() {
   if (state.team === undefined) { state.team = null; loadTeam(); }
-  const t = state.team;
+  if (state.teamStats === undefined) { state.teamStats = null; loadTeamStats(); }
+  const t = state.team, ts = state.teamStats;
+  const period = state.teamPeriod || "week";
   const reset = async (r) => {
     if (!confirm(`Reset ${r.name}'s password?\n\nThey'll make a new one the next time they sign in: open the web app, type ${r.email}, and pick a new password. Their Close connection, leads and emails all stay.`)) return;
     state.teamBusy = r.email; render();
@@ -1617,17 +1625,47 @@ function teamPage() {
     state.teamBusy = null; await loadTeam();
   };
   const when = (iso) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never");
-  return el("section", {}, [
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "–");
+  const tile = (n, label, sub) => el("div", { class: "tstat" }, [el("b", { class: "mono", text: n ?? "–" }), el("span", { text: label }), sub ? el("span", { class: "sub2", text: sub }) : null]);
+  const tiles = (s, rfqCompanies) => s ? [
+    tile(s.dials, "Calls", `${s.companies} compan${s.companies === 1 ? "y" : "ies"}`),
+    tile(s.reached, "Connections", `${pct(s.reached, s.dials)} of calls`),
+    tile(s.voicemails, "Voicemails"),
+    tile(s.lineCards, "Line cards sent"),
+    tile(s.emailsSent, "Emails sent"),
+    tile(s.replied, "Wrote back"),
+    tile(s.rfqs, "RFQs promised"),
+    tile(s.rfqReceived, "RFQs in"),
+    rfqCompanies != null ? tile(rfqCompanies, "Companies with an RFQ", "all time") : null,
+  ] : [];
+  const statsOf = (email) => (ts && ts.reps ? ts.reps.find((x) => x.email === email) : null);
+  const people = t && t.reps ? t.reps : [];
+  const total = ts && ts.reps ? ts.reps.filter((x) => x.stats).reduce((acc, x) => { for (const k of ["dials", "companies", "reached", "voicemails", "lineCards", "emailsSent", "replied", "rfqs", "rfqReceived"]) acc[k] = (acc[k] || 0) + (x.stats[k] || 0); return acc; }, {}) : null;
+  const chip = (k, label) => el("button", { class: `cardk${period === k ? " on" : ""}`, onclick: () => { state.teamPeriod = k; loadTeamStats(); } }, [label]);
+  const card = (r) => {
+    const st = statsOf(r.email);
+    return el("div", { class: "tcard" }, [
+      el("div", { class: "tcardhead" }, [
+        el("div", {}, [el("h3", { text: r.name }), el("span", { class: "muted small3", text: `${r.email}${r.you ? " · you" : ""} · ${r.hasPassword ? `last sign-in ${when(r.lastLogin)}` : "hasn't signed in yet"}` })]),
+        r.you || !r.hasPassword ? null : el("button", { class: "btn small", disabled: state.teamBusy === r.email, text: state.teamBusy === r.email ? "Resetting…" : "Reset password", onclick: () => reset(r) }),
+      ]),
+      !ts || state.teamStatsLoading && !st ? el("p", { class: "loading", text: "Counting from Close…" })
+        : st && st.error ? el("p", { class: "empty", text: `Couldn't load their numbers: ${st.error}` })
+          : el("div", { class: "tstats" }, tiles(st && st.stats, st && st.rfqCompanies)),
+    ]);
+  };
+  return el("section", { class: "teampage" }, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Team" })]),
-    el("p", { class: "muted small3", text: "Everyone using the app. If someone forgets their password, reset it here: they pick a new one the next time they sign in." }),
+    el("p", { class: "muted small3", text: "Each person's numbers from Close, the same ones they see on their own home page. Only you can see this page." }),
+    el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("today", "Today"), chip("week", "This week"), chip("month", "This month"), chip("all", "All time"),
+      state.teamStatsLoading ? el("span", { class: "muted small3", text: "Updating…" }) : null]),
     state.teamMsg ? el("p", { class: "gmsgok", text: state.teamMsg }) : null,
     !t ? el("p", { class: "loading", text: "Loading the team…" })
       : t.error ? el("p", { class: "empty", text: t.error })
-        : el("div", { class: "teamlist" }, t.reps.map((r) => el("div", { class: "teamrow" }, [
-          el("div", {}, [el("strong", { text: r.name }), el("span", { class: "muted small3", text: ` ${r.email}${r.you ? " · you" : ""}` })]),
-          el("span", { class: "muted small3", text: r.hasPassword ? `Last sign-in ${when(r.lastLogin)}` : "No password yet: they make one at sign-in" }),
-          r.you || !r.hasPassword ? el("span") : el("button", { class: "btn small", disabled: state.teamBusy === r.email, text: state.teamBusy === r.email ? "Resetting…" : "Reset password", onclick: () => reset(r) }),
-        ]))),
+        : el("div", { class: "teamlist" }, [
+          ...people.map(card),
+          total && people.length > 1 ? el("div", { class: "tcard ttotal" }, [el("div", { class: "tcardhead" }, [el("h3", { text: "Team total" })]), el("div", { class: "tstats" }, tiles(total, null))]) : null,
+        ]),
   ]);
 }
 

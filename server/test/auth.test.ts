@@ -81,6 +81,11 @@ test("reset password (10/19): only the owner can, never their own; the teammate 
   const row = (team.body.reps as Array<{ email: string; hasPassword: boolean }>).find((r) => r.email === "ulysses@westgatesupply.com")!;
   assert.equal(row.hasPassword, true);
   assert.equal((await get("/api/team", uly)).status, 403, "a teammate can't see or reset");
+  assert.equal((await get("/api/team/stats?p=week", uly)).status, 403, "only the admin sees the team's stats");
+  const stats = await get("/api/team/stats?p=week", walt);
+  assert.equal(stats.status, 200);
+  assert.deepEqual((stats.body.reps as Array<{ email: string }>).map((r) => r.email).sort(), ["ulysses@westgatesupply.com", "walt@westgatesupply.com"]);
+  assert.ok((stats.body.reps as Array<{ stats: { dials: number } | null }>).every((r) => r.stats && typeof r.stats.dials === "number"), "each person has their numbers");
   assert.equal((await as("/api/team/reset-password", uly, { email: "walt@westgatesupply.com" })).status, 403);
   assert.equal((await as("/api/team/reset-password", walt, { email: "walt@westgatesupply.com" })).status, 400, "not your own");
   assert.equal((await as("/api/team/reset-password", walt, { email: "nobody@westgatesupply.com" })).status, 404);
@@ -99,8 +104,11 @@ test("forgot password (10/19): your own Close API key proves it's you, then a ne
   const bad = await post("/api/auth/reset", { email: "ulysses@westgatesupply.com", password: "taken over now!!", close_api_key: "walts-key" });
   assert.equal(bad.status, 401);
   assert.match(String(bad.body.error), /belongs to walt@westgatesupply\.com/);
+  const { store } = await import("../src/store.js");
+  await store.putRep({ email: "walt@westgatesupply.com", name: "Walt Boxwell", close_api_key: "old-key", timezone: null });
   const ok = await post("/api/auth/reset", { email: "walt@westgatesupply.com", password: "my new password!", close_api_key: "walts-key" });
   assert.equal(ok.status, 200);
+  assert.equal((await store.getRep("walt@westgatesupply.com"))!.close_api_key, "walts-key", "a new key made for the reset replaces the old one, so the old can be deleted");
   assert.ok(readSession(String(ok.body.token)));
   assert.equal((await post("/api/auth/login", { email: "walt@westgatesupply.com", password: "my new password!" })).status, 200);
   assert.equal((await post("/api/auth/reset", { email: "nobody@westgatesupply.com", password: "my new password!", close_api_key: "k" })).status, 404);
