@@ -91,3 +91,17 @@ test("reset password (10/19): only the owner can, never their own; the teammate 
   assert.equal((await post("/api/auth/signup", { email: "ulysses@westgatesupply.com", password: "a brand new one!" })).status, 200);
   assert.equal((await post("/api/auth/login", { email: "ulysses@westgatesupply.com", password: "a brand new one!" })).status, 200);
 });
+
+test("forgot password (10/19): your own Close API key proves it's you, then a new password signs you in", async () => {
+  // The fake Close's key belongs to walt@ (its me()), so it can reset Walt and nobody else.
+  assert.equal((await post("/api/auth/reset", { email: "walt@westgatesupply.com", password: "short", close_api_key: "k" })).status, 400);
+  assert.equal((await post("/api/auth/reset", { email: "walt@westgatesupply.com", password: "my new password!" })).status, 400, "needs the key");
+  const bad = await post("/api/auth/reset", { email: "ulysses@westgatesupply.com", password: "taken over now!!", close_api_key: "walts-key" });
+  assert.equal(bad.status, 401);
+  assert.match(String(bad.body.error), /belongs to walt@westgatesupply\.com/);
+  const ok = await post("/api/auth/reset", { email: "walt@westgatesupply.com", password: "my new password!", close_api_key: "walts-key" });
+  assert.equal(ok.status, 200);
+  assert.ok(readSession(String(ok.body.token)));
+  assert.equal((await post("/api/auth/login", { email: "walt@westgatesupply.com", password: "my new password!" })).status, 200);
+  assert.equal((await post("/api/auth/reset", { email: "nobody@westgatesupply.com", password: "my new password!", close_api_key: "k" })).status, 404);
+});

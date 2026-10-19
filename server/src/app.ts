@@ -177,6 +177,28 @@ export function createApp(appDeps: AppDeps) {
     } catch (err) { next(err); }
   });
 
+  // Forgot password (10/19): prove it's you with your Close API key (only you can get it from Close), then pick a new
+  // password. Nothing else about the account changes.
+  app.post("/api/auth/reset", async (req, res, next) => {
+    try {
+      const body = Creds.parse(req.body);
+      const email = companyEmail(body.email);
+      if (tooManyTries(email)) throw new AuthError(429, "Too many tries. Wait 15 minutes and try again.");
+      if (!(await repByEmail(email))) throw new AuthError(404, "There's no account for that email. Create one instead.");
+      const bad = passwordProblem(body.password);
+      if (bad) throw new AuthError(400, bad);
+      const key = body.close_api_key?.trim();
+      if (!key) throw new AuthError(400, "Paste your Close API key (Close, Settings, API Keys) so we know it's you.");
+      const me = await appDeps.closeFor({ token: "reset", name: "", email, close_api_key: key, timezone: "America/Los_Angeles" }).me().catch(() => null);
+      const ok = !!me && normalizeEmail(me.email) === email;
+      recordTry(email, ok);
+      if (!ok) throw new AuthError(401, me ? `That API key belongs to ${me.email}, not ${email}.` : "Close didn't accept that API key. Copy it from Close, Settings, API Keys.");
+      const u = await store.getUser(email);
+      await store.putUser({ email, passwordHash: await hashPassword(body.password), createdAt: u?.createdAt ?? new Date().toISOString(), lastLogin: u?.lastLogin ?? null });
+      res.json(await signedIn(email));
+    } catch (err) { next(err); }
+  });
+
   app.post("/api/auth/login", async (req, res, next) => {
     try {
       const body = Creds.parse(req.body);

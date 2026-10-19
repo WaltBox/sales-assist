@@ -150,6 +150,9 @@ function signIn() {
       Object.assign(auth, { email: r.email, step: r.hasAccount ? "password" : "create", needsCloseKey: r.needsCloseKey });
     } else if (auth.step === "password") {
       done(await authPost("/api/auth/login", { email: auth.email, password: f.password.value }));
+    } else if (auth.step === "reset") {
+      if (f.password.value !== f.confirm.value) throw new Error("Those passwords don't match.");
+      done(await authPost("/api/auth/reset", { email: auth.email, password: f.password.value, close_api_key: f.key.value }));
     } else {
       if (f.password.value !== f.confirm.value) throw new Error("Those passwords don't match.");
       done(await authPost("/api/auth/signup", { email: auth.email, password: f.password.value, close_api_key: f.key ? f.key.value : undefined }));
@@ -157,10 +160,11 @@ function signIn() {
   });
   const enter = (e) => { if (e.key === "Enter") next(); };
   const field = (name, attrs) => (f[name] = el("input", { ...attrs, onkeydown: enter }));
-  const title = { email: "Sign in", password: "Welcome back", create: auth.needsCloseKey ? "Create your account" : "Set your password" }[auth.step];
+  const title = { email: "Sign in", password: "Welcome back", reset: "New password", create: auth.needsCloseKey ? "Create your account" : "Set your password" }[auth.step];
   const intro = {
     email: "Use your Westgate email.",
     password: auth.email,
+    reset: `Pick a new password for ${auth.email}. To prove it's you, paste your Close API key (in Close: Settings, then API Keys; you can make a new one there).`,
     create: auth.needsCloseKey
       ? `${auth.email} isn't connected to Close yet. Pick a password and paste your Close API key (Close → Settings → API Keys). It stays on the server.`
       : `First time here: pick a password for ${auth.email}.`,
@@ -170,11 +174,12 @@ function signIn() {
     el("h1", { text: title }),
     el("p", { class: "muted", text: intro }),
     auth.step === "email" ? field("email", { type: "email", placeholder: "you@westgatesupply.com", autocomplete: "username", value: auth.email }) : null,
-    auth.step !== "email" ? field("password", { type: "password", placeholder: auth.step === "create" ? "New password (10+ characters)" : "Password", autocomplete: auth.step === "create" ? "new-password" : "current-password" }) : null,
-    auth.step === "create" ? field("confirm", { type: "password", placeholder: "Same password again", autocomplete: "new-password" }) : null,
-    auth.step === "create" && auth.needsCloseKey ? field("key", { type: "password", placeholder: "Close API key", autocomplete: "off" }) : null,
+    auth.step !== "email" ? field("password", { type: "password", placeholder: auth.step === "password" ? "Password" : "New password (10+ characters)", autocomplete: auth.step === "password" ? "current-password" : "new-password" }) : null,
+    auth.step === "create" || auth.step === "reset" ? field("confirm", { type: "password", placeholder: "Same password again", autocomplete: "new-password" }) : null,
+    (auth.step === "create" && auth.needsCloseKey) || auth.step === "reset" ? field("key", { type: "password", placeholder: "Close API key", autocomplete: "off" }) : null,
     auth.error ? el("p", { class: "err", text: auth.error }) : null,
-    el("button", { class: "btn primary", disabled: auth.busy, text: auth.busy ? "One sec…" : { email: "Continue", password: "Sign in", create: "Create account" }[auth.step], onclick: next }),
+    el("button", { class: "btn primary", disabled: auth.busy, text: auth.busy ? "One sec…" : { email: "Continue", password: "Sign in", reset: "Save and sign in", create: "Create account" }[auth.step], onclick: next }),
+    auth.step === "password" ? el("button", { class: "linkbtn", style: "align-self:flex-start", text: "Forgot password?", onclick: () => { Object.assign(auth, { step: "reset", error: "" }); render(); } }) : null,
     auth.step !== "email" ? el("button", { class: "linkbtn", style: "align-self:flex-start", text: "Use a different email", onclick: () => { Object.assign(auth, { step: "email", error: "" }); render(); } }) : null,
   ]);
   setTimeout(() => (f.email || f.password)?.focus(), 0);
