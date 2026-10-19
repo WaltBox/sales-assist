@@ -352,6 +352,17 @@ export class CloseClient {
     });
   }
 
+  /** One page of a lead search (My leads, 10/19: everything whose Lead owner is you). */
+  searchLeads<T>(query: string, o: { skip: number; limit: number; fields: string }) {
+    const p = new URLSearchParams({ query, _fields: o.fields, _limit: String(o.limit), _skip: String(o.skip) });
+    return this.request<{ data: T[]; has_more: boolean }>("GET", `/lead/?${p}`);
+  }
+
+  /** The people in the Close org, for "who called" (10/19). */
+  async users(): Promise<Array<{ id: string; first_name: string; last_name: string; email: string }>> {
+    return (await this.request<{ data: Array<{ id: string; first_name: string; last_name: string; email: string }> }>("GET", "/user/?_fields=id,first_name,last_name,email")).data;
+  }
+
   async findLeads(query: string) {
     const p = new URLSearchParams({ query, _fields: "id,display_name", _limit: "25" });
     return (await this.request<{ data: Array<{ id: string; display_name: string }> }>("GET", `/lead/?${p}`)).data;
@@ -371,7 +382,7 @@ export class CloseClient {
   }
 
   // status "draft" is never sent; the rep reviews and sends it from Close.
-  createDraftEmail(leadId: string, e: { contactId: string | null; to: string[]; subject: string; body: string; html?: string | null; attachments?: CloseAttachment[]; sender?: string | null; emailAccountId?: string | null; inReplyToId?: string | null; threadId?: string | null; scheduleAt?: string | null }) {
+  createDraftEmail(leadId: string, e: { contactId: string | null; to: string[]; subject: string; body: string; html?: string | null; attachments?: CloseAttachment[]; sender?: string | null; emailAccountId?: string | null; inReplyToId?: string | null; threadId?: string | null; scheduleAt?: string | null; cc?: string[] | null }) {
     return this.request<{ id: string }>("POST", "/activity/email/", {
       lead_id: leadId,
       ...(e.contactId ? { contact_id: e.contactId } : {}),
@@ -381,6 +392,8 @@ export class CloseClient {
       ...(e.sender ? { sender: e.sender } : {}),
       ...(e.emailAccountId ? { email_account_id: e.emailAccountId } : {}),
       to: e.to,
+      // A guest on a work trial CCs themselves, so they see the thread and any reply (10/16).
+      ...(e.cc?.length ? { cc: e.cc } : {}),
       subject: e.subject,
       body_text: e.body,
       // An HTML version too when there's something to show inline (a meme in a bump, 9/30).

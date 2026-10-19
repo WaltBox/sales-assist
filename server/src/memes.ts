@@ -49,6 +49,23 @@ export async function listMemes(opts: { sync?: boolean } = {}): Promise<Meme[]> 
   return bucketFiles(base, headers);
 }
 
+// ---------- whose memes (10/19): each rep has their own library; nothing is shared ----------
+// One bucket holds every file; this records who uploaded each. The memes from before (no owner on record) are the
+// first rep's (config.ownerEmail, Walt). A rep with no memes sends plain emails.
+const OWNERS_KEY = "memeOwners";
+const TEAM = "team";
+const legacyOwner = () => config.ownerEmail;
+type Owners = Record<string, string>; // meme name → the Close user id of the rep who owns it
+const ownersOf = async () => (await store.getSetting<Owners>(TEAM, OWNERS_KEY).catch(() => null)) ?? {};
+type Who = { closeUserId: string; email: string };
+const owns = (owners: Owners, who: Who, name: string) => (owners[name] ? owners[name] === who.closeUserId : who.email.toLowerCase() === legacyOwner());
+
+/** This rep's memes: only those, never anyone else's. */
+export async function memesFor(d: { rep: Who }, opts: { sync?: boolean } = {}): Promise<Meme[]> {
+  const [all, owners] = await Promise.all([listMemes(opts), ownersOf()]);
+  return all.filter((m) => owns(owners, d.rep, m.name));
+}
+
 async function bucketFiles(base: string, headers: Record<string, string>): Promise<Meme[]> {
   const res = await fetch(`${base}/storage/v1/object/list/${BUCKET}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ prefix: "", limit: 1000, sortBy: { column: "name", order: "asc" } }) });
   if (!res.ok) return [];
@@ -81,7 +98,7 @@ const picksOf = async (d: Deps) => (await store.getSetting<Picks>(d.rep.closeUse
 
 /** The meme for a lead's next bump: your pick, else one they haven't seen (chosen once, then kept). */
 export async function memeFor(d: Deps, leadId: string, ctx?: { memes: Meme[]; seen: Map<string, Set<string>>; picks: Picks; dealt?: Map<string, number> }): Promise<Meme | null> {
-  const memes = ctx?.memes ?? (await listMemes().catch(() => []));
+  const memes = ctx?.memes ?? (await memesFor(d).catch(() => []));
   const seen = (ctx?.seen ?? (await memesSeen(d))).get(leadId) ?? new Set<string>();
   const picks = ctx?.picks ?? (await picksOf(d));
   if (leadId in picks) {
@@ -115,8 +132,8 @@ export async function memeFor(d: Deps, leadId: string, ctx?: { memes: Meme[]; se
 export async function pickMeme(d: Deps, leadId: string, name: string | null) {
   const picks = await picksOf(d);
   if (name !== null) {
-    const memes = await listMemes({ sync: false });
-    if (!memes.some((m) => m.name === name)) throw new MemeError(`There's no meme called "${name}".`);
+    const memes = await memesFor(d, { sync: false });
+    if (!memes.some((m) => m.name === name)) throw new MemeError(`You don't have a meme called "${name}".`);
     if ((await memesSeen(d)).get(leadId)?.has(name)) throw new MemeError("They've already been sent that one. Pick another.");
   }
   picks[leadId] = name;
@@ -266,19 +283,33 @@ async function putObject(name: string, data: Buffer) {
 }
 
 /** Upload one image or a zip of them. Returns the names that went in (existing names are overwritten). */
-export async function uploadMemes(filename: string, body: Buffer): Promise<string[]> {
+export async function uploadMemes(d: { rep: Who }, filename: string, body: Buffer): Promise<string[]> {
   if (body.length > 25 * 1024 * 1024) throw new MemeError("That upload is over 25 MB.");
   const files = unpackUpload(filename, body);
+  for (const f of files) if (f.data.length > 5 * 1024 * 1024) throw new MemeError(`${f.name} is over 5 MB; email apps won't load it.`);
+  const { base, headers } = storage();
+  const taken = new Set((await bucketFiles(base, headers)).map((m) => m.name));
+  const owners = await ownersOf();
+  const out: string[] = [];
   for (const f of files) {
-    if (f.data.length > 5 * 1024 * 1024) throw new MemeError(`${f.name} is over 5 MB; email apps won't load it.`);
-    await putObject(f.name, f.data);
+    // Same name as someone else's meme: this one gets its own name, so nobody's file is overwritten.
+    let name = f.name;
+    for (let n = 2; taken.has(name) && !owns(owners, d.rep, name); n++) name = f.name.replace(/(\.[a-z0-9]+)$/, `-${n}$1`);
+    await putObject(name, f.data);
+    taken.add(name);
+    owners[name] = d.rep.closeUserId;
+    out.push(name);
   }
+  await store.putSetting(TEAM, OWNERS_KEY, owners);
   synced = Date.now();
-  return files.map((f) => f.name);
+  return out;
 }
 
 /** Rename a meme: the file in the bucket, the local copy, and every place its name is remembered (sent bumps, picks, rescue sends). */
-export async function renameMeme(repId: string, from: string, to: string): Promise<string> {
+export async function renameMeme(d: { rep: Who }, from: string, to: string): Promise<string> {
+  const repId = d.rep.closeUserId;
+  const owners = await ownersOf();
+  if (!owns(owners, d.rep, from)) throw new MemeError(`${from} isn't one of your memes.`);
   const { base, headers } = storage();
   const next = memeName(to.includes(".") ? to : `${to}.${from.split(".").pop()}`);
   if (next === from) return from;
@@ -289,6 +320,8 @@ export async function renameMeme(repId: string, from: string, to: string): Promi
   if (!res.ok) throw new MemeError(`Couldn't rename: ${res.status} ${(await res.text()).slice(0, 120)}`);
   try { if (fs.existsSync(path.join(MEMES_DIR, from))) fs.renameSync(path.join(MEMES_DIR, from), path.join(MEMES_DIR, next)); } catch { /* read-only host */ }
   await moveMemeRefs(repId, from, next);
+  delete owners[from]; owners[next] = repId;
+  await store.putSetting(TEAM, OWNERS_KEY, owners);
   return next;
 }
 
@@ -306,11 +339,14 @@ export async function moveMemeRefs(repId: string, from: string, to: string) {
 }
 
 /** Take a meme out of the rotation. What was already sent stays on record. */
-export async function deleteMeme(name: string) {
+export async function deleteMeme(d: { rep: Who }, name: string) {
+  const owners = await ownersOf();
+  if (!owns(owners, d.rep, name)) throw new MemeError(`${name} isn't one of your memes.`);
   const { base, headers } = storage();
   const res = await fetch(`${base}/storage/v1/object/${BUCKET}`, { method: "DELETE", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ prefixes: [name] }) });
   if (!res.ok) throw new MemeError(`Couldn't delete ${name}: ${res.status}`);
   try { if (fs.existsSync(path.join(MEMES_DIR, name))) fs.unlinkSync(path.join(MEMES_DIR, name)); } catch { /* read-only host */ }
+  if (name in owners) { delete owners[name]; await store.putSetting(TEAM, OWNERS_KEY, owners); }
   synced = Date.now();
 }
 

@@ -134,15 +134,15 @@ test("cold intro: Walt's Probst example passes every check", async () => {
 
 test("cold intro: implied history, RFQ pushes, the benchmark ask, missing parts, and length all fail", async () => {
   for (const [bad, why] of [
-    [PROBST.replace("I called in this afternoon", "As we discussed, I called in this afternoon"), /already spoke with Walt/],
-    [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. Whenever you've got an RFQ, reply here."), /already spoke with Walt/],
+    [PROBST.replace("I called in this afternoon", "As we discussed, I called in this afternoon"), /already spoke with you/],
+    [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. Whenever you've got an RFQ, reply here."), /already spoke with you/],
     [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. If you ever want to see how we stack up, send over a recent RFQ or PO and I'll price it, no strings."), /past RFQ/],
-    [PROBST.replace("You mentioned", "x").replace("She mentioned you're", "You mentioned you're"), /already spoke with Walt/],
+    [PROBST.replace("You mentioned", "x").replace("She mentioned you're", "You mentioned you're"), /already spoke with you/],
     [PROBST.replace(" I've attached our line card so you can see the full range.", ""), /line card so you can see the full range/],
     [PROBST.replace(" send it over and I'll quote it.", ""), /Missing the offer/],
     [PROBST.replace("Hannah said you're back next week, so I'll give you a call then to introduce myself.", "Talk soon."), /next touch/],
     [PROBST.replace("Hannah said you're back next week, so I'll give you a call then", "I'll give you a call in the next few days"), /back next week/],
-    [PROBST.replace("I called in this afternoon and spoke with Hannah. She mentioned", "I heard"), /Doesn't open with who Walt spoke to/],
+    [PROBST.replace("I called in this afternoon and spoke with Hannah. She mentioned", "I heard"), /Doesn't open with who you spoke to/],
     [PROBST.replace("send it over and I'll quote it.", "send it over and I'll quote it. We stock a deep range of grades and finishes and ship fast from several locations nationwide.".repeat(2)), /under 130/],
   ] as Array<[string, RegExp]>) {
     assert.ok((await introRules(bad)).some((p) => why.test(p)), `${why}: ${await introRules(bad)}`);

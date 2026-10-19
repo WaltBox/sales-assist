@@ -89,10 +89,10 @@ If the lead's industry isn't in the table, infer from their website and describe
 3. **Why we fit them** — one paragraph, 4–7 specific products for *their* work. Steel and hardware together where relevant. Add the warehouse/local line only if it earns its place (see §1).
 4. **The ask** — send the next list / RFQ / drawing in whatever format is easiest; we'll turn pricing around fast.
 5. **Next step / timing** — echo whatever they told you (e.g., "RFQs every couple months, I'll check back then"). If nothing was said, offer to check back in ~3 weeks.
-6. **Closer + signature** — friendly close, then **Walt Boxwell** on its own line. Close appends the rest of the signature automatically; do not add title/company/phone.
+6. **Closer + signature** — friendly close, then the rep's full name (the "Rep:" line in the facts) on its own line. Close appends the rest of the signature automatically; do not add title/company/phone.
 
 ### Tone
-- Friendly, warm, human. Sounds like Walt on the phone, not a template.
+- Friendly, warm, human. Sounds like the rep on the phone, not a template.
 - Short paragraphs. Plain words. No buzzwords ("synergy," "solutions provider," "leverage").
 - Confident but never pushy. We're not asking anyone to switch suppliers; we're asking to be on the list.
 - Exclamation marks: at most one, in the thank-you line.
@@ -179,7 +179,7 @@ Copying the attachments this way keeps the body fully custom. Passing `template_
 
 **When to attach:** any email where the prospect asked for a line card, or where the body says the line card is attached. Do not attach on plain follow-ups or RFQ replies unless they asked.
 
-**If the attachment step fails:** the draft summary in the queue must say **"LINE CARD NOT ATTACHED"** so Walt adds it before sending.
+**If the attachment step fails:** the draft summary in the queue must say **"LINE CARD NOT ATTACHED"** so the rep adds it before sending.
 
 ---
 
@@ -189,7 +189,7 @@ Buyers find vendors later by searching their inbox, their contacts, or their ven
 
 - **Every line card email carries the line card as text.** The short version (all 12 families, 3 to 5 key specs each, under 300 words) by default; the whole card line by line when the buyer keeps a contact per vendor or asked for it written out; only their families in full when they named specific items. All of it renders from `server/src/content/lineCard.ts`. Nothing else in the code hardcodes product text.
 - **A keyword subject:** `Westgate Supply: {2 to 3 product words they said}, {2 fixed words}`, under 70 characters. Gatekeeper: `Westgate Supply line card for {company}: fasteners, gaskets`.
-- **The signature line** under Walt's name on line card emails (not on bumps): `Westgate Supply supplies fasteners, studs, nuts, gaskets, flanges, pipe, fittings, plate, bar and structural steel in carbon, stainless, alloy, duplex, nickel alloys and titanium.` (the /linecard link once that page is live)
+- **The signature line** under the rep's name on line card emails (not on bumps): `Westgate Supply supplies fasteners, studs, nuts, gaskets, flanges, pipe, fittings, plate, bar and structural steel in carbon, stainless, alloy, duplex, nickel alloys and titanium.` (the /linecard link once that page is live)
 - **Mirror how they file vendors.** Contact per vendor: full text (plus the .vcf when it's on the template). Spreadsheet or ERP: one pipe-separated line they can paste. Gatekeeper: ask them to forward it to whoever buys materials, with the short card so the forwarded email is searchable for the real buyer. "Send your W-9": the short card plus the vendor setup lines.
 - **Ask on every call: "How do you keep track of vendors?"** The answer picks the format.
 - **The ask stays plain.** "Send me your next list or RFQ and I'll price it." Never a benchmark or old-RFQ line, never "no pressure".

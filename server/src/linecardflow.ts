@@ -349,7 +349,7 @@ const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
  * The checks on a line card email: hard ones fail the draft, soft ones show in the panel as warnings.
  * `personalized` is the opener, the triggers and the closing; `transcript` is what the buyer actually said.
  */
-export function validateLineCardEmail(email: { subject: string; body: string }, req: LineCardRequest, format: EmailFormat, personalized: string, transcript: string): LineCardProblem[] {
+export function validateLineCardEmail(email: { subject: string; body: string }, req: LineCardRequest, format: EmailFormat, personalized: string, transcript: string, repPhone: string | null = null): LineCardProblem[] {
   const out: LineCardProblem[] = [];
   const hard = (rule: string, problem: string) => out.push({ rule, problem, hard: true });
   const soft = (rule: string, problem: string) => out.push({ rule, problem, hard: false });
@@ -359,8 +359,8 @@ export function validateLineCardEmail(email: { subject: string; body: string }, 
   if (!/^Westgate Supply(:| line card for )/.test(email.subject)) hard("subject", 'Subject must start with "Westgate Supply:".');
   const loc = `${email.subject}\n${body}`.match(LOCATION_WORDS);
   if (loc) hard("location", `Names where we are ("${loc[0]}"); nothing about warehouses or cities goes in a line card email.`);
-  // Phone numbers only from config.
-  const allowed = new Set([config.company.phone].filter(Boolean).map((p) => p!.replace(/\D/g, "")));
+  // Phone numbers only from config, or the sending rep's own (10/19).
+  const allowed = new Set([config.company.phone, repPhone].filter(Boolean).map((p) => p!.replace(/\D/g, "")));
   for (const m of body.matchAll(/(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/g)) {
     const digits = m[0].replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
     if (!allowed.has(digits)) hard("phone", `A phone number the config doesn't know: "${m[0]}".`);
@@ -380,7 +380,7 @@ export function validateLineCardEmail(email: { subject: string; body: string }, 
     if (IDENTITY.some((r) => r.test(s))) hard("identity", `Phrases Westgate as someone the rep called: "${s.trim()}"`);
     if (HEDGE.test(s)) hard("hedging", `Hedges the ask: "${s.trim()}"`);
   }
-  if (/\b(old|older|past|recent|previous) (rfq|po|purchase order|quote)\b/i.test(personalized)) hard("benchmark", "Asks for an old RFQ to re-price; Walt doesn't want that line.");
+  if (/\b(old|older|past|recent|previous) (rfq|po|purchase order|quote)\b/i.test(personalized)) hard("benchmark", "Asks for an old RFQ to re-price; we don't use that line.");
   if (/\b(check (back|in)|circle back|follow up|reach (back )?out|touch base) .{0,20}\b(on|by|in|next|around) (mon|tues|wednes|thurs|fri)?/i.test(personalized)) soft("timing", "Mentions when you'll follow up; take that out so they don't wait.");
   // A spec the card doesn't carry and the buyer didn't say is an invention.
   const terms = cardTerms();
@@ -451,7 +451,7 @@ export async function draftLineCardEmail(d: Deps, opts: { leadId: string; compan
   for (let attempt = 1; attempt <= 3; attempt++) {
     if (!opener) opener = await writeOpener(d, { context, transcript: opts.transcript, req, company: opts.company, feedback: problems.filter((p) => p.hard).map((p) => p.problem) });
     composed = composeLineCardEmail({ req, format, opener, rep: { name: d.rep.name, email: d.rep.email, phone: d.rep.phone ?? null }, first, company: opts.company, seed: opts.leadId, attached });
-    problems = validateLineCardEmail(composed, req, format, composed.personalized, opts.transcript);
+    problems = validateLineCardEmail(composed, req, format, composed.personalized, opts.transcript, d.rep.phone ?? null);
     if (!problems.some((p) => p.hard)) break;
     // A cached opener that fails for this format gets rewritten once.
     opener = null;

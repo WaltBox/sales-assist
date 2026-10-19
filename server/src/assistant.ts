@@ -41,7 +41,7 @@ export function tagNote(p: Pick<Proposals, "note">, tag: string, fallback: strin
 
 export type Close = Pick<CloseClient,
   "smartViewLeads" | "me" | "lead" | "leadName" | "callOutcomes" | "leadStatuses" | "leadCustomFields" | "calls" | "call" | "notes" | "openTasks" | "task" | "openTasksFor" | "email" | "sendDraft" | "unschedule" | "deleteEmail" | "savedSearches" | "createSavedSearch" | "updateSavedSearch" | "updateLead" | "createLeadCustomField" |
-  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createLead" | "createDraftEmail" | "updateDraft" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails">;
+  "createNote" | "createContact" | "updateContact" | "createTask" | "updateTask" | "completeTask" | "statusChangesSince" | "findLeads" | "createLead" | "createDraftEmail" | "updateDraft" | "updateLeadStatus" | "emailTemplateAttachments" | "listSince" | "phoneNumbers" | "leadEmails" | "searchLeads" | "users">;
 export type Llm = typeof structured;
 export type Deps = { close: Close; llm: Llm; rep: RepInfo; now?: () => Date; website?: typeof fetchSiteText; siteEmails?: (url: string | null | undefined) => Promise<string[]>; sitePages?: (url: string | null | undefined) => Promise<Array<{ url: string; text: string }>> };
 
@@ -530,7 +530,7 @@ export async function afterCall(d: Deps, leadId: string, req: { call_id?: string
     effort: config.effortAfterCall,
     model: config.afterCallModel,
     context: renderContext(ctx, d.rep, { now: now(d), focusCallId: f.callId }),
-    task: callTask(["If Walt didn't reach the buyer but a receptionist or colleague named who to contact (often with their email), fill the referral_* fields; that sends a cold intro via the gatekeeper.", "The rep just finished a call on this lead. Write ONLY the outcome, a what-happened summary, and the note, new contacts, follow-up tasks, and status change, following the After a call and Tasks sections of the playbook. The email draft and coaching are written separately; don't include them.", ...saved], f, req),
+    task: callTask(["If the rep didn't reach the buyer but a receptionist or colleague named who to contact (often with their email), fill the referral_* fields; that sends a cold intro via the gatekeeper.", "The rep just finished a call on this lead. Write ONLY the outcome, a what-happened summary, and the note, new contacts, follow-up tasks, and status change, following the After a call and Tasks sections of the playbook. The email draft and coaching are written separately; don't include them.", ...saved], f, req),
   });
   const proposals = sanitizeProposals({ ...data.proposals, email: null }, ctx, warnings, now(d));
   // Tag the note so the daily stats can count promised RFQs straight from Close.
@@ -570,7 +570,7 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
   if ((missed && !req.rep_summary && !req.force) || f.ctx.facts.vendor) return { email: null, coaching: { nice: null, next: null }, warnings: [] };
   const parts = [
       "Ask for their RFQ plainly. Never hedge or sweeten the ask: no 'no strings', 'no pressure', 'no obligation', 'no rush', 'totally optional', 'see how we stack up' or 'how our numbers compare', no promises like 'I'll get quotes back to you fast', and no 'if something comes up'. It sounds like a pitch; all we want is their RFQ.",
-      "Never tell them when you'll follow up, check back, or call (no dates, days, or timeframes like 'around Oct 15', 'by Monday', 'in a few weeks'): the goal is an RFQ now, and a date invites them to wait. (Exception: a cold intro via a gatekeeper names when Walt will call, per its standard.)" + (req.next_one || req.referral ? "" : " Close by asking them to send a list or RFQ now, using what they said on the call (e.g. 'You mentioned you've always got open projects, so send over whatever's on your desk now')."),
+      "Never tell them when you'll follow up, check back, or call (no dates, days, or timeframes like 'around Oct 15', 'by Monday', 'in a few weeks'): the goal is an RFQ now, and a date invites them to wait. (Exception: a cold intro via a gatekeeper names when the rep will call, per its standard.)" + (req.next_one || req.referral ? "" : " Close by asking them to send a list or RFQ now, using what they said on the call (e.g. 'You mentioned you've always got open projects, so send over whatever's on your desk now')."),
       "Use the prospect's local time of day (their local time is in the facts) for words like 'this morning' or 'this afternoon', never the rep's.",
       req.benchmark && req.next_one
         ? `THEY'LL SEND THE NEXT ONE: they have nothing now but said they'll send the next one. Acknowledge that in their words (e.g. "Sounds good, send the next one over as soon as you have it"), then right after it ask for a recent one to price in ONE plain sentence, e.g. "${OFFERS[0]}" No explaining why. Never ask for "something small", "anything at all", or anything now, and don't end by pushing for an RFQ now.`
@@ -580,8 +580,8 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
           ? "The buyer agreed on the call to send a past RFQ or PO for us to price: that's the point of the email. Reference it in their words, ask them to just reply with it, and say we'll price it."
           : "Don't offer to price a past RFQ or PO in this email.",
       "No em dashes or en dashes anywhere in the email body; use commas or periods.",
-      ...(req.referral ? [introTask(req.referral)] : []),
-      "The rep just finished a call on this lead. Write ONLY the follow-up email draft (following the Email & Product Knowledge Playbook §4). If a receptionist or colleague referred Walt to the recipient, follow the COLD INTRO VIA GATEKEEPER standard exactly (when it's given below) instead of what follows. If nothing was promised or asked for BUT we didn't reach the buyer (someone else answered, we were told to call back, or we left a voicemail) and the buyer's email is known (in Close or said on the call), write a short intro to the buyer instead: 80–120 words, subject 'Westgate Supply – line card', one short line that you called (naming who you spoke with is fine, e.g. 'I spoke with Paul, who suggested I reach out') or left a voicemail, with no other details of the call (not who left, who was out, or how you got the address), one line on what we supply for their kind of work, the ask (reply with any list or RFQ), and optionally that you'll give them a call (no time or date); set attach_line_card to true. Otherwise null. If the recipient wasn't on the call, don't thank them for the call: one short line naming who you spoke with is fine ('I spoke with Paul this afternoon and he suggested I reach out'), but nothing more about the call's logistics: not who left the company, who was out, how you got their address, or which inbox you were told to use. If the prospect offered to send something (an RFQ, a list, a drawing, 'I can send something your way'), that offer is the point of the email: reference it in the first or second paragraph in their own words ('You mentioned you have something you can send my way'), ask them to just reply to this email with it, promise fast pricing, and end by asking for it now. Never water it down to 'whenever something pops up' and never add a timeline they didn't give (don't say 'today' unless they did). Include the warehouse/location line ONLY if the prospect asked where we're located or the transcript mentions lead times, freight, shipping, a local supplier, or a plant near one of our warehouses; otherwise leave it out, even though the worked example has it. Never claim to be local to their city and never name a warehouse city; say we're a national supplier opening a local warehouse in their area and the coaching: one thing done well and one thing to do next time, from the transcript."];
+      ...(req.referral ? [introTask(req.referral, d.rep.name)] : []),
+      "The rep just finished a call on this lead. Write ONLY the follow-up email draft (following the Email & Product Knowledge Playbook §4). If a receptionist or colleague referred the rep to the recipient, follow the COLD INTRO VIA GATEKEEPER standard exactly (when it's given below) instead of what follows. If nothing was promised or asked for BUT we didn't reach the buyer (someone else answered, we were told to call back, or we left a voicemail) and the buyer's email is known (in Close or said on the call), write a short intro to the buyer instead: 80–120 words, subject 'Westgate Supply – line card', one short line that you called (naming who you spoke with is fine, e.g. 'I spoke with Paul, who suggested I reach out') or left a voicemail, with no other details of the call (not who left, who was out, or how you got the address), one line on what we supply for their kind of work, the ask (reply with any list or RFQ), and optionally that you'll give them a call (no time or date); set attach_line_card to true. Otherwise null. If the recipient wasn't on the call, don't thank them for the call: one short line naming who you spoke with is fine ('I spoke with Paul this afternoon and he suggested I reach out'), but nothing more about the call's logistics: not who left the company, who was out, how you got their address, or which inbox you were told to use. If the prospect offered to send something (an RFQ, a list, a drawing, 'I can send something your way'), that offer is the point of the email: reference it in the first or second paragraph in their own words ('You mentioned you have something you can send my way'), ask them to just reply to this email with it, promise fast pricing, and end by asking for it now. Never water it down to 'whenever something pops up' and never add a timeline they didn't give (don't say 'today' unless they did). Include the warehouse/location line ONLY if the prospect asked where we're located or the transcript mentions lead times, freight, shipping, a local supplier, or a plant near one of our warehouses; otherwise leave it out, even though the worked example has it. Never claim to be local to their city and never name a warehouse city; say we're a national supplier opening a local warehouse in their area and the coaching: one thing done well and one thing to do next time, from the transcript."];
   const transcript = transcriptText(f.focus?.recording_transcript);
   const context = renderContext(f.ctx, d.rep, { now: now(d), focusCallId: f.callId });
   // Pre-save validation (Walt 9/24): a draft that fails any check is regenerated; a failing draft is never saved.
@@ -597,7 +597,7 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
     });
     coaching = data.coaching;
     const warnings: string[] = [];
-    if (data.email && /[—–]/.test(data.email.body)) logDashes(f, data.email, attempt);
+    if (data.email && /[—–]/.test(data.email.body)) logDashes(f, data.email, attempt, d.rep.closeUserId);
     if (data.email && req.referral) data.email = { ...data.email, subject: INTRO_SUBJECT, attach_line_card: true };
     let email = enforceBenchmark(data.email, !!req.benchmark, warnings, { agreed: req.benchmark_agreed, nextOne: req.next_one, transcript });
     if (email && !req.referral) email = enforceGotIt(email);
@@ -608,7 +608,7 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
       if (isSelfTest(p.email, d.rep.name)) warnings.push(`Test: this draft is addressed to you (${p.email.to.map((r) => r.email).join(", ")}).`);
       return { email: p.email, coaching, warnings };
     }
-    logRejection({ at: new Date().toISOString(), leadId, company: f.ctx.facts.company, callId: f.callId, attempt, failures, subject: p.email.subject, body: p.email.body, final: attempt === EMAIL_ATTEMPTS });
+    logRejection({ repId: d.rep.closeUserId, at: new Date().toISOString(), leadId, company: f.ctx.facts.company, callId: f.callId, attempt, failures, subject: p.email.subject, body: p.email.body, final: attempt === EMAIL_ATTEMPTS });
   }
   return {
     email: null, coaching,
@@ -619,16 +619,17 @@ export async function afterCallExtras(d: Deps, leadId: string, req: { call_id?: 
 const EMAIL_ATTEMPTS = 3;
 
 /** The "Cold intro via gatekeeper" standard (Walt 9/24), filled in from the call. */
-function introTask(r: Referral): string {
+function introTask(r: Referral, repName: string): string {
+  const me = repName.split(/\s+/)[0];
   return [
-    `COLD INTRO VIA GATEKEEPER: Walt did not speak to ${r.recipient}; ${r.gatekeeper} gave their name and email and said to reach out. Write to ${r.recipient} using this exact standard, in order, under 130 words:`,
-    `1. Who Walt spoke to and the one useful thing they said about the recipient, close to their words from the transcript${r.said_about_recipient ? ` ("${r.said_about_recipient}")` : ""}. No embellishing.`,
-    `2. One sentence introducing Walt and Westgate, tuned to the company's industry (treatment plants, structural steel, machine shop, etc.), then "I've attached our line card so you can see the full range."`,
+    `COLD INTRO VIA GATEKEEPER: ${me} did not speak to ${r.recipient}; ${r.gatekeeper} gave their name and email and said to reach out. Write to ${r.recipient} using this exact standard, in order, under 130 words:`,
+    `1. Who ${me} spoke to and the one useful thing they said about the recipient, close to their words from the transcript${r.said_about_recipient ? ` ("${r.said_about_recipient}")` : ""}. No embellishing.`,
+    `2. One sentence introducing ${me} and Westgate, tuned to the company's industry (treatment plants, structural steel, machine shop, etc.), then "I've attached our line card so you can see the full range."`,
     `3. The soft offer, no assumed relationship: "${INTRO_OFFER}"`,
-    `4. Next touch: ${r.back_when ? `${r.gatekeeper} said they're back ${r.back_when}, so name that and say Walt will call then` : `"I'll give you a call in the next few days to introduce myself."`}`,
-    `5. A friendly closer, then "Walt Boxwell" on its own line.`,
-    `Subject: "${INTRO_SUBJECT}". attach_line_card: true. Never: "you mentioned", "as we discussed", "whenever you've got an RFQ, reply here", the past-RFQ/benchmark offer, or anything implying ${r.recipient.split(" ")[0]} already spoke with Walt. No em or en dashes.`,
-    `Reference example (Probst Group, gatekeeper Hannah, recipient Tracy Reading, out until next week):\nHi Tracy,\n\nI called in this afternoon and spoke with Hannah. She mentioned you're helping the project teams with vendors and pricing right now, so she pointed me your way.\n\nI'm Walt with Westgate Supply. We're a national industrial supplier of pipe, fittings, flanges, gaskets and bolting, and we do a lot of work with teams building and operating treatment plants. I've attached our line card so you can see the full range.\n\n${INTRO_OFFER}\n\nHannah said you're back next week, so I'll give you a call then to introduce myself.\n\nHave a great rest of your day!\n\nWalt Boxwell`,
+    `4. Next touch: ${r.back_when ? `${r.gatekeeper} said they're back ${r.back_when}, so name that and say ${me} will call then` : `"I'll give you a call in the next few days to introduce myself."`}`,
+    `5. A friendly closer, then "${repName}" on its own line.`,
+    `Subject: "${INTRO_SUBJECT}". attach_line_card: true. Never: "you mentioned", "as we discussed", "whenever you've got an RFQ, reply here", the past-RFQ/benchmark offer, or anything implying ${r.recipient.split(" ")[0]} already spoke with ${me}. No em or en dashes.`,
+    `Reference example (Probst Group, gatekeeper Hannah, recipient Tracy Reading, out until next week):\nHi Tracy,\n\nI called in this afternoon and spoke with Hannah. She mentioned you're helping the project teams with vendors and pricing right now, so she pointed me your way.\n\nI'm ${me} with Westgate Supply. We're a national industrial supplier of pipe, fittings, flanges, gaskets and bolting, and we do a lot of work with teams building and operating treatment plants. I've attached our line card so you can see the full range.\n\n${INTRO_OFFER}\n\nHannah said you're back next week, so I'll give you a call then to introduce myself.\n\nHave a great rest of your day!\n\n${repName}`,
   ].join("\n");
 }
 
@@ -642,9 +643,9 @@ async function checkEmail(d: Deps, ctx: LeadContext, email: NonNullable<Proposal
 }
 
 /** Dashes are stripped before saving, but log them so the pattern shows up in the review. */
-function logDashes(f: CallFocus, email: NonNullable<Proposals["email"]>, attempt: number) {
+function logDashes(f: CallFocus, email: NonNullable<Proposals["email"]>, attempt: number, repId: string) {
   const sentence = email.body.split(/(?<=[.!?])\s+|\n+/).find((x) => /[—–]/.test(x)) ?? null;
-  logRejection({ at: new Date().toISOString(), leadId: f.ctx.facts.leadId, company: f.ctx.facts.company, callId: f.callId, attempt, failures: [{ rule: "dashes", sentence, problem: "Em or en dash in the body (fixed automatically)." }], subject: email.subject, body: email.body, final: false, fixed: true });
+  logRejection({ repId, at: new Date().toISOString(), leadId: f.ctx.facts.leadId, company: f.ctx.facts.company, callId: f.callId, attempt, failures: [{ rule: "dashes", sentence, problem: "Em or en dash in the body (fixed automatically)." }], subject: email.subject, body: email.body, final: false, fixed: true });
 }
 
 // ---------- Lead Chat ----------
@@ -679,7 +680,7 @@ export async function leadChat(d: Deps, leadId: string, req: {
     const changed = proposals.email && JSON.stringify(proposals.email) !== JSON.stringify(current.email);
     failures = changed ? await checkEmail(d, ctx, proposals.email!, null, context) : [];
     if (!failures.length) return { reply: data.reply, proposals, warnings };
-    logRejection({ at: new Date().toISOString(), leadId, company: ctx.facts.company, callId: null, attempt, failures, subject: proposals.email!.subject, body: proposals.email!.body, final: attempt === 2 });
+    logRejection({ repId: d.rep.closeUserId, at: new Date().toISOString(), leadId, company: ctx.facts.company, callId: null, attempt, failures, subject: proposals.email!.subject, body: proposals.email!.body, final: attempt === 2 });
     if (attempt === 2) {
       warnings.push(`Kept the previous email draft: the new one failed the pre-save checks (${failures.map((f) => f.problem).join(" ")}).`);
       return { reply: data.reply, proposals: { ...proposals, email: current.email }, warnings };
@@ -940,7 +941,7 @@ export async function applyProposals(d: Deps, leadId: string, proposals: Proposa
   // Last gate before Close: a draft that fails the rule checks (however it got here: model, chat, or an edit) isn't saved.
   const emailFailures = p.email ? ruleChecks(p.email, ctx, null, d.rep.name) : [];
   if (p.email && emailFailures.length) {
-    logRejection({ at: new Date().toISOString(), leadId, company: ctx.facts.company, callId: null, attempt: 0, failures: emailFailures, subject: p.email.subject, body: p.email.body, final: true });
+    logRejection({ repId: d.rep.closeUserId, at: new Date().toISOString(), leadId, company: ctx.facts.company, callId: null, attempt: 0, failures: emailFailures, subject: p.email.subject, body: p.email.body, final: true });
     results.push({ kind: "email", label: "Email draft", ok: false, error: `Not saved, it failed the pre-save checks: ${emailFailures.map((f) => f.problem).join(" ")}` });
   } else if (p.email) {
     const e = p.email;
@@ -982,10 +983,16 @@ export function resetLineCardCache() {
 }
 
 export async function lineCardAttachments(d: Deps) {
-  if (lineCard && Date.now() - lineCard.at < 12 * 3600 * 1000) return lineCard.attachments;
-  const attachments = await d.close.emailTemplateAttachments(config.lineCardTemplateId);
-  lineCard = { at: Date.now(), attachments };
-  return attachments;
+  if (!lineCard || Date.now() - lineCard.at >= 12 * 3600 * 1000) lineCard = { at: Date.now(), attachments: await d.close.emailTemplateAttachments(config.lineCardTemplateId) };
+  return ownContactCard(lineCard.attachments, d.rep.name);
+}
+/** A contact card (.vcf) in the shared template is one rep's (10/19): it goes out only with the rep it names. */
+export function ownContactCard<T extends { filename?: string | null }>(attachments: T[], repName: string): T[] {
+  const parts = repName.toLowerCase().split(/\s+/).filter((p) => p.length > 1);
+  return attachments.filter((a) => {
+    const f = (a.filename ?? "").toLowerCase();
+    return !f.endsWith(".vcf") || parts.some((p) => f.includes(p));
+  });
 }
 
 export class DuplicateApplyError extends Error {

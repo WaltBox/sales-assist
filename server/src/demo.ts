@@ -143,6 +143,10 @@ export class FakeClose implements Close {
   async statusChangesSince(since: string) { return this.statusChanges.filter((s) => s.date_created >= since); }
   findLeadsResult: Array<{ id: string; display_name: string }> = [];
   async findLeads(_query: string) { return this.findLeadsResult; }
+  /** Leads a search finds (My leads in tests and the demo). */
+  ownedLeads: Array<Record<string, unknown>> = [];
+  async searchLeads<T>(_query: string, o: { skip: number; limit: number }) { return { data: this.ownedLeads.slice(o.skip, o.skip + o.limit) as T[], has_more: this.ownedLeads.length > o.skip + o.limit }; }
+  async users() { return [{ id: DEMO_USER_ID, first_name: "Walt", last_name: "Boxwell", email: "walt@westgatesupply.com" }]; }
   async createLead(body: { name: string; contactName: string | null; email: string; phone?: string | null }) { const r = this.record("lead-create", body) as { id: string }; return { id: r.id, display_name: body.name }; }
   async completeTask(taskId: string) {
     const t = this.tasks_.get(taskId) ?? this.extraTasks.find((x) => x.id === taskId);

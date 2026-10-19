@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { bumpBodyFor, FollowUpError, greetName, writeFollowUp, type BumpPlace } from "./followup.js";
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
-import { clearPick, listMemes, memeFor, memesSeen, memeTrack, type Meme } from "./memes.js";
+import { clearPick, memeFor, memesFor, memesSeen, memeTrack, type Meme } from "./memes.js";
 import { isGenericAddress } from "./cadence.js";
 
 // Automatic bumps (Walt 9/26). Each weekday morning, every account whose next step is "bump"
@@ -89,7 +89,7 @@ export async function setTestMode(d: Deps, on: boolean) {
 async function planTestBump(d: Deps, now: Date) {
   const lead = (await d.close.findLeads('name:"Test Lead Fabrication"').catch(() => [])).find((l) => TEST_LEAD_NAME.test(l.display_name));
   if (!lead) return { planned: [], skipped: [{ company: "Test Lead Fabrication", why: "Test mode is on, but there's no Test Lead Fabrication lead in Close." }], reason: "Test mode." };
-  const memes = await listMemes().catch(() => [] as Meme[]);
+  const memes = await memesFor(d).catch(() => [] as Meme[]);
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   // The test lead can see every meme again: it's for checking how each one looks.
@@ -214,7 +214,7 @@ async function planDay(d: Deps, now: Date) {
   const planned: Automation[] = [];
   const skipped: Array<{ company: string; why: string }> = [...dropped, ...replied.filter((a) => a.next.kind === "bump" || a.bumpDue).map((a) => ({ company: a.company, why: `They replied ${a.lastReplyAt!.slice(0, 10)}: cooling down until ${new Date(Date.parse(a.lastReplyAt!) + REPLY_COOLDOWN_DAYS * DAY).toISOString().slice(0, 10)}.` }))];
   // Memes (9/30): one per bump, never one the company has already had.
-  const memes = await listMemes().catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; });
+  const memes = await memesFor(d).catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; });
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());
@@ -281,7 +281,7 @@ async function planDay(d: Deps, now: Date) {
 export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?: string | null; stagger?: number; test?: boolean; memes?: Meme[] }) {
   const now = d.now?.() ?? new Date();
   const stagger = opts.stagger ?? 2;
-  const memes = opts.memes ?? (await listMemes().catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; }));
+  const memes = opts.memes ?? (await memesFor(d).catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; }));
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   const planned: Automation[] = [];
@@ -516,7 +516,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   ]);
   const scheduled = new Set(recent.filter((a) => a.status === "scheduled").map((a) => a.leadId));
   // The meme each one will carry (picked once, so the page and the send agree) and the text it'll say.
-  const memes = await listMemes().catch(() => [] as Meme[]);
+  const memes = await memesFor(d).catch(() => [] as Meme[]);
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());

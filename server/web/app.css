@@ -751,3 +751,10 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .gi-sends ul { margin: 6px 0 0; padding-left: 18px; }
 .gi-list { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 8px; font-size: 13px; }
 .gi-oc { font-family: var(--label); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--ink-line); }
+
+/* Chrome extension page (10/19). */
+.extpage .extsteps { margin: 8px 0 14px; padding-left: 22px; line-height: 1.55; max-width: 760px; }
+.extpage .extsteps li { margin: 4px 0; }
+.extpage code { font-family: var(--mono, ui-monospace, monospace); font-size: .92em; background: rgba(17, 17, 20, .06); padding: 1px 5px; }
+.extpage .extprompt { width: 100%; max-width: 820px; box-sizing: border-box; font: 13px/1.5 var(--mono, ui-monospace, monospace); padding: 12px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); resize: vertical; margin: 6px 0 10px; }
+.extpage .rfqh { margin-top: 26px; }

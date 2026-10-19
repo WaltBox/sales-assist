@@ -696,6 +696,7 @@ function render() {
   ]));
   else if (view === "queue") app.replaceChildren(...renderQueue());
   else if (view === "emails") app.replaceChildren(...renderEmails());
+  else if (view === "mine") app.replaceChildren(...renderMine());
   else if (view === "item") app.replaceChildren(...renderItem());
   else if (view === "stats") app.replaceChildren(...renderStats());
   else if (view === "week") app.replaceChildren(...renderWeek());
@@ -735,6 +736,7 @@ function header(phase, phaseClick) {
       onclick: () => { view = "queue"; refreshQueue(); render(); },
     }) : null,
     view !== "emails" ? el("button", { class: "pill recent", text: emails.todaySent != null ? `Emails ${emails.todaySent}` : "Emails", title: "Automatic emails: what went out, what's queued, who opened or replied", onclick: () => { view = "emails"; loadEmails(); render(); } }) : null,
+    view !== "mine" && settings.token ? el("button", { class: "pill recent", text: mine.leads ? `My leads ${mine.leads.length}` : "My leads", title: "Every lead with you as Lead owner in Close, and where each stands", onclick: () => { view = "mine"; loadMine(); render(); } }) : null,
     phase ? el(phaseClick ? "button" : "span", { class: `pill ${phase.cls || "phase"}`, text: phase.text, onclick: phaseClick }) : null,
     settings.token ? el("div", { class: "hrow2" }, [
       statsStrip(),
@@ -2019,6 +2021,71 @@ function renderEmails() {
   return out;
 }
 
+// ---------- My leads (Walt 10/19): every lead whose "Lead owner" in Close is you, and where each one stands ----------
+let mine = { leads: null, field: true, loading: false, error: null, at: null, q: "", status: "", show: "all" };
+async function loadMine(fresh = false) {
+  if (mine.loading) return;
+  mine.loading = true; mine.error = null; render();
+  try {
+    const r = await api(`/api/my-leads${fresh ? "?fresh=1" : ""}`);
+    Object.assign(mine, { leads: r.leads, field: r.field, at: r.at });
+  } catch (e) { mine.error = e.message; }
+  mine.loading = false; render();
+}
+function renderMine() {
+  const out = [header({ text: "My leads", cls: "phase" })];
+  const all = mine.leads || [];
+  const q = mine.q.trim().toLowerCase();
+  const day = (iso) => (iso ? new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" }) : "");
+  const today = new Date().toISOString().slice(0, 10);
+  const groups = {
+    all: () => true,
+    replied: (l) => !!l.repliedAt,
+    due: (l) => l.task && l.task.due.slice(0, 10) <= today,
+    opened: (l) => l.lastEmail && l.lastEmail.opens,
+    untouched: (l) => l.untouched,
+  };
+  const statuses = [...new Set(all.map((l) => l.status))].sort();
+  const shown = all.filter(groups[mine.show] || groups.all).filter((l) => !mine.status || l.status === mine.status)
+    .filter((l) => !q || `${l.company} ${l.contact.name || ""} ${l.contact.email || ""} ${l.contact.phone || ""}`.toLowerCase().includes(q));
+  const count = (k, label) => { const n = all.filter(groups[k]).length; return n || k === "all" ? el("button", { class: `ecount${mine.show === k ? " on" : ""}`, text: `${n} ${label}`, onclick: () => { mine.show = k; render(); } }) : null; };
+  const row = (l) => el("div", { class: "erow mrow", title: "Open in Close", onclick: () => openLead(l.leadId) }, [
+    el("span", { class: "emain" }, [
+      el("span", { class: "eco", text: l.company }),
+      el("span", { class: "eto", text: [l.contact.name, l.contact.phone, l.contact.email].filter(Boolean).join(" · ") || "No contact yet" }),
+      el("span", { class: "eto", text: [
+        l.lastCall ? `Called ${day(l.lastCall.at)}${l.lastCall.by ? ` by ${l.lastCall.by}` : ""}${l.lastCall.talked ? ", talked" : ""}` : "Not called in 45 days",
+        l.lastEmail ? `emailed ${day(l.lastEmail.at)}${l.lastEmail.opens ? `, opened ${l.lastEmail.opens}×` : ""}` : null,
+        l.task ? `Task ${day(l.task.due)}: ${l.task.text}` : null,
+      ].filter(Boolean).join(" · ") }),
+    ]),
+    el("span", { class: "eflags" }, [
+      l.repliedAt ? el("span", { class: "chip3 good", text: `Replied ${day(l.repliedAt)}` }) : null,
+      l.task && l.task.due.slice(0, 10) <= today ? el("span", { class: "chip3 warn", text: l.task.overdue ? "Task overdue" : "Task today" }) : null,
+      el("span", { class: "chip3 soft", text: l.status }),
+    ]),
+  ]);
+  out.push(el("main", { class: "page" }, [
+    el("div", { class: "qhead" }, [
+      el("h1", { text: "My leads" }),
+      el("span", { class: "ecounts" }, [count("all", "all"), count("replied", "wrote back"), count("due", "tasks due"), count("opened", "opened an email"), count("untouched", "not touched in 45 days")]),
+      el("button", { class: "link", text: mine.loading ? "Updating…" : mine.at ? `Updated ${new Date(mine.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refresh` : "Refresh", onclick: () => loadMine(true) }),
+    ]),
+    S ? el("button", { class: "link", text: `← Back to ${S.header ? S.header.company : "the lead"}`, onclick: () => { view = "lead"; render(); } }) : null,
+    el("div", { class: "chips-row" }, [
+      el("select", { class: "esearch", style: "max-width:46%", onchange: (e) => { mine.status = e.target.value; render(); } }, [el("option", { value: "", text: "Every status" }), ...statuses.map((st) => el("option", { value: st, selected: mine.status === st, text: `${st} · ${all.filter((l) => l.status === st).length}` }))]),
+      el("input", { class: "esearch", type: "search", "data-key": "mine-q", placeholder: "Search company, name, phone", value: mine.q, oninput: (ev) => { mine.q = ev.target.value; render(); } }),
+    ]),
+    mine.error ? el("div", { class: "flag", text: mine.error }) : null,
+    !mine.field ? el("p", { class: "empty", text: "There's no \"Lead owner\" field in Close yet." }) : null,
+    mine.loading && !mine.leads ? el("p", { class: "muted", text: "Finding your leads in Close… (the first time takes a few seconds)" }) : null,
+    mine.leads && !shown.length ? el("p", { class: "empty", text: all.length ? "Nothing matches." : "No leads have you as Lead owner in Close yet." }) : null,
+    shown.length ? el("div", { class: "elist" }, [el("p", { class: "label", text: `${shown.length} lead${shown.length === 1 ? "" : "s"}` }), ...shown.slice(0, 300).map(row)]) : null,
+    el("p", { class: "muted", style: "font-size:12px", text: "Every lead with you as Lead owner in Close. Ones that wrote back come first, then tasks due, then opened emails, then whoever's gone longest without a touch. Tap one to open it in your Close tab." }),
+  ]));
+  return out;
+}
+
 function renderQueue() {
   const items = queue.items;
   const readyItems = items.filter((i) => i.state === "ready");
@@ -2468,6 +2535,8 @@ async function init() {
     settings = { theme: "light", ...(await chrome.storage.local.get(["server", "token", "theme"])) };
     // The local server moved from 8787 to 3001 (Walt 9/26).
     if (/^http:\/\/localhost:8787\/?$/.test(settings.server || "")) { settings.server = "http://localhost:3001"; chrome.storage.local.set({ server: settings.server }); }
+    // A new install talks to the hosted app (10/19); a server already saved stays.
+    if (!settings.server) settings.server = "https://sales-assist-fawn.vercel.app";
     listView = (await chrome.storage.local.get("listView")).listView || null;
     myLine = (await chrome.storage.local.get("myLine")).myLine || null; // shown at once; /api/me refreshes it
     siteAccess = await chrome.permissions.contains({ origins: ["https://*/*", "http://*/*"] });

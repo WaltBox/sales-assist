@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { z } from "zod/v4";
 import { background } from "./background.js";
 import { FileStore, store } from "./store.js";
@@ -106,13 +107,13 @@ function introChecks(email: Email, r: Referral): Failure[] {
   const content = paras.slice(GREETING.test(paras[0]) ? 1 : 0, Math.max(1, paras.length - 2));
   const words = content.join(" ").split(/\s+/).filter(Boolean).length;
   if (words >= 130) fail(`Cold intro is ${words} words before the closer; it must be under 130.`);
-  for (const s of sentences(body)) if (INTRO_NEVER.test(s)) fail("Implies the recipient already spoke with Walt, pushes for an RFQ, or asks for a past RFQ; none belong in a cold intro.", s);
+  for (const s of sentences(body)) if (INTRO_NEVER.test(s)) fail("Implies the recipient already spoke with you, pushes for an RFQ, or asks for a past RFQ; none belong in a cold intro.", s);
   const gk = first(r.gatekeeper);
   const opening = sentences(body).slice(0, 3).join(" ").toLowerCase();
-  if (gk && !opening.includes(gk)) fail(`Doesn't open with who Walt spoke to (${r.gatekeeper}).`);
+  if (gk && !opening.includes(gk)) fail(`Doesn't open with who you spoke to (${r.gatekeeper}).`);
   if (!/attached our line card so you can see the full range/i.test(body)) fail(`Missing "I've attached our line card so you can see the full range."`);
   if (!/open RFQ or a materials list out for pricing/i.test(body) || !/send it over and I(?:'|’)ll quote it/i.test(body)) fail(`Missing the offer: "${INTRO_OFFER}"`);
-  if (!/\b(give you a call|call you)\b/i.test(body)) fail("Missing the next touch (when Walt will call to introduce himself).");
+  if (!/\b(give you a call|call you)\b/i.test(body)) fail("Missing the next touch (when you will call to introduce yourself).");
   if (r.back_when && !body.toLowerCase().includes(r.back_when.toLowerCase().replace(/^(on|until) /, ""))) fail(`${r.gatekeeper} said ${first(r.recipient)} is back ${r.back_when}; the next-touch line should name it.`);
   return out;
 }
@@ -140,9 +141,9 @@ export function reviewTask(email: Email, repName: string): string {
       : "",
     `Review this follow-up email draft before it's saved. ${repName} (the sender) works for Westgate Supply; the recipient works at the prospect company in the lead record above. Judge ONLY the four rules below and report only clear violations; an empty list means it passes. Don't report rules that pass, and don't judge style, length, structure, or whether a paragraph belongs in the email (e.g. the optional past-RFQ offer or the "I'll give you a call" line are decided elsewhere and are allowed).`,
     `identity: any sentence that treats Westgate Supply as a company ${who} called, contacted, reached, spoke with, or is a customer of (he works there; right is "I'm ${who} with Westgate Supply").`,
-    "who_said_what: every claim about the prospect (their products, who's out of office, what they said or asked for) must come from the transcript or the lead record; every claim about Westgate (products, warehouses, capabilities) must come from the playbook. Flag anything invented, and anything moved from one side to the other (e.g. a product the prospect makes described as something Westgate supplies, or something Walt said attributed to the prospect).",
+    "who_said_what: every claim about the prospect (their products, who's out of office, what they said or asked for) must come from the transcript or the lead record; every claim about Westgate (products, warehouses, capabilities) must come from the playbook. Flag anything invented, and anything moved from one side to the other (e.g. a product the prospect makes described as something Westgate supplies, or something the rep said attributed to the prospect).",
     "recipient_readback: read it as the recipient. Flag any sentence that would confuse them about who is writing, who works where, or what is being asked.",
-    "names: the greeting name, the person referred to as the one Walt spoke with (the gatekeeper), and the recipient must match the lead's contacts and the transcript, and must not be swapped (e.g. greeting the gatekeeper in an email addressed to the buyer).",
+    "names: the greeting name, the person referred to as the one the rep spoke with (the gatekeeper), and the recipient must match the lead's contacts and the transcript, and must not be swapped (e.g. greeting the gatekeeper in an email addressed to the buyer).",
     `The draft:\nTo: ${email.to.map((r) => `${r.name} <${r.email}>`).join(", ")}\nSubject: ${email.subject}\n\n${email.body}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -154,7 +155,7 @@ export function retryNote(failures: Failure[]): string {
 
 // ---------- rejection log ----------
 
-export type Rejection = { at: string; leadId: string; company: string; callId: string | null; attempt: number; failures: Failure[]; subject: string; body: string; final: boolean; fixed?: boolean };
+export type Rejection = { at: string; leadId: string; company: string; callId: string | null; attempt: number; failures: Failure[]; subject: string; body: string; final: boolean; fixed?: boolean; repId?: string };
 
 export function logRejection(r: Rejection) {
   console.info(`[email-check] rejected ${r.company} attempt ${r.attempt}: ${r.failures.map((f) => `${f.rule}: ${f.problem}`).join(" | ")}`);
@@ -162,8 +163,10 @@ export function logRejection(r: Rejection) {
 }
 
 /** The latest rejections and how often each rule fails, for review. */
-export async function rejections(limit = 100): Promise<{ byRule: Record<string, number>; items: Rejection[] }> {
-  const items = (await store.rejections(limit)) as Rejection[];
+export async function rejections(limit = 100, mine?: { closeUserId: string; email: string }): Promise<{ byRule: Record<string, number>; items: Rejection[] }> {
+  // Each rep sees their own (10/19); ones from before reps were recorded are the first rep's.
+  const items = ((await store.rejections(mine ? limit * 3 : limit)) as Rejection[])
+    .filter((r) => !mine || (r.repId ? r.repId === mine.closeUserId : mine.email.toLowerCase() === config.ownerEmail)).slice(0, limit);
   const byRule: Record<string, number> = {};
   for (const r of items) for (const f of r.failures) byRule[f.rule] = (byRule[f.rule] ?? 0) + 1;
   return { byRule, items };
@@ -172,4 +175,29 @@ export async function rejections(limit = 100): Promise<{ byRule: Record<string, 
 /** Tests only. */
 export function resetRejections() {
   if (store instanceof FileStore) store.resetRejections();
+}
+
+/**
+ * Every rep speaks as themselves (10/19, a second rep joined). The playbook and its worked examples were written
+ * for Walt, so a draft for someone else can come back signed "Walt Boxwell" or opening "this is Walt". This swaps
+ * Walt's name for the rep's only where the writer is speaking as the rep: the full name, "this is / I'm Walt",
+ * "Walt with Westgate", and a sign-off line. A note that mentions Walt as a person stays as it is.
+ */
+const OWNER = { full: "Walt Boxwell", first: "Walt" };
+export function speakAs(text: string, repName: string): string {
+  const name = repName.trim();
+  if (!name || name.toLowerCase() === OWNER.full.toLowerCase() || !/walt/i.test(text)) return text;
+  const first = name.split(/\s+/)[0];
+  return text
+    .replace(/\bWalt Boxwell\b/g, name)
+    .replace(/\b(this is|I'm|I am|it's|my name is)\s+Walt\b/gi, (_m, lead: string) => `${lead} ${first}`)
+    .replace(/\bWalt(?= (with|from|at|here at|over at) Westgate\b)/g, first)
+    .replace(/^(\s*)Walt(\s*)$/gm, (_m, a: string, b: string) => `${a}${first}${b}`);
+}
+/** The same, through every string in an AI result. */
+export function speakAsDeep<T>(v: T, repName: string): T {
+  if (typeof v === "string") return speakAs(v, repName) as T;
+  if (Array.isArray(v)) return v.map((x) => speakAsDeep(x, repName)) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, speakAsDeep(x, repName)])) as T;
+  return v;
 }

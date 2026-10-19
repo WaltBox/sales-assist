@@ -34,7 +34,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
+function pageFromHash() { return location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -87,7 +87,9 @@ async function load(fresh = false) {
   render();
   // Each one draws the moment it arrives (10/8): the RFQ count no longer waits on the automatic emails list.
   const piece = (path, key) => apiRetry(path).then((v) => { state[key] = v; render(); return v; });
-  const results = await Promise.allSettled([piece("/api/stats/today", "today"), piece("/api/automations", "autos"), piece("/api/tasks", "tasks"), piece(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`, "rfqLine")]);
+  const results = await Promise.allSettled([piece("/api/stats/today", "today"), piece("/api/automations", "autos"), piece("/api/tasks", "tasks"), piece(`/api/stats/rfqs${fresh ? "?fresh=1" : ""}`, "rfqLine"),
+    // The team's RFQs (10/19), for the RFQs page; it never blocks the rest or shows an error of its own.
+    piece(`/api/team/rfqs${fresh ? "?fresh=1" : ""}`, "teamRfq").catch(() => null)]);
   const failed = results.find((r) => r.status === "rejected");
   if (failed && failed.reason.message !== "Signed out" && !state.error) state.error = failed.reason.message;
   render();
@@ -108,6 +110,7 @@ function render() {
     : state.page === "rfqs" ? [err, rfqsPage()]
     : state.page === "tasks" ? [err, tasksPage()]
     : state.page === "guests" ? [err, guestsPage()]
+    : state.page === "extension" ? [extensionPage()]
       : state.page === "heat" ? [err, heatPage()]
         : [hello(), err, accountsSection()]));
 }
@@ -188,7 +191,7 @@ function topBar() {
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
       k === "tasks" && state.tasks ? el("span", { class: `navc mono${state.tasks.today.length ? " hotc" : ""}`, text: state.tasks.today.length }) : null,
       // Companies that have sent an RFQ, the same 32 as the RFQs page (10/12), not just the ones on the board.
-      k === "rfqs" && (state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
+      k === "rfqs" && (state.teamRfq?.line || state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.teamRfq?.line ? state.teamRfq.line.companies : state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
       k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => a.heat && a.heat.band === "today" && !a.rfq).length }) : null,
     ]))),
     el("div", { class: "who" }, [
@@ -197,9 +200,22 @@ function topBar() {
         onclick: (e) => { navigator.clipboard?.writeText(line); e.currentTarget.lastChild.textContent = "Copied"; setTimeout(render, 1200); },
       }, [el("span", { class: "k", text: "My line" }), el("span", { text: prettyPhone(line) })]) : null,
       state.me ? el("span", { text: state.me.rep.name }) : null,
+      // The phone that goes in your emails (10/19, each rep their own).
+      state.me ? el("button", { class: "linkbtn", title: "The phone number in your line card emails", text: state.me.rep.phone ? `Email phone ${prettyPhone(state.me.rep.phone)}` : "Add your phone", onclick: setPhone }) : null,
+      el("button", { class: "linkbtn", text: "Get the extension", onclick: () => go("extension") }),
       el("button", { class: "linkbtn", text: "Sign out", onclick: signOut }),
     ]),
   ]));
+}
+
+async function setPhone() {
+  const now = state.me && state.me.rep.phone ? prettyPhone(state.me.rep.phone) : "";
+  const v = window.prompt("The phone number that goes in your line card emails (leave blank for none):", now);
+  if (v === null) return;
+  try {
+    const r = await api("/api/me/profile", { phone: v.trim() || null });
+    state.me.rep.phone = r.phone; render();
+  } catch (err) { window.alert(err.message); }
 }
 
 function go(page) {
@@ -356,7 +372,7 @@ function accountsSection() {
       el("input", { class: "heatq", type: "search", placeholder: "Find an account, a name, an email, a number", value: state.acctQ || "", oninput: (e) => { state.acctQ = e.target.value; renderKeepFocus(".heatq"); } }),
       q ? el("span", { class: "muted small3", text: `${all.length} match${all.length === 1 ? "" : "es"} · click a row for its history` }) : null,
     ]),
-    !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
+    !team && !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
       : !all.length ? el("p", { class: "empty", text: q ? "No account matches that." : "None here." })
         : el("div", { class: "sects" }, [rfqNote(all), needs ? null : el("p", { class: "empty", text: "Nothing needs you right now." }), ...groups]),
   ]);
@@ -380,7 +396,7 @@ function svg(tag, attrs = {}, kids = []) {
 }
 const dayLabel = (day, opts = { month: "short", day: "numeric" }) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { ...opts, timeZone: "UTC" });
 
-function rfqGrowth(t) {
+function rfqGrowth(t, isTeam = false) {
   if (!t) return el("section", { class: "rfqline" }, [el("p", { class: "loading", text: "Counting RFQs…" })]);
   const days = t.days;
   // Unique companies (Walt 10/12): "how many new companies have I brought in this week, this month". A company counts
@@ -391,7 +407,7 @@ function rfqGrowth(t) {
     vs != null ? el("span", { class: "sub2", text: vs }) : null,
   ]);
   const hero = el("div", { class: "rfqhero" }, [
-    el("div", {}, [el("span", { class: "big mono", text: companiesNow }), el("span", { class: "sub2", text: ` compan${companiesNow === 1 ? "y has" : "ies have"} sent you an RFQ` })]),
+    el("div", {}, [el("span", { class: "big mono", text: companiesNow }), el("span", { class: "sub2", text: ` compan${companiesNow === 1 ? "y has" : "ies have"} sent ${isTeam ? "the team" : "you"} an RFQ` })]),
     el("div", { class: "rfqtiles" }, [
       tile(t.firstToday, "new today"),
       tile(t.newThisWeek, "new this week", `${t.newLastWeek ?? 0} last week`),
@@ -400,7 +416,7 @@ function rfqGrowth(t) {
       el("div", { class: "rfqtile rfqtile-total" }, [el("b", { class: "mono", text: t.total }), el("span", { text: "RFQs in all" }), el("span", { class: "sub2", text: "counting repeats" })]),
     ]),
   ]);
-  const allRfqs = el("p", { class: "sub2 rfqall", text: `Since your first line card, ${dayLabel(days[0].day)}. A company counts once, on the day of its first RFQ.` });
+  const allRfqs = el("p", { class: "sub2 rfqall", text: `Since ${isTeam ? "the team's" : "your"} first line card, ${dayLabel(days[0].day)}. A company counts once, on the day of its first RFQ.` });
   if (days.length < 2) return el("section", { class: "rfqline" }, [el("h2", { class: "rfqh", text: "New companies" }), hero, allRfqs]);
 
   // Plot: companies brought in so far, one step up per new company.
@@ -1011,12 +1027,15 @@ window.addEventListener("keydown", (e) => {
 });
 
 function rfqsPage() {
-  const all = (state.board && state.board.accounts) || [];
+  // The whole team's RFQs (10/19); your own until the team list arrives.
+  const team = state.teamRfq;
+  const isTeam = !!team && team.reps.length > 1;
+  const all = team ? team.accounts : (state.board && state.board.accounts) || [];
   // Waiting on you first, then Westgate, then the buyer, then done; oldest first inside each.
   const order = { you: 0, westgate: 1, buyer: 2, nobody: 3 };
   const sorted = all.filter((a) => a.rfq).sort((a, b) => order[a.rfq.status.waitingOn] - order[b.rfq.status.waitingOn] || a.rfq.status.since.localeCompare(b.rfq.status.since));
   // First-time RFQs (10/8): from the RFQ line, the companies whose first one came in today or this week.
-  const t = state.rfqLine, days = (t && t.days) || [];
+  const t = (team && team.line) || state.rfqLine, days = (t && t.days) || [];
   // Calendar week (since Monday) and month, the same spans as the tiles above (10/12).
   const lastDay = days.length ? days[days.length - 1].day : "";
   const monday = lastDay ? new Date(Date.parse(`${lastDay}T12:00:00Z`) - ((new Date(`${lastDay}T12:00:00Z`).getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10) : "";
@@ -1027,7 +1046,7 @@ function rfqsPage() {
   // listed): a plain row from the count, so every one counted is listed.
   const onBoard = new Set(sorted.map((a) => a.leadId));
   const offBoard = new Map();
-  for (const dd of days) for (const x of dd.accounts) if (!onBoard.has(x.leadId)) offBoard.set(x.leadId, { leadId: x.leadId, company: x.company, how: x.how, day: offBoard.get(x.leadId)?.day ?? dd.day });
+  for (const dd of days) for (const x of dd.accounts) if (!onBoard.has(x.leadId)) offBoard.set(x.leadId, { leadId: x.leadId, company: x.company, how: x.how, reps: x.reps || [], day: offBoard.get(x.leadId)?.day ?? dd.day });
   const extras = [...offBoard.values()].filter((x) => pick === "today" ? newToday.has(x.leadId) : pick === "week" ? newWeek.has(x.leadId) : pick === "month" ? newMonth.has(x.leadId) : true);
   const rows = pick === "today" ? sorted.filter((a) => newToday.has(a.leadId)) : pick === "week" ? sorted.filter((a) => newWeek.has(a.leadId)) : pick === "month" ? sorted.filter((a) => newMonth.has(a.leadId)) : sorted;
   const chip = (k, label, n) => el("button", { class: `cardk${pick === k ? " on" : ""}`, onclick: () => { state.rfqFilter = k; render(); } }, [el("b", { class: "mono", text: n }), label]);
@@ -1035,18 +1054,18 @@ function rfqsPage() {
   const fresh = new Set([...newWeek]);
   return el("section", {}, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "RFQs" })]),
-    rfqGrowth(state.rfqLine),
+    rfqGrowth(t, isTeam),
     filters,
-    el("p", { class: "muted small3", text: "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
+    el("p", { class: "muted small3", text: (isTeam ? `The whole team's RFQs (${team.reps.join(", ")}). ` : "") + "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
       : !rows.length && !extras.length ? el("p", { class: "empty", text: pick === "today" ? "No new companies today yet." : pick === "week" ? "No new companies this week yet." : pick === "month" ? "No new companies this month yet." : "No RFQs yet." })
         : el("div", { class: "grid rfqgrid" }, [
           el("div", { class: "gr gh" }, ["Account", "RFQ", "Status", "Waiting on", ""].map((h) => el("span", { class: "label", text: h }))),
-          ...rows.flatMap((a) => rfqRow(a, fresh.has(a.leadId))),
+          ...rows.flatMap((a) => rfqRow(a, fresh.has(a.leadId), isTeam)),
           ...extras.map((x) => el("div", { class: "gr" }, [
             el("div", { class: "acct" }, [
               el("a", { class: "co", href: closeLead(x.leadId), target: "_blank", rel: "noopener", text: x.company }),
-              el("span", { class: "sub2" }, [fresh.has(x.leadId) ? el("span", { class: "newbadge", text: "First RFQ" }) : null, "Not on the line card board"]),
+              el("span", { class: "sub2" }, [fresh.has(x.leadId) ? el("span", { class: "newbadge", text: "First RFQ" }) : null, isTeam && x.reps.length ? `${x.reps.join(" & ")} · ` : "", "Not on the line card board"]),
             ]),
             el("div", { class: "rfqin" }, [el("span", { class: "mono", text: dayLabel(x.day) }), el("span", { class: "files", text: x.how === "file" ? "Came with a file" : x.how === "email" ? "In the email" : "Marked in Close" })]),
             el("div", {}, [el("span", { class: "rfqst", text: "RFQ in" }), el("span", { class: "sub2", text: "open it in Close for the thread" })]),
@@ -1057,14 +1076,14 @@ function rfqsPage() {
   ]);
 }
 
-function rfqRow(a, isNew = false) {
+function rfqRow(a, isNew = false, isTeam = false) {
   const r = a.rfq, st = r.status;
   const [who, wcls] = WAITING[st.waitingOn];
   const edit = state.rfqEdit[a.leadId];
   const row = el("div", { class: "gr" }, [
     el("div", { class: "acct" }, [
       el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
-      el("span", { class: "sub2" }, [isNew ? el("span", { class: "newbadge", text: "First RFQ" }) : null, a.contact.name || a.contact.email || ""]),
+      el("span", { class: "sub2" }, [isNew ? el("span", { class: "newbadge", text: "First RFQ" }) : null, isTeam && a.reps ? el("b", { text: `${a.reps.join(" & ")} · ` }) : null, a.contact.name || a.contact.email || ""]),
     ]),
     el("div", { class: "rfqin" }, [
       el("span", { class: "mono", text: shortDate(r.at) }),
@@ -1575,6 +1594,64 @@ async function loadGuests() {
   try { state.guests = (await api("/api/guests")).guests; } catch (e) { state.guestsErr = e.message; }
   render();
 }
+// ---------- the Chrome extension (10/19): download it, set it up, or have Claude set it up ----------
+function extensionPrompt(server) {
+  return [
+    "Help me install the Westgate Sales Assistant Chrome extension on this computer. I just downloaded westgate-assistant-extension.zip (it's in my Downloads folder).",
+    "",
+    "1. Unzip it so the extension sits at ~/Westgate/westgate-assistant (make the folder if it's missing). If there's an older copy there, replace it. Don't change any of the extension's files.",
+    "2. Open Google Chrome to chrome://extensions for me (on a Mac: open -a \"Google Chrome\" \"chrome://extensions\"). If that doesn't open it, tell me to type chrome://extensions into Chrome's address bar.",
+    "3. Walk me through it one step at a time: turn on \"Developer mode\" (top right), click \"Load unpacked\", and pick the ~/Westgate/westgate-assistant folder. If it's already installed, I just click the reload arrow on its card instead.",
+    "4. Pin it: click the puzzle piece next to Chrome's address bar, then the pin next to Westgate Sales Assistant.",
+    `5. Click the extension's icon, then Sign in. The server address should already say ${server}. I sign in with my @westgatesupply.com email and the password I made in the web app. I'll type my password myself; never ask me for it.`,
+    "6. To check it worked: open any lead in Close (app.close.com) and click the extension icon. The call card should open on the right.",
+    "",
+    "If anything looks different from these steps, tell me exactly what you see and wait for me before going on.",
+  ].join("\n");
+}
+function extensionPage() {
+  if (state.ext === undefined) { state.ext = null; api("/api/extension").then((r) => { state.ext = r; render(); }).catch((e) => { state.ext = { error: e.message }; render(); }); }
+  const x = state.ext || {};
+  const server = location.origin;
+  const prompt = extensionPrompt(server);
+  const download = async () => {
+    state.extBusy = true; state.extErr = null; render();
+    try {
+      const res = await fetch("/api/extension.zip", { headers: { authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Download failed (${res.status}).`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = el("a", { href: url, download: "westgate-assistant-extension.zip" });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) { state.extErr = e.message; }
+    state.extBusy = false; render();
+  };
+  const copy = () => { navigator.clipboard?.writeText(prompt).then(() => { state.extCopied = true; render(); setTimeout(() => { state.extCopied = false; render(); }, 2000); }).catch(() => {}); };
+  const step = (n, kids) => el("li", {}, kids);
+  return el("section", { class: "extpage" }, [
+    el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Chrome extension" })]),
+    el("p", { class: "muted small3", text: "The side panel next to Close: the call card for each lead, after-call notes, line cards, your automatic emails and My leads. It uses this app, so there's nothing to run on your computer." }),
+    el("div", { class: "gnew" }, [
+      el("button", { class: "btn primary", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download the extension${x.version ? ` (v${x.version})` : ""}`, onclick: download }),
+      state.extErr || x.error ? el("span", { class: "bad small", text: state.extErr || x.error }) : null,
+    ]),
+    el("h2", { class: "rfqh", text: "Set it up yourself" }),
+    el("ol", { class: "extsteps" }, [
+      step(1, ["Unzip the download. Keep the ", el("b", { text: "westgate-assistant" }), " folder somewhere it'll stay, like a Westgate folder in your home folder (Chrome runs it from there)."]),
+      step(2, ["In Chrome, go to ", el("code", { text: "chrome://extensions" }), " and turn on ", el("b", { text: "Developer mode" }), " (top right)."]),
+      step(3, ["Click ", el("b", { text: "Load unpacked" }), " and pick the westgate-assistant folder."]),
+      step(4, ["Pin it: the puzzle piece next to the address bar, then the pin next to Westgate Sales Assistant."]),
+      step(5, ["Click its icon and sign in with your @westgatesupply.com email and this app's password. The server is already set to ", el("code", { text: server }), "."]),
+      step(6, ["Open a lead in Close and click the icon: the call card opens on the right."]),
+    ]),
+    el("p", { class: "muted small3", text: "Before your emails can go out, your @westgatesupply.com email has to be connected in Close (Settings, Connected Accounts). To update later: download again, replace the folder, and click the reload arrow on the extension's card in chrome://extensions." }),
+    el("h2", { class: "rfqh", text: "Or have Claude set it up" }),
+    el("p", { class: "muted small3", text: "Download the zip first, then paste this into Claude (the Claude desktop app with Claude Code, so it can reach your files). It walks you through the clicks." }),
+    el("textarea", { class: "extprompt", readonly: true, rows: 14, onclick: (e) => e.target.select() }, [prompt]),
+    el("div", {}, [el("button", { class: "btn", text: state.extCopied ? "Copied" : "Copy the prompt", onclick: copy })]),
+  ]);
+}
+
 function guestsPage() {
   if (state.guests === undefined) { state.guests = null; loadGuests(); }
   const g = state.guestNew || {};

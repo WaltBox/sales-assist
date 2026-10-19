@@ -71,6 +71,9 @@ export const config = {
   // The product keyword line under the sign-off of every line card email (Walt 10/7), so a buyer's inbox search
   // finds us by product word. SIGNATURE_KEYWORDS=0 once the line is pasted into the Close signature instead.
   signatureKeywords: process.env.SIGNATURE_KEYWORDS !== "0",
+  // The first rep (10/19, a second rep joined): what was set up before there were two keeps its name. The memes
+  // already in the library are theirs, and the dial views in Close keep their names (pinned there).
+  ownerEmail: (process.env.OWNER_EMAIL ?? process.env.MEME_LEGACY_OWNER ?? "walt@westgatesupply.com").toLowerCase(),
   // The only phone number an email may carry (Walt 10/7): the company line, on the header's Website line, only when set.
   company: { phone: process.env.COMPANY_PHONE?.trim() || null },
   // westgatesupply.com/linecard goes on the signature line once the page exists.

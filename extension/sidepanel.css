@@ -655,3 +655,8 @@ details.more.inline summary { font-size: 12px; cursor: pointer; color: #53524f; 
 details.objtap { border: 1px solid rgba(17,17,20,.25); background: #fff; padding: 6px 10px; }
 details.objtap summary { cursor: pointer; font-size: 12.5px; color: #53524f; }
 details.objtap .say { margin-top: 6px; }
+
+/* My leads (10/19): company and details on the left, status on the right. */
+.erow.mrow { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.erow.mrow .eflags { flex-direction: column; align-items: flex-end; gap: 4px; }
+.erow.mrow .eto { white-space: normal; }

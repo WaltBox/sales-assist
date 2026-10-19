@@ -547,3 +547,51 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   await store.cacheSet(`rfqline:${key}`, value, 3 * DAY_MS).catch(() => undefined);
   return value;
 }
+
+// ---------- the team's RFQs (10/19: a second rep; everyone sees the team's RFQs on the RFQs page) ----------
+
+/**
+ * Every rep's RFQ line merged into one. A company counts once a day however many reps worked it, its first RFQ is
+ * the team's first, and each one says whose it is. Built from each rep's own line (each cached on its own).
+ */
+export function mergeRfqTimelines(parts: Array<{ rep: string; line: RfqTimeline }>, tz: string, now = new Date()): RfqTimeline & { reps: string[] } {
+  type Entry = { leadId: string; company: string; how: "file" | "email" | "marked"; day: string; reps: string[] };
+  const byKey = new Map<string, Entry>();
+  for (const { rep, line } of parts) for (const dd of line.days) for (const a of dd.accounts) {
+    const k = `${a.leadId}|${dd.day}`;
+    const e = byKey.get(k);
+    if (e) { if (!e.reps.includes(rep)) e.reps.push(rep); } else byKey.set(k, { leadId: a.leadId, company: a.company, how: a.how, day: dd.day, reps: [rep] });
+  }
+  const today = localDay(tz, now).day;
+  const since = parts.map((p) => p.line.since).sort()[0] ?? now.toISOString();
+  const firstDay = new Map<string, string>();
+  for (const e of byKey.values()) if (!firstDay.has(e.leadId) || e.day < firstDay.get(e.leadId)!) firstDay.set(e.leadId, e.day);
+  const byDay = new Map<string, Entry[]>();
+  for (const e of byKey.values()) byDay.set(e.day, [...(byDay.get(e.day) ?? []), e]);
+  const days: Array<RfqTimeline["days"][number] & { accounts: Array<RfqTimeline["days"][number]["accounts"][number] & { reps: string[] }> }> = [];
+  let total = 0, companiesTotal = 0;
+  for (let t = new Date(`${localDay(tz, new Date(since)).day}T12:00:00Z`); ; t = new Date(t.getTime() + DAY_MS)) {
+    const day = t.toISOString().slice(0, 10);
+    const accounts = (byDay.get(day) ?? []).map((e) => ({ leadId: e.leadId, company: e.company, how: e.how, first: firstDay.get(e.leadId) === day, reps: e.reps }));
+    const newCompanies = new Set(accounts.filter((a) => a.first).map((a) => a.leadId)).size;
+    total += accounts.length; companiesTotal += newCompanies;
+    days.push({ day, count: accounts.length, total, newCompanies, companiesTotal, accounts });
+    if (day >= today || days.length > 2000) break;
+  }
+  const dow = (dd: string) => (new Date(`${dd}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const shift = (dd: string, n: number) => new Date(Date.parse(`${dd}T12:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+  const monday = shift(today, -dow(today)), lastMonday = shift(monday, -7);
+  const month = today.slice(0, 7);
+  const lastMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 15)).toISOString().slice(0, 7);
+  const sumLast = (from: number, to: number) => days.slice(Math.max(0, days.length - to), days.length - from).reduce((s, x) => s + x.count, 0);
+  const weekAgo = days[Math.max(0, days.length - 7)].day;
+  const firsts = [...firstDay.values()];
+  return {
+    since, total, thisWeek: sumLast(0, 7), lastWeek: sumLast(7, 14), days,
+    firstToday: firsts.filter((x) => x === today).length, firstThisWeek: firsts.filter((x) => x >= weekAgo).length, companies: firstDay.size,
+    newThisWeek: firsts.filter((x) => x >= monday).length, newLastWeek: firsts.filter((x) => x >= lastMonday && x < monday).length,
+    newThisMonth: firsts.filter((x) => x.startsWith(month)).length, newLastMonth: firsts.filter((x) => x.startsWith(lastMonth)).length,
+    at: parts.map((p) => p.line.at ?? "").sort()[0] || new Date().toISOString(),
+    reps: parts.map((p) => p.rep),
+  };
+}

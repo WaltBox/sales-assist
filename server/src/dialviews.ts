@@ -1,6 +1,7 @@
 import { accountsBoard, type Account } from "./accounts.js";
 import type { Deps } from "./assistant.js";
 import { localParts } from "./rules.js";
+import { config } from "./config.js";
 import { store } from "./store.js";
 
 /**
@@ -89,6 +90,12 @@ export function dialQuery(leadIds: string[], fieldId: string, tz: string, now: D
   };
 }
 
+/** Each rep's own views (10/19): the first rep keeps the names pinned in Close; anyone else's carry their name. */
+export function dialViewName(name: string, rep: { name: string; email: string }): string {
+  if (rep.email.toLowerCase() === config.ownerEmail) return name;
+  return name.replace(/^Dial:/, `Dial (${rep.name.split(/\s+/)[0]}):`);
+}
+
 export async function syncDialViews(d: Deps): Promise<Array<{ name: string; leads: number; id: string; created: boolean }>> {
   const now = d.now?.() ?? new Date();
   const fieldId = await reachedFieldId(d);
@@ -99,11 +106,12 @@ export async function syncDialViews(d: Deps): Promise<Array<{ name: string; lead
   for (const v of DIAL_VIEWS) {
     const ids = talked.filter(v.pick).map((a) => a.leadId);
     const s_query = dialQuery(ids.length ? ids : ["lead_none"], fieldId, d.rep.timeZone, now);
-    const old = existing.find((x) => x.name === v.name || x.name.startsWith(`${v.name} (`));
+    const name = dialViewName(v.name, d.rep);
+    const old = existing.find((x) => x.name === name || x.name.startsWith(`${name} (`));
     const r = old
-      ? await d.close.updateSavedSearch(old.id, { name: v.name, s_query })
-      : await d.close.createSavedSearch({ name: v.name, type: "lead", is_shared: true, s_query });
-    out.push({ name: v.name, leads: ids.length, id: r.id, created: !old });
+      ? await d.close.updateSavedSearch(old.id, { name, s_query })
+      : await d.close.createSavedSearch({ name, type: "lead", is_shared: true, s_query });
+    out.push({ name, leads: ids.length, id: r.id, created: !old });
   }
   return out;
 }

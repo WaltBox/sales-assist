@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+// The hosted app (10/19): new installs use it, so nobody needs a server on their own computer.
+const HOSTED = "https://sales-assist-fawn.vercel.app";
 let current = { server: "", token: "" };
 
 function serverUrl() {
@@ -21,11 +23,11 @@ async function show() {
   $("signin").hidden = !!rep;
   $("save").textContent = rep ? "Save" : "Sign in";
   if (rep) $("who").textContent = `${rep.name} (${rep.email})`;
-  $("webapp").href = current.server || serverUrl() || "http://localhost:3001";
+  $("webapp").href = current.server || serverUrl() || HOSTED;
 }
 
 chrome.storage.local.get(["server", "token", "theme"]).then(({ server, token, theme }) => {
-  current = { server: server || "http://localhost:3001", token: token || "" };
+  current = { server: server || HOSTED, token: token || "" };
   $("server").value = current.server;
   $("theme-select").value = theme || "light";
   document.documentElement.dataset.theme = theme || "light";
@@ -51,7 +53,7 @@ async function save() {
   const server = serverUrl();
   if (!server) { status.textContent = "That server address isn't a valid URL."; return; }
   // Production servers are https:// and need a one-time permission grant.
-  if (!server.startsWith("http://localhost")) {
+  if (!server.startsWith("http://localhost") && server !== HOSTED) {
     const granted = await chrome.permissions.request({ origins: [`${server}/*`] });
     if (!granted) { status.textContent = "Chrome permission is needed to reach the server."; return; }
   }

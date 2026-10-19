@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
@@ -19,12 +20,16 @@ import { queueUntapped,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { deleteMeme, listMemes, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
+import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
-import { dayStats, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
-import { rejections } from "./validate.js";
+import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
+import { rejections, speakAsDeep } from "./validate.js";
+import { formatPhone } from "./rules.js";
+import { myLeads } from "./myleads.js";
+import { EXTENSION_ZIP, packedVersion } from "./extension.js";
+import { guardSending, SendingError, sendingAccount } from "./sending.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
@@ -79,7 +84,7 @@ export function createApp(appDeps: AppDeps) {
     if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
     const t = await logMemeEvent(String(req.params.token), "clicked", req.header("user-agent") ?? null).catch(() => null);
     res.setHeader("Cache-Control", "private, max-age=0, no-store");
-    res.type("html").send(memeLanding({ name, url: memeUrl(name) }, t?.repName ?? "Walt", t?.repEmail ?? "walt@westgatesupply.com"));
+    res.type("html").send(memeLanding({ name, url: memeUrl(name) }, t?.repName ?? "Westgate Supply", t?.repEmail ?? "sales@westgatesupply.com"));
   });
   // The web app (the morning view); the side panel is the other half.
   // Always revalidate the web app's files: a stale app.js or app.css after a deploy is worse than one extra round trip.
@@ -186,24 +191,33 @@ export function createApp(appDeps: AppDeps) {
   });
 
   const repInfoCache = new Map<string, RepInfo>();
+  type RepProfile = { phone?: string | null };
   const depsFor = async (rep: Rep): Promise<Deps> => {
     const close = appDeps.closeFor(rep);
     let info = repInfoCache.get(rep.token);
     if (!info) {
       const me = await close.me();
-      // Drafts are sent from the rep's connected Close email account.
-      const account = me.email_accounts?.find((a) => a.email.toLowerCase() === (rep.email || me.email).toLowerCase() && a.send_status !== "error")
-        ?? me.email_accounts?.find((a) => a.send_status === "ok") ?? me.email_accounts?.[0];
       const name = rep.name || `${me.first_name} ${me.last_name}`;
+      // Emails go out only from the rep's own @westgatesupply.com account in Close (10/19). No other account is
+      // ever picked: before, a rep without theirs connected fell back to whatever account Close had.
+      const account = sendingAccount(me, rep.email || me.email, name);
       info = {
         name, email: rep.email || me.email, closeUserId: me.id, timeZone: rep.timezone || me.last_used_timezone || "America/Los_Angeles",
-        sender: account ? `"${(account.sender?.name || name).replaceAll('"', "")}" <${account.sender?.email || account.email}>` : null,
-        emailAccountId: account?.id ?? null,
-        phone: rep.phone ?? null,
+        sender: account?.sender ?? null,
+        emailAccountId: account?.emailAccountId ?? null,
+        // A phone saved in the app (Settings) wins over reps.json; reps who signed up have no other place for one.
+        phone: (await store.getSetting<RepProfile>(me.id, "repProfile").catch(() => null))?.phone || rep.phone
+          // Anyone after the first rep: their own Close line until they set one (the first rep's emails don't change).
+          || (normalizeEmail(rep.email || me.email) === config.ownerEmail ? null
+            : (await close.phoneNumbers().catch(() => [])).filter((p) => p.user_id === me.id).map((p) => formatPhone(p.number))[0] ?? null),
       };
       repInfoCache.set(rep.token, info);
     }
-    return { close, llm: appDeps.llm, rep: info, website: appDeps.website } satisfies Deps;
+    // Every AI result reads as this rep, never as Walt (10/19: the playbook's examples are Walt's).
+    const name = info.name;
+    const llm = ((opts: Parameters<Llm>[0]) => appDeps.llm(opts).then((r) => ({ ...r, data: speakAsDeep(r.data, name) }))) as Llm;
+    const own = info.sender && info.emailAccountId ? { sender: info.sender, emailAccountId: info.emailAccountId, email: info.email } : null;
+    return { close: guardSending(close, own, info.email), llm, rep: info, website: appDeps.website } satisfies Deps;
   };
   /** Deps for whoever owns a review (webhook and catch-up job have no rep token). */
   const depsForUser = async (closeUserId: string): Promise<Deps | null> => {
@@ -258,14 +272,14 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/guest/:token", async (req, res, next) => {
     try {
       const g = await guestFromToken(String(req.params.token));
-      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      if (!g) throw new GuestError(403, "This link isn't active. Ask whoever sent it to you for a new one.");
       res.json(guestView(g.guest));
     } catch (err) { next(err); }
   });
   app.post("/api/guest/:token/send", async (req, res, next) => {
     try {
       const g = await guestFromToken(String(req.params.token));
-      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      if (!g) throw new GuestError(403, "This link isn't active. Ask whoever sent it to you for a new one.");
       const body = z.object({ company: z.string().max(200), name: z.string().max(100).nullable().optional(), email: z.string().max(200), meme: z.boolean().optional() }).parse(req.body ?? {});
       const d = await depsFor(g.rep);
       res.json(await guestSend(d, g.guest, body));
@@ -275,7 +289,7 @@ export function createApp(appDeps: AppDeps) {
   const guestRoute = (fn: (req: Request, g: NonNullable<Awaited<ReturnType<typeof guestFromToken>>>) => Promise<unknown>) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const g = await guestFromToken(String(req.params.token));
-      if (!g) throw new GuestError(403, "This link isn't active. Ask Walt for a new one.");
+      if (!g) throw new GuestError(403, "This link isn't active. Ask whoever sent it to you for a new one.");
       res.json(await fn(req, g));
     } catch (err) { next(err); }
   };
@@ -321,6 +335,25 @@ export function createApp(appDeps: AppDeps) {
     return { guest: g };
   }));
 
+  // The Chrome extension (10/19): the packed zip for signed-in reps, with its version for the setup page.
+  app.get("/api/extension", authed, route(async () => ({ version: packedVersion(), server: config.publicUrl ?? null })));
+  app.get("/api/extension.zip", authed, (_req, res, next) => {
+    if (!fs.existsSync(EXTENSION_ZIP)) { res.status(404).json({ error: "The extension hasn't been packed yet. Run npm run pack-extension." }); return; }
+    res.type("application/zip").setHeader("content-disposition", 'attachment; filename="westgate-assistant-extension.zip"');
+    res.sendFile(EXTENSION_ZIP, (err) => { if (err) next(err); });
+  });
+  // My leads (10/19): every lead whose Lead owner in Close is you, with where each stands. For the extension.
+  app.get("/api/my-leads", authed, route(async (req, d) => myLeads(d, { fresh: req.query.fresh === "1" })));
+  // The rep's own settings (10/19): the phone number that goes in their emails.
+  app.post("/api/me/profile", authed, route(async (req, d) => {
+    const raw = z.string().max(40).nullable().parse(req.body?.phone ?? null);
+    const digits = (raw ?? "").replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+    if (raw && digits.length !== 10) throw new BadRequest("That doesn't look like a 10-digit phone number.");
+    const phone = digits ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}` : null;
+    await store.putSetting(d.rep.closeUserId, "repProfile", { phone });
+    for (const [k, v] of repInfoCache) if (v.closeUserId === d.rep.closeUserId) repInfoCache.delete(k);
+    return { phone };
+  }));
   app.get("/api/me", authed, route(async (_req, d) => ({
     rep: d.rep,
     lines: await repLines(d).catch(() => []),
@@ -340,6 +373,27 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/stats/week", authed, route(async (_req, d) => weekStats(d)));
   // RFQs over time, for the growth line on the RFQs page.
   app.get("/api/stats/rfqs", authed, route(async (req, d) => rfqTimeline(d, { fresh: req.query.fresh === "1" })));
+  // The team's RFQs (10/19): every rep's RFQ accounts and RFQ line, merged, each tagged with whose it is.
+  // Everything else in the app stays per rep.
+  app.get("/api/team/rfqs", authed, route(async (req, d) => {
+    const fresh = req.query.fresh === "1";
+    const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+    if (!team.some((t) => t.rep.closeUserId === d.rep.closeUserId)) team.unshift(d);
+    const parts = await Promise.all(team.map(async (t) => {
+      const [line, board] = await Promise.all([
+        rfqTimeline(t, { fresh: fresh && t.rep.closeUserId === d.rep.closeUserId }).catch(() => null),
+        accountsBoard(t).catch(() => null),
+      ]);
+      return { rep: t.rep.name, mine: t.rep.closeUserId === d.rep.closeUserId, line, accounts: (board?.accounts ?? []).filter((a) => a.rfq) };
+    }));
+    const accounts = new Map<string, Account & { reps: string[] }>();
+    for (const p of parts) for (const a of p.accounts) {
+      const have = accounts.get(a.leadId);
+      if (have) { if (!have.reps.includes(p.rep)) have.reps.push(p.rep); } else accounts.set(a.leadId, { ...a, reps: [p.rep] });
+    }
+    const lines = parts.filter((p) => p.line).map((p) => ({ rep: p.rep, line: p.line! }));
+    return { reps: parts.map((p) => p.rep), line: lines.length ? mergeRfqTimelines(lines, d.rep.timeZone, d.now?.() ?? new Date()) : null, accounts: [...accounts.values()] };
+  }));
   // Today / this week / this month / all time: the same counts for any period.
   app.get("/api/stats/period/detail", authed, route(async (req, d) => periodDetail(d,
     z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "today"),
@@ -421,20 +475,20 @@ export function createApp(appDeps: AppDeps) {
   app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));
   // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
   app.get("/api/memes", authed, route(async (req, d) => {
-    const memes = await listMemes();
+    const memes = await memesFor(d);
     const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
     const counts = await memeCounts(d);
     const stats = await accountsBoard(d).then((b) => memeStats(d, b.accounts)).catch(() => ({} as MemeStats));
     return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name]?.sent ?? 0, queued: counts[m.name]?.queued ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes", tracking: trackingOn() };
   }));
   // The meme library (Walt 10/5): upload an image or a zip of them, rename (every record follows), retire.
-  app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req) => {
+  app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req, d) => {
     const filename = typeof req.query.name === "string" ? req.query.name : "upload.zip";
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new BadRequest("Send the file as the request body.");
-    return { added: await uploadMemes(filename, req.body) };
+    return { added: await uploadMemes(d, filename, req.body) };
   }));
-  app.post("/api/memes/rename", authed, route(async (req, d) => ({ name: await renameMeme(d.rep.closeUserId, z.string().min(1).max(200).parse(req.body?.from), z.string().min(1).max(200).parse(req.body?.to)) })));
-  app.post("/api/memes/delete", authed, route(async (req) => { await deleteMeme(z.string().min(1).max(200).parse(req.body?.name)); return { ok: true }; }));
+  app.post("/api/memes/rename", authed, route(async (req, d) => ({ name: await renameMeme(d, z.string().min(1).max(200).parse(req.body?.from), z.string().min(1).max(200).parse(req.body?.to)) })));
+  app.post("/api/memes/delete", authed, route(async (req, d) => { await deleteMeme(d, z.string().min(1).max(200).parse(req.body?.name)); return { ok: true }; }));
   app.post("/api/automations/meme", authed, route((req, d) => pickMeme(d, z.string().min(3).max(100).parse(req.body?.lead_id), req.body?.meme === null ? null : z.string().min(1).max(200).parse(req.body?.meme))));
   app.post("/api/automations/:id/skip", authed, route((req, d) => skipAutomation(d, z.string().min(3).max(100).parse(req.params.id))));
   // "Send line card now": the email is ready on the call screen; it goes out while they're on the phone.
@@ -443,8 +497,8 @@ export function createApp(appDeps: AppDeps) {
   const pickedMeme = async (d: Deps, lead: string, name: string | null | undefined) => {
     if (name === undefined) return undefined;
     if (name === null) return null;
-    const m = (await listMemes({ sync: false })).find((x) => x.name === name);
-    if (!m) throw new MemeError(`There's no meme called "${name}".`);
+    const m = (await memesFor(d, { sync: false })).find((x) => x.name === name);
+    if (!m) throw new MemeError(`You don't have a meme called "${name}".`);
     if ((await memesSeen(d)).get(lead)?.has(name)) throw new MemeError("They've already had that meme. Pick another.");
     return m;
   };
@@ -520,7 +574,7 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/leads/:leadId/rescue/send", authed, route(async (req, d) => { const r = await sendRescue(d, leadId(req), z.string().min(3).max(100).parse(req.body?.draft_id)); await stopScheduledFor(d, leadId(req), "you sent the rescue draft yourself.").catch(() => null); return r; }));
   app.post("/api/leads/:leadId/rescue/found", authed, route((req, d) => markRescue(d, leadId(req), req.body?.found === true, typeof req.body?.name === "string" ? req.body.name.slice(0, 80) : null)));
   // Rejected email drafts and which pre-save rule they broke, newest first.
-  app.get("/api/email-rejections", authed, route(async (req) => await rejections(Math.min(Number(req.query.limit) || 100, 500))));
+  app.get("/api/email-rejections", authed, route(async (req, d) => await rejections(Math.min(Number(req.query.limit) || 100, 500), d.rep)));
 
   const SMART_VIEW = /^save_[A-Za-z0-9]{10,}$/;
   const smartViewId = (req: Request) => {
@@ -682,6 +736,7 @@ export function createApp(appDeps: AppDeps) {
     else if (err instanceof AuthError) res.status(err.status).json({ error: err.message, ...(err.status === 428 ? { needsCloseKey: true } : {}) });
     else if (err instanceof z.ZodError) res.status(400).json({ error: "Bad request", details: z.prettifyError(err) });
     else if (err instanceof DuplicateApplyError) res.status(409).json({ error: err.message });
+    else if (err instanceof SendingError) res.status(409).json({ error: err.message });
     else if (err instanceof QueueError) res.status(409).json({ error: err.message });
     else if (err instanceof FollowUpError) res.status(409).json({ error: err.message });
     else if (err instanceof RescueError || err instanceof ShotDownError) res.status(409).json({ error: err.message });
