@@ -372,7 +372,7 @@ function accountsSection() {
       el("input", { class: "heatq", type: "search", placeholder: "Find an account, a name, an email, a number", value: state.acctQ || "", oninput: (e) => { state.acctQ = e.target.value; renderKeepFocus(".heatq"); } }),
       q ? el("span", { class: "muted small3", text: `${all.length} match${all.length === 1 ? "" : "es"} · click a row for its history` }) : null,
     ]),
-    !team && !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
+    !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
       : !all.length ? el("p", { class: "empty", text: q ? "No account matches that." : "None here." })
         : el("div", { class: "sects" }, [rfqNote(all), needs ? null : el("p", { class: "empty", text: "Nothing needs you right now." }), ...groups]),
   ]);
@@ -1057,7 +1057,7 @@ function rfqsPage() {
     rfqGrowth(t, isTeam),
     filters,
     el("p", { class: "muted small3", text: (isTeam ? `The whole team's RFQs (${team.reps.join(", ")}). ` : "") + "Everyone who's sent an RFQ. They're out of the email sequence. The status comes from the emails in Close (quote sent, buyer answered, a PO), or from your own update when the handoff happens outside Close." }),
-    !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
+    !team && !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" })
       : !rows.length && !extras.length ? el("p", { class: "empty", text: pick === "today" ? "No new companies today yet." : pick === "week" ? "No new companies this week yet." : pick === "month" ? "No new companies this month yet." : "No RFQs yet." })
         : el("div", { class: "grid rfqgrid" }, [
           el("div", { class: "gr gh" }, ["Account", "RFQ", "Status", "Waiting on", ""].map((h) => el("span", { class: "label", text: h }))),

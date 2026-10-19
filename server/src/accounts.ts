@@ -455,6 +455,23 @@ export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: bool
   return buildBoard(d, opts, key);
 }
 const BOARD_STALE_OK_MS = 30 * 60_000;
+/**
+ * A teammate's board for the team's RFQs (10/19): never waits on a rebuild. The last snapshot, whatever its age
+ * (refreshed behind it when it's old), or null while the first one is built in the background.
+ */
+export async function cachedBoard(d: Deps): Promise<Board | null> {
+  const key = `${d.rep.closeUserId}:45`;
+  let hit = boardCache.get(key);
+  if (!hit) {
+    const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
+    if (snap) { hit = { at: snap.at, value: snap.value }; boardCache.set(key, hit); }
+  }
+  if ((!hit || Date.now() - hit.at > BOARD_STALE_OK_MS) && !boardRebuilding.has(key)) {
+    boardRebuilding.add(key);
+    background(buildBoard(d, {}, key).finally(() => boardRebuilding.delete(key)), "teammate board");
+  }
+  return hit?.value ?? null;
+}
 const boardRebuilding = new Set<string>();
 
 async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number }, key: string): Promise<Board> {

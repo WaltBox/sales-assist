@@ -22,7 +22,7 @@ import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSessi
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
 import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { finishTask, tasksView, accountsBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
@@ -380,11 +380,13 @@ export function createApp(appDeps: AppDeps) {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
     if (!team.some((t) => t.rep.closeUserId === d.rep.closeUserId)) team.unshift(d);
     const parts = await Promise.all(team.map(async (t) => {
+      const mine = t.rep.closeUserId === d.rep.closeUserId;
+      // Yours as usual; a teammate's from what's saved, so their numbers never hold up your page.
       const [line, board] = await Promise.all([
-        rfqTimeline(t, { fresh: fresh && t.rep.closeUserId === d.rep.closeUserId }).catch(() => null),
-        accountsBoard(t).catch(() => null),
+        rfqTimeline(t, mine ? { fresh } : { savedOk: true }).catch(() => null),
+        (mine ? accountsBoard(t) : cachedBoard(t)).catch(() => null),
       ]);
-      return { rep: t.rep.name, mine: t.rep.closeUserId === d.rep.closeUserId, line, accounts: (board?.accounts ?? []).filter((a) => a.rfq) };
+      return { rep: t.rep.name, mine, line, accounts: (board?.accounts ?? []).filter((a) => a.rfq) };
     }));
     const accounts = new Map<string, Account & { reps: string[] }>();
     for (const p of parts) for (const a of p.accounts) {
