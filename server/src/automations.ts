@@ -69,6 +69,47 @@ const DAY = 24 * 3600 * 1000;
 const RECHECK_WITHIN = 90 * 60 * 1000; // re-check anything sending in the next 90 minutes…
 const RECHECK_EVERY = 10 * 60 * 1000; // …at most every 10 minutes
 
+/**
+ * Slow down (Walt 10/19): a lower daily limit for this rep's automatic emails, between full speed and off. What's
+ * over the limit goes out on the next business mornings, most overdue first.
+ */
+export const PACES = [DAILY_CAP, 40, 20, 10] as const;
+export async function dailyCapFor(d: Deps): Promise<number> {
+  const n = await store.getSetting<number>(d.rep.closeUserId, "dailyCap").catch(() => null);
+  return typeof n === "number" && (PACES as readonly number[]).includes(n) ? n : DAILY_CAP;
+}
+export async function setDailyCap(d: Deps, cap: number) {
+  if (!(PACES as readonly number[]).includes(cap)) throw new FollowUpError(`Pick one of ${PACES.join(", ")} a day.`);
+  await store.putSetting(d.rep.closeUserId, "dailyCap", cap);
+  return { dailyCap: cap };
+}
+
+/**
+ * Slowing down after the morning plan (10/19): today's emails are already queued in Close. Keep the first `cap`
+ * (the planner queues the most overdue first) and pull back the rest: unscheduled and removed from Close, since
+ * they're unsent drafts the app wrote and a fresh one is written when the company's turn comes again. They're back
+ * in line for the next mornings.
+ */
+export async function slowToday(d: Deps, cap: number, opts: { dryRun?: boolean } = {}) {
+  const now = d.now?.() ?? new Date();
+  const today = localDay(now, d.rep.timeZone);
+  const queued = (await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 2 * DAY).toISOString()))
+    .filter((a) => a.status === "scheduled" && a.scheduledFor && localDay(new Date(a.scheduledFor), d.rep.timeZone) === today && new Date(a.scheduledFor) > now)
+    .sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? ""));
+  const extra = queued.slice(cap);
+  if (opts.dryRun) return { queued: queued.length, pulled: extra.length, companies: extra.map((a) => a.company) };
+  const pulled: string[] = [];
+  for (const a of extra) {
+    try {
+      await d.close.unschedule(a.id);
+      await d.close.deleteEmail(a.id).catch(() => undefined);
+      await store.putAutomation({ ...a, status: "stopped", statusAt: new Date().toISOString(), note: `Slowed down to ${cap} a day: back in line for a later morning.` });
+      pulled.push(a.company);
+    } catch (e) { console.error(`[slow down] ${a.company}:`, (e as Error).message); }
+  }
+  return { queued: queued.length, pulled: pulled.length, companies: pulled };
+}
+
 export async function automationsOn(d: Deps) {
   return (await store.getSetting<boolean>(d.rep.closeUserId, "autoBumps")) === true;
 }
@@ -218,9 +259,10 @@ async function planDay(d: Deps, now: Date) {
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());
+  const cap = await dailyCapFor(d);
   for (const [i, a] of due.entries()) {
-    if (plannedToday + planned.length >= DAILY_CAP) {
-      skipped.push({ company: a.company, why: `Daily limit of ${DAILY_CAP} reached; it goes out tomorrow.` });
+    if (plannedToday + planned.length >= cap) {
+      skipped.push({ company: a.company, why: `Daily limit of ${cap} reached; it goes out on a later morning.` });
       continue;
     }
     const nth = a.cadence.nth;
@@ -547,10 +589,11 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   // No day over the cap (10/12): the overflow slides to the next business morning, the most overdue keeping their day.
   out.sort((x, y) => x.sendOn.localeCompare(y.sendOn));
   const perDay = new Map<string, number>();
+  const cap = await dailyCapFor(d);
   for (const f of out) {
     if (f.held) continue;
     let day = localDay(new Date(f.sendOn), d.rep.timeZone);
-    while ((perDay.get(day) ?? 0) >= DAILY_CAP) {
+    while ((perDay.get(day) ?? 0) >= cap) {
       const next = morningOf(new Date(new Date(f.sendOn).getTime() + DAY), d.rep.timeZone);
       f.sendOn = next.toISOString();
       if (f.preview) f.preview = f.preview; // the wording's weekday line is close enough a day later
@@ -676,7 +719,9 @@ export async function automationsView(d: Deps) {
     future: future.filter((f) => !f.held),
     held: future.filter((f) => f.held),
     lastPlanned: await store.getSetting<string>(d.rep.closeUserId, "lastPlanned"),
-    dailyCap: DAILY_CAP,
+    dailyCap: await dailyCapFor(d),
+    fullCap: DAILY_CAP,
+    paces: PACES,
     upcoming: withBody.filter((a) => a.status === "scheduled").sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? "")),
     sent: withBody.filter((a) => a.status === "sent").sort((a, b) => (b.statusAt ?? "").localeCompare(a.statusAt ?? "")),
     other: withBody.filter((a) => ["skipped", "stopped", "failed"].includes(a.status)),

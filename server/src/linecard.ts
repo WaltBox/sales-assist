@@ -202,7 +202,7 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
 }
 
 /** Send it now: one email, to the address the rep confirmed on the call, line card attached. */
-export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null }) {
+export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null; cc?: string[] | null }) {
   const to = req.to.trim();
   if (!EMAIL.test(to)) throw new LineCardError(`"${to}" doesn't look like an email address.`);
   const email = await lineCardFor(d, leadId, { to, name: req.name, referredBy: req.referredBy, askFor: req.askFor, buys: req.buys, cold: req.cold, meme: req.meme, format: req.format });
@@ -229,7 +229,7 @@ export async function sendLineCard(d: Deps, leadId: string, req: { to: string; n
   const attachments = email.attach ? await lineCardAttachments(d).catch(() => []) : [];
   if (email.attach && !attachments.length) throw new LineCardError("Couldn't load the line card PDF from Close, so nothing was sent. Try again, or send it from Close.");
   const draft = await d.close.createDraftEmail(leadId, {
-    contactId, to: [to], subject: email.subject, body: email.body, html: email.html, attachments,
+    contactId, to: [to], cc: (req.cc ?? []).filter((c) => c && c.toLowerCase() !== to.toLowerCase()), subject: email.subject, body: email.body, html: email.html, attachments,
     sender: d.rep.sender ?? null, emailAccountId: d.rep.emailAccountId ?? null,
     inReplyToId: email.reply?.id ?? null, threadId: email.reply?.threadId ?? null,
   });
