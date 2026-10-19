@@ -23,7 +23,7 @@ import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store
 import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
+import { automationsView, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
@@ -344,6 +344,25 @@ export function createApp(appDeps: AppDeps) {
   });
   // My leads (10/19): every lead whose Lead owner in Close is you, with where each stands. For the extension.
   app.get("/api/my-leads", authed, route(async (req, d) => myLeads(d, { fresh: req.query.fresh === "1" })));
+  // The team (10/19): the owner sees who's signed up and can reset a teammate's password. A reset removes only
+  // the login; the rep, their Close key and their data stay, and the sign-in screen asks them for a new password.
+  const ownerOnly = (d: Deps) => { if (normalizeEmail(d.rep.email) !== config.ownerEmail) throw new AuthError(403, "Only the account owner can do that."); };
+  app.get("/api/team", authed, route(async (_req, d) => {
+    ownerOnly(d);
+    const reps = await allReps();
+    return { reps: await Promise.all(reps.map(async (r) => {
+      const u = await store.getUser(normalizeEmail(r.email)).catch(() => null);
+      return { name: r.name, email: normalizeEmail(r.email), hasPassword: !!u, lastLogin: u?.lastLogin ?? null, you: normalizeEmail(r.email) === normalizeEmail(d.rep.email) };
+    })) };
+  }));
+  app.post("/api/team/reset-password", authed, route(async (req, d) => {
+    ownerOnly(d);
+    const email = normalizeEmail(z.string().max(200).parse(req.body?.email));
+    if (email === normalizeEmail(d.rep.email)) throw new AuthError(400, "That's you. Sign out and use your own password, or ask for help.");
+    if (!(await repByEmail(email))) throw new AuthError(404, "There's no rep with that email.");
+    await store.deleteUser(email);
+    return { email, reset: true };
+  }));
   // The rep's own settings (10/19): the phone number that goes in their emails.
   app.post("/api/me/profile", authed, route(async (req, d) => {
     const raw = z.string().max(40).nullable().parse(req.body?.phone ?? null);
@@ -356,6 +375,7 @@ export function createApp(appDeps: AppDeps) {
   }));
   app.get("/api/me", authed, route(async (_req, d) => ({
     rep: d.rep,
+    owner: normalizeEmail(d.rep.email) === config.ownerEmail,
     lines: await repLines(d).catch(() => []),
     stats: await repStats(d).catch(() => null),
   })));
@@ -441,6 +461,14 @@ export function createApp(appDeps: AppDeps) {
   // The side panel's Emails tab: sent and queued automatic emails, with opens and replies since (10/6).
   app.get("/api/emails/sent", authed, route(async (req, d) => ({ emails: await sentEmailsView(d, Math.min(Number(req.query.days) || 7, 30)) })));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));
+  // Slow down (10/19): a lower daily limit. dry_run says how many of today's queued emails it would pull back.
+  app.post("/api/automations/pace", authed, route(async (req, d) => {
+    const cap = z.number().int().parse(req.body?.daily_cap);
+    if (req.body?.dry_run === true) return slowToday(d, cap, { dryRun: true });
+    const set = await setDailyCap(d, cap);
+    const today = req.body?.pull_back_today === true ? await slowToday(d, cap) : null;
+    return { ...set, today };
+  }));
   app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));
   // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.

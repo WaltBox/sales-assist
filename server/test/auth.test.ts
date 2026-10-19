@@ -11,7 +11,10 @@ import { roddaCall } from "../src/fixtures.js";
 
 const close = new FakeClose({ calls: [roddaCall()] }); // its me() is walt@westgatesupply.com
 const app = createApp({
-  reps: new Map([["old-token-old-token-old-token-1", { token: "old-token-old-token-old-token-1", name: "Walt Boxwell", email: "walt@westgatesupply.com", close_api_key: "x", timezone: "America/Los_Angeles" }]]),
+  reps: new Map([
+    ["old-token-old-token-old-token-1", { token: "old-token-old-token-old-token-1", name: "Walt Boxwell", email: "walt@westgatesupply.com", close_api_key: "x", timezone: "America/Los_Angeles" }],
+    ["uly-token-uly-token-uly-token-12", { token: "uly-token-uly-token-uly-token-12", name: "Ulysses Vazquez-Perez", email: "ulysses@westgatesupply.com", close_api_key: "y", timezone: "America/Chicago" }],
+  ]),
   closeFor: () => close, llm: demoLlm, website: async () => null,
 });
 let server: ReturnType<typeof app.listen>;
@@ -64,4 +67,27 @@ test("sessions can't be forged or used after they expire", async () => {
   assert.equal(readSession(`${v}.${body}.AAAA`), null);
   assert.equal(readSession(t, Date.now() + 31 * 86400000), null, "expired after 30 days");
   assert.equal((await me(`${v}.${body}.AAAA`)).status, 401);
+});
+
+test("reset password (10/19): only the owner can, never their own; the teammate makes a new one at sign-in", async () => {
+  const get = async (path: string, token: string) => { const r = await fetch(base + path, { headers: { authorization: `Bearer ${token}` } }); return { status: r.status, body: await r.json() as Record<string, unknown> }; };
+  const as = async (path: string, token: string, body: unknown) => { const r = await fetch(base + path, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() as Record<string, unknown> }; };
+  assert.equal((await post("/api/auth/signup", { email: "ulysses@westgatesupply.com", password: "first password!!" })).status, 200);
+  const walt = issueSession("walt@westgatesupply.com"), uly = issueSession("ulysses@westgatesupply.com");
+  assert.equal((await me(walt).then((r) => r.json()) as { owner: boolean }).owner, true);
+  assert.equal((await me(uly).then((r) => r.json()) as { owner: boolean }).owner, false);
+
+  const team = await get("/api/team", walt);
+  const row = (team.body.reps as Array<{ email: string; hasPassword: boolean }>).find((r) => r.email === "ulysses@westgatesupply.com")!;
+  assert.equal(row.hasPassword, true);
+  assert.equal((await get("/api/team", uly)).status, 403, "a teammate can't see or reset");
+  assert.equal((await as("/api/team/reset-password", uly, { email: "walt@westgatesupply.com" })).status, 403);
+  assert.equal((await as("/api/team/reset-password", walt, { email: "walt@westgatesupply.com" })).status, 400, "not your own");
+  assert.equal((await as("/api/team/reset-password", walt, { email: "nobody@westgatesupply.com" })).status, 404);
+
+  assert.equal((await as("/api/team/reset-password", walt, { email: "ulysses@westgatesupply.com" })).status, 200);
+  assert.deepEqual((await post("/api/auth/check", { email: "ulysses@westgatesupply.com" })).body, { email: "ulysses@westgatesupply.com", hasAccount: false, needsCloseKey: false }, "makes a new password, no Close key again");
+  assert.equal((await post("/api/auth/login", { email: "ulysses@westgatesupply.com", password: "first password!!" })).status, 401, "the old one is gone");
+  assert.equal((await post("/api/auth/signup", { email: "ulysses@westgatesupply.com", password: "a brand new one!" })).status, 200);
+  assert.equal((await post("/api/auth/login", { email: "ulysses@westgatesupply.com", password: "a brand new one!" })).status, 200);
 });

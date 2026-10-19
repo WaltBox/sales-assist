@@ -34,7 +34,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
+function pageFromHash() { return location.hash === "#team" ? "team" : location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -111,6 +111,7 @@ function render() {
     : state.page === "tasks" ? [err, tasksPage()]
     : state.page === "guests" ? [err, guestsPage()]
     : state.page === "extension" ? [extensionPage()]
+    : state.page === "team" ? [teamPage()]
       : state.page === "heat" ? [err, heatPage()]
         : [hello(), err, accountsSection()]));
 }
@@ -203,6 +204,7 @@ function topBar() {
       // The phone that goes in your emails (10/19, each rep their own).
       state.me ? el("button", { class: "linkbtn", title: "The phone number in your line card emails", text: state.me.rep.phone ? `Email phone ${prettyPhone(state.me.rep.phone)}` : "Add your phone", onclick: setPhone }) : null,
       el("button", { class: "linkbtn", text: "Get the extension", onclick: () => go("extension") }),
+      state.me && state.me.owner ? el("button", { class: "linkbtn", text: "Team", onclick: () => go("team") }) : null,
       el("button", { class: "linkbtn", text: "Sign out", onclick: signOut }),
     ]),
   ]));
@@ -1594,6 +1596,36 @@ async function loadGuests() {
   try { state.guests = (await api("/api/guests")).guests; } catch (e) { state.guestsErr = e.message; }
   render();
 }
+// ---------- the team (10/19): who's signed up, and a password reset for a teammate (owner only) ----------
+async function loadTeam() {
+  try { state.team = await api("/api/team"); } catch (e) { state.team = { error: e.message }; }
+  render();
+}
+function teamPage() {
+  if (state.team === undefined) { state.team = null; loadTeam(); }
+  const t = state.team;
+  const reset = async (r) => {
+    if (!confirm(`Reset ${r.name}'s password?\n\nThey'll make a new one the next time they sign in: open the web app, type ${r.email}, and pick a new password. Their Close connection, leads and emails all stay.`)) return;
+    state.teamBusy = r.email; render();
+    try { await api("/api/team/reset-password", { email: r.email }); state.teamMsg = `Done. Tell ${r.name.split(" ")[0]} to open ${location.origin}, type ${r.email}, and make a new password (10+ characters). Then use the same one in the extension.`; }
+    catch (e) { state.teamMsg = e.message; }
+    state.teamBusy = null; await loadTeam();
+  };
+  const when = (iso) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never");
+  return el("section", {}, [
+    el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Team" })]),
+    el("p", { class: "muted small3", text: "Everyone using the app. If someone forgets their password, reset it here: they pick a new one the next time they sign in." }),
+    state.teamMsg ? el("p", { class: "gmsgok", text: state.teamMsg }) : null,
+    !t ? el("p", { class: "loading", text: "Loading the team…" })
+      : t.error ? el("p", { class: "empty", text: t.error })
+        : el("div", { class: "teamlist" }, t.reps.map((r) => el("div", { class: "teamrow" }, [
+          el("div", {}, [el("strong", { text: r.name }), el("span", { class: "muted small3", text: ` ${r.email}${r.you ? " · you" : ""}` })]),
+          el("span", { class: "muted small3", text: r.hasPassword ? `Last sign-in ${when(r.lastLogin)}` : "No password yet: they make one at sign-in" }),
+          r.you || !r.hasPassword ? el("span") : el("button", { class: "btn small", disabled: state.teamBusy === r.email, text: state.teamBusy === r.email ? "Resetting…" : "Reset password", onclick: () => reset(r) }),
+        ]))),
+  ]);
+}
+
 // ---------- the Chrome extension (10/19): download it, set it up, or have Claude set it up ----------
 function extensionPrompt(server) {
   return [
@@ -1755,6 +1787,28 @@ function tasksPage() {
   ]);
 }
 
+// Slow down (Walt 10/19): fewer automatic emails a day, without turning them off. The rest wait their turn.
+function paceBox(au) {
+  const pick = async (cap) => {
+    state.mailBusy = true; render();
+    try {
+      const dry = await api("/api/automations/pace", { daily_cap: cap, dry_run: true });
+      let pull = false;
+      if (dry.pulled > 0) pull = confirm(`${dry.queued} emails are queued to go out this morning. Pull back ${dry.pulled} so only ${cap} go today? They go back in line for the next mornings.\n\nOK: pull them back. Cancel: today stays as is, the new limit starts tomorrow.`);
+      const r = await api("/api/automations/pace", { daily_cap: cap, pull_back_today: pull });
+      state.paceMsg = cap >= au.fullCap ? "Back to full speed." : `Slowed to ${cap} a day.${r.today && r.today.pulled ? ` Pulled back ${r.today.pulled} of today's.` : ""}`;
+      state.paceOpen = false;
+    } catch (e) { alert(e.message); }
+    state.mailBusy = false;
+    await reloadAutos();
+  };
+  const label = (n) => (n === au.fullCap ? `Full speed · ${n} a day` : `${n} a day`);
+  return el("div", { class: "pacebox" }, [
+    el("p", {}, [el("strong", { text: "How many automatic emails a day? " }), "Anyone over the limit waits for the next morning, most overdue first. Nobody's dropped."]),
+    el("div", { class: "pacechips" }, (au.paces || [au.fullCap, 40, 20, 10]).map((n) => el("button", { class: `btn small${n === au.dailyCap ? " primary" : ""}`, disabled: state.mailBusy || n === au.dailyCap, text: label(n), onclick: () => pick(n) }))),
+  ]);
+}
+
 function emailsSection() {
   const au = state.autos;
   const toggle = async () => {
@@ -1785,9 +1839,12 @@ function emailsSection() {
       au ? el("div", { class: "acts" }, [
         el("span", { class: `switch${au.enabled ? " on" : ""}` }, [el("i"), au.enabled ? "On" : "Off"]),
         el("button", { class: "btn small", disabled: state.mailBusy, text: au.enabled ? "Turn off" : "Turn on", onclick: toggle }),
+        el("button", { class: `btn small${au.dailyCap < au.fullCap ? " slowon" : ""}`, disabled: state.mailBusy, text: au.dailyCap < au.fullCap ? `Slowed: ${au.dailyCap} a day` : "Slow down", onclick: () => { state.paceOpen = !state.paceOpen; render(); } }),
         el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today's emails now", onclick: planNow }),
       ]) : null,
     ]),
+    au && state.paceOpen ? paceBox(au) : null,
+    state.paceMsg ? el("p", { class: "muted small3", text: state.paceMsg }) : null,
     au && !au.enabled ? el("p", { class: "offnote", text: "Automatic emails are off. Everything below shows what would go out; nothing sends until you turn them on." }) : null,
     // Test mode (10/1): only Test Lead Fabrication gets them until it's turned off.
     au && au.testMode ? el("div", { class: "testnote" }, [

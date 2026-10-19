@@ -45,6 +45,8 @@ export interface Store {
 
   getUser(email: string): Promise<User | null>;
   putUser(u: User): Promise<void>;
+  /** Remove a login (a password reset, 10/19): the rep and their Close key stay; they make a new password at sign-in. */
+  deleteUser(email: string): Promise<void>;
   getRep(email: string): Promise<StoredRep | null>;
   putRep(r: StoredRep): Promise<void>;
   listReps(): Promise<StoredRep[]>;
@@ -115,6 +117,7 @@ export class FileStore implements Store {
   async putSetting<T>(repId: string, key: string, value: T) { this.m.settings[`${repId}:${key}`] = structuredClone(value); this.save(); }
   async getUser(email: string) { return structuredClone(this.m.users[email]) ?? null; }
   async putUser(u: User) { this.m.users[u.email] = structuredClone(u); this.save(); }
+  async deleteUser(email: string) { delete this.m.users[email]; this.save(); }
   async getRep(email: string) { return structuredClone(this.m.reps[email]) ?? null; }
   async putRep(r: StoredRep) { this.m.reps[r.email] = structuredClone(r); this.save(); }
   async listReps() { return Object.values(this.m.reps).map((r) => structuredClone(r)); }
@@ -207,6 +210,9 @@ export class SupabaseStore implements Store {
     const rows = await this.req<Array<{ email: string; password_hash: string; created_at: string; last_login: string | null }>>("GET", `users?${this.q({ email: `eq.${email}`, select: "*" })}`);
     const r = rows[0];
     return r ? { email: r.email, passwordHash: r.password_hash, createdAt: r.created_at, lastLogin: r.last_login } : null;
+  }
+  async deleteUser(email: string) {
+    await this.req("DELETE", `users?${this.q({ email: `eq.${email}` })}`, undefined, "return=minimal");
   }
   async putUser(u: User) {
     await this.req("POST", "users?on_conflict=email", { email: u.email, password_hash: u.passwordHash, created_at: u.createdAt, last_login: u.lastLogin }, "resolution=merge-duplicates,return=minimal");

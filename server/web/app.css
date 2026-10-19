@@ -758,3 +758,15 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .extpage code { font-family: var(--mono, ui-monospace, monospace); font-size: .92em; background: rgba(17, 17, 20, .06); padding: 1px 5px; }
 .extpage .extprompt { width: 100%; max-width: 820px; box-sizing: border-box; font: 13px/1.5 var(--mono, ui-monospace, monospace); padding: 12px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); resize: vertical; margin: 6px 0 10px; }
 .extpage .rfqh { margin-top: 26px; }
+
+/* Slow down (10/19). */
+.pacebox { border: 1px solid var(--ink-line, rgba(17,17,20,.2)); background: #fff; padding: 12px 14px; margin: 10px 0 14px; }
+.pacebox p { margin: 0 0 10px; }
+.pacechips { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn.slowon { border-color: var(--amber, #8a5a00); color: var(--amber, #8a5a00); }
+
+/* Team (10/19). */
+.teamlist { display: grid; gap: 8px; max-width: 900px; }
+.teamrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 16px; align-items: center; background: #fff; border: 1px solid var(--ink-line, rgba(17,17,20,.2)); padding: 12px 14px; }
+@media (max-width: 640px) { .teamrow { grid-template-columns: 1fr; gap: 6px; } }
+.gmsgok { color: #1f6b3a; background: #e7f3ea; border: 1px solid #1f6b3a; padding: 10px 12px; max-width: 900px; }
