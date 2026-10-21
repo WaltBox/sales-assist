@@ -1737,13 +1737,13 @@ function guestUpload(x) {
     try {
       const rows = await window.readSheet(f);
       const r = await api(`/api/guests/${x.id}/list`, { name: f.name.replace(/\.[^.]+$/, ""), rows });
-      set({ msg: `${r.list.total} companies loaded for ${x.name.split(" ")[0]}. They'll see them when they open their link.` });
+      set({ msg: `${r.list.total} companies loaded for ${x.name.split(" ")[0]}${r.filled ? ` (${r.filled} phones filled in from Close)` : ""}.${r.notFound ? ` ${r.notFound} had no phone in Close and were left out.` : ""} They'll see them when they open their link.` });
       await loadGuests();
     } catch (err) { set({ error: err.message }); }
   } });
   return el("div", { class: "gi-up" }, [
-    el("button", { class: "btn small", disabled: !!u.busy, text: u.busy ? "Loading…" : x.list ? "Upload a new list for them" : "Upload their list", onclick: () => input.click() }), input,
-    el("span", { class: "sub2", text: "CSV or Excel, with a company and a phone column." }),
+    el("button", { class: "btn small", disabled: !!u.busy, text: u.busy ? "Loading… (filling phones in from Close can take a minute)" : x.list ? "Upload a new list for them" : "Upload their list", onclick: () => input.click() }), input,
+    el("span", { class: "sub2", text: "CSV or Excel. A Close export works too: phones, states and contacts are filled in from Close." }),
     u.msg ? el("span", { class: "gmsgok small3", text: u.msg }) : null,
     u.error ? el("span", { class: "bad small", text: u.error }) : null,
   ]);

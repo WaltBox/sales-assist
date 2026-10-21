@@ -14,12 +14,15 @@ function parseCsv(text) {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   return rows.filter((r) => r.some((x) => x.trim()));
 }
-const FIELDS = [["company", /company|account|business|^name$/i], ["phone", /phone|number|tel/i], ["askFor", /ask|contact|buyer|person|who/i], ["what", /what|description|about|they do/i],
-  ["city", /city|town/i], ["state", /^state|province|^st$/i], ["email", /email/i], ["notes", /note/i], ["outcome", /outcome|result/i]];
+// Close's own export works too (10/21): display_name is the company, url the website; its summary and count
+// columns ("contacts_summary", "num_calls", "custom.Lead owner.name") aren't a contact or a phone.
+const FIELDS = [["company", /company|account|business|display_name|lead ?name|^name$/i], ["phone", /phone|^tel|telephone/i], ["askFor", /ask|contact|buyer|person|who/i], ["what", /what|description|about|they do/i],
+  ["city", /city|town/i], ["state", /^state$|^state\b|province|^st$/i], ["email", /email/i], ["notes", /note/i], ["outcome", /outcome|result/i], ["website", /^url$|website|web site|domain/i]];
+const SKIP = /summary|count|num_|^custom\.|\.id$|status_label|last_call|date/i;
 function toRows(table) {
   const head = table[0].map((x) => String(x).trim());
   const col = {};
-  for (const [k, re] of FIELDS) { const at = head.findIndex((x, j) => re.test(x) && !Object.values(col).includes(j)); if (at >= 0) col[k] = at; }
+  for (const [k, re] of FIELDS) { const at = head.findIndex((x, j) => re.test(x) && !SKIP.test(x) && !Object.values(col).includes(j)); if (at >= 0) col[k] = at; }
   return table.slice(1).map((r) => Object.fromEntries(Object.entries(col).map(([k, j]) => [k, r[j] ?? ""])));
 }
 async function readFile(file) {

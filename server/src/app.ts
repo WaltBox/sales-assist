@@ -31,7 +31,7 @@ import { myLeads } from "./myleads.js";
 import { EXTENSION_ZIP, packedVersion } from "./extension.js";
 import { guardSending, SendingError, sendingAccount } from "./sending.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
-import { createGuest, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
+import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -323,7 +323,10 @@ export function createApp(appDeps: AppDeps) {
     } catch (err) { next(err); }
   };
   app.get("/api/guest/:token/list", guestRoute(async (_req, g) => ({ list: await getList(g.repId, g.guest.id) })));
-  app.post("/api/guest/:token/list", guestRoute(async (req, g) => ({ list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] }) })));
+  app.post("/api/guest/:token/list", guestRoute(async (req, g) => {
+    const fill = await fillFromClose(await depsFor(g.rep), Array.isArray(req.body?.rows) ? req.body.rows : []);
+    return { list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows }), filled: fill.filled, notFound: fill.notFound };
+  }));
   // Taps, batched by the page and sent one save at a time; Close notes go after the answer (10/15).
   const Mark = z.object({ i: z.number().int().min(0), outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() });
   app.post("/api/guest/:token/marks", guestRoute(async (req, g) => {
@@ -349,8 +352,10 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/guests/:id/list", authed, route(async (req, d) => {
     const guest = (await listGuests(d.rep.closeUserId)).find((g) => g.id === String(req.params.id));
     if (!guest) throw new GuestError(404, "No guest link with that id.");
-    const list = await putList(d.rep.closeUserId, guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] });
-    return { list: listSummary(list) };
+    // A Close export has no phones: those are filled in from Close first (10/21).
+    const fill = await fillFromClose(d, Array.isArray(req.body?.rows) ? req.body.rows : []);
+    const list = await putList(d.rep.closeUserId, guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows });
+    return { list: listSummary(list), filled: fill.filled, notFound: fill.notFound };
   }));
   app.get("/api/guests/:id/list.csv", authed, async (req, res, next) => {
     try {

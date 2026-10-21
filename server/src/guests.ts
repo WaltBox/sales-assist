@@ -348,3 +348,57 @@ export async function guestFollowUps(d: Deps, guest: Guest, opts: { fresh?: bool
   if (seenChanged) await store.putSetting(repId, followKey(guest.id), seen);
   return { at: now.toISOString(), rows: out };
 }
+
+// ---------- filling a sheet in from Close (10/21: a Close export has no phone column) ----------
+
+type RawSheetRow = Record<string, unknown>;
+type CloseLeadForSheet = { id: string; display_name: string; url: string | null; description?: string | null; addresses?: Array<{ city?: string; state?: string }>;
+  contacts?: Array<{ name?: string | null; title?: string | null; phones?: Array<{ phone: string }>; emails?: Array<{ email: string }> }> };
+
+/**
+ * A row with a company but no phone (a Close export, or a list of names) is looked up in Close by name, then by
+ * website, and gets the main line, the buyer to ask for, the city and state, and a line on what they do. Rows that
+ * already have a phone are left as they are. Reading only.
+ */
+export async function fillFromClose(d: Deps, rows: RawSheetRow[]): Promise<{ rows: RawSheetRow[]; filled: number; notFound: number }> {
+  const str = (v: unknown) => String(v ?? "").trim();
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const host = (u: string) => u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+  const fmt = (p: string) => { const n = p.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, ""); return n.length === 10 ? `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}` : p; };
+  const fields = "id,display_name,url,description,addresses,contacts";
+  const todo = rows.filter((r) => str(r.company) && !str(r.phone)).slice(0, 1500);
+  let filled = 0, notFound = 0;
+  const find = async (r: RawSheetRow): Promise<CloseLeadForSheet | null> => {
+    const company = str(r.company), site = host(str(r.website));
+    const byName = await d.close.searchLeads<CloseLeadForSheet>(`name:"${company.replace(/"/g, "")}"`, { skip: 0, limit: 10, fields }).catch(() => ({ data: [] as CloseLeadForSheet[] }));
+    const hit = byName.data.find((l) => norm(l.display_name) === norm(company));
+    if (hit || !site) return hit ?? null;
+    const bySite = await d.close.searchLeads<CloseLeadForSheet>(`url:"${site}"`, { skip: 0, limit: 10, fields }).catch(() => ({ data: [] as CloseLeadForSheet[] }));
+    return bySite.data.find((l) => host(l.url ?? "") === site) ?? null;
+  };
+  let at = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (at < todo.length) {
+      const r = todo[at++];
+      const l = await find(r).catch(() => null);
+      if (!l) { notFound++; continue; }
+      const cs = l.contacts ?? [];
+      const person = (c: (typeof cs)[number]) => !!c.name && !/main office|office|front desk|reception|general/i.test(c.name);
+      const buyer = cs.find((c) => person(c) && /purchas|buyer|procure/i.test(c.title ?? "")) ?? cs.find(person);
+      const main = cs.find((c) => /main office/i.test(c.name ?? "") && c.phones?.length) ?? cs.find((c) => c.phones?.length);
+      const phone = main?.phones?.[0]?.phone ?? buyer?.phones?.[0]?.phone;
+      if (!phone) { notFound++; continue; }
+      const addr = l.addresses?.[0] ?? {};
+      const desc = str(l.description).replace(/\s+/g, " ");
+      const sentence = desc ? (desc.match(/^.{60,300}?[.!?](?=\s+[A-Z]|$)/)?.[0] ?? desc.slice(0, 280)).trim() : "";
+      r.phone = fmt(phone);
+      if (!str(r.askFor) || /main office|\+\d/i.test(str(r.askFor))) r.askFor = buyer ? `${buyer.name}${buyer.title ? ` (${buyer.title})` : ""}` : "";
+      if (!str(r.what) || str(r.what).length > 400) r.what = sentence || str(r.what);
+      if (!str(r.city)) r.city = addr.city ?? "";
+      if (!str(r.state)) r.state = addr.state ?? "";
+      if (!str(r.email) && buyer?.emails?.[0]?.email) r.email = buyer.emails[0].email;
+      filled++;
+    }
+  }));
+  return { rows, filled, notFound };
+}

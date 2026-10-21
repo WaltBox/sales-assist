@@ -200,14 +200,15 @@
         S.busy = true; S.msg = null; draw();
         try {
           const rows = await readFile(f);
-          S.list = (await call("/list", { name: f.name.replace(/\.[^.]+$/, ""), rows })).list; S.i = null; S.busy = false;
-          S.msg = { kind: "ok", text: `${S.list.leads.length} companies loaded.` };
+          const r = await call("/list", { name: f.name.replace(/\.[^.]+$/, ""), rows });
+          S.list = r.list; S.i = null; S.busy = false;
+          S.msg = { kind: "ok", text: `${S.list.leads.length} companies loaded.${r.filled ? ` ${r.filled} phones filled in from Close.` : ""}${r.notFound ? ` ${r.notFound} had no phone and were left out.` : ""}` };
         } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; }
         remember(); draw();
       } });
       return h("div", { class: "up" }, [
         h("p", { text: again ? "Load a different sheet. It replaces the one you're working now." : "Upload your call sheet (CSV or Excel). It needs a company and a phone column; who to ask for, what they do, city and state are picked up when they're there." }),
-        h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Reading it…" : "Choose a file", onclick: () => input.click() }), input,
+        h("button", { class: "gbtn", disabled: S.busy, text: S.busy ? "Reading it… (up to a minute)" : "Choose a file", onclick: () => input.click() }), input,
         S.msg && !S.list ? h("p", { class: `gmsg ${S.msg.kind}`, text: S.msg.text }) : null,
       ]);
     }

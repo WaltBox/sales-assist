@@ -195,3 +195,25 @@ test("the guest's own email (10/16): saved once on the link, CC'd on every line 
   await guestSend(d, guest, { company: "Brand New Fab LLC", name: "Dana", email: "dana@brandnewfab.com" });
   assert.deepEqual((close.writes.filter((w) => w.op === "email").pop()!.body as { cc?: string[] }).cc ?? [], []);
 });
+
+test("a Close export uploads (10/21): rows with a company and no phone get the phone, buyer, city and state from Close", async () => {
+  const { fillFromClose, putList, createGuest: make } = await import("../src/guests.js");
+  const close = new FakeClose();
+  close.ownedLeads = [{ id: "lead_s", display_name: "Synergy Fabrication Inc", url: "https://synergyfabtx.com", description: "Synergy Fabrication Inc is a custom manufacturer based in Fort Worth, Texas, specializing in pressure vessels. Founded 2014.",
+    addresses: [{ city: "Fort Worth", state: "TX" }], contacts: [{ name: "Main Office", phones: [{ phone: "+16828410097" }] }, { name: "Dana Ruiz", title: "Purchasing Manager", emails: [{ email: "dana@synergyfabtx.com" }] }] }];
+  const d: Deps = { close, llm: demoLlm, rep: rep("user_fill") };
+  const rows: Array<Record<string, unknown>> = [
+    { company: "Synergy Fabrication Inc", website: "https://synergyfabtx.com", what: "x".repeat(500) },
+    { company: "Nowhere Co", website: "https://nowhere.example" },
+    { company: "Has A Phone LLC", phone: "(555) 555-0100", state: "CA" },
+  ];
+  const r = await fillFromClose(d, rows);
+  assert.deepEqual([r.filled, r.notFound], [1, 1]);
+  assert.deepEqual([rows[0].phone, rows[0].askFor, rows[0].city, rows[0].state, rows[0].email], ["(682) 841-0097", "Dana Ruiz (Purchasing Manager)", "Fort Worth", "TX", "dana@synergyfabtx.com"]);
+  assert.match(String(rows[0].what), /^Synergy Fabrication Inc is a custom manufacturer/);
+  assert.equal(rows[2].phone, "(555) 555-0100", "a row with a phone is left alone");
+  const { guest } = await make("user_fill", "Liam");
+  const list = await putList("user_fill", guest, { rows: r.rows });
+  assert.deepEqual(list.leads.map((l) => l.company), ["Synergy Fabrication Inc", "Has A Phone LLC"], "no phone anywhere: left out");
+  assert.ok(!close.writes.length, "reading only");
+});
