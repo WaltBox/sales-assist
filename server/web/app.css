@@ -778,3 +778,5 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .tstats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
 .tstat { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--ink-line, rgba(17,17,20,.2)); padding: 10px 12px; }
 .tstat b { font-size: 26px; line-height: 1; }
+.gi-up { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
+.gi-up .gmsgok { padding: 4px 8px; }

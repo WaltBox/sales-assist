@@ -51,7 +51,8 @@ export function createApp(appDeps: AppDeps) {
   const jsonSmall = express.json({ limit: "256kb", verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } });
   // A guest's call list upload can be a few thousand rows (10/15).
   const jsonList = express.json({ limit: "4mb" });
-  app.use((req, res, next) => (req.method === "POST" && /^\/api\/guest\/[^/]+\/list$/.test(req.path) ? jsonList : jsonSmall)(req, res, next));
+  // A call sheet is big (850 rows): the guest's own upload, or the rep uploading it for them (10/21).
+  app.use((req, res, next) => (req.method === "POST" && /^\/api\/guests?\/[^/]+\/list$/.test(req.path) ? jsonList : jsonSmall)(req, res, next));
   app.use(cors({
     origin: (origin, cb) => cb(null, !origin || config.demo || config.allowedOrigins.includes(origin)),
     allowedHeaders: ["authorization", "content-type"],
@@ -344,6 +345,13 @@ export function createApp(appDeps: AppDeps) {
   // The rep's side: make a link, switch it off or on, see what each guest sent.
   const guestLink = (req: Request, token: string) => `${(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0]}://${req.get("host")}/g/${token}`;
   app.get("/api/guests", authed, route(async (_req, d) => ({ guests: await Promise.all((await listGuests(d.rep.closeUserId)).map(async ({ tokenHash: _h, ...g }) => ({ ...g, list: listSummary(await getList(d.rep.closeUserId, g.id)) }))) })));
+  // Upload a guest's call list for them (10/21): the same as they would from their link; it replaces theirs.
+  app.post("/api/guests/:id/list", authed, route(async (req, d) => {
+    const guest = (await listGuests(d.rep.closeUserId)).find((g) => g.id === String(req.params.id));
+    if (!guest) throw new GuestError(404, "No guest link with that id.");
+    const list = await putList(d.rep.closeUserId, guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: Array.isArray(req.body?.rows) ? req.body.rows : [] });
+    return { list: listSummary(list) };
+  }));
   app.get("/api/guests/:id/list.csv", authed, async (req, res, next) => {
     try {
       const d = res.locals.deps as Deps;

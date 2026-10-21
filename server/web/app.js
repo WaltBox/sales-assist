@@ -1727,6 +1727,28 @@ function extensionPage() {
   ]);
 }
 
+function guestUpload(x) {
+  const u = (state.guestUp || {})[x.id] || {};
+  const set = (v) => { state.guestUp = { ...(state.guestUp || {}), [x.id]: v }; render(); };
+  const input = el("input", { type: "file", accept: ".csv,.xlsx,.xls", style: "display:none", onchange: async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (x.list && !confirm(`Replace ${x.name}'s list "${x.list.name}" (${x.list.called} of ${x.list.total} called) with ${f.name}? Their outcomes on the old list go with it, so download it first if you want them.`)) return;
+    set({ busy: true });
+    try {
+      const rows = await window.readSheet(f);
+      const r = await api(`/api/guests/${x.id}/list`, { name: f.name.replace(/\.[^.]+$/, ""), rows });
+      set({ msg: `${r.list.total} companies loaded for ${x.name.split(" ")[0]}. They'll see them when they open their link.` });
+      await loadGuests();
+    } catch (err) { set({ error: err.message }); }
+  } });
+  return el("div", { class: "gi-up" }, [
+    el("button", { class: "btn small", disabled: !!u.busy, text: u.busy ? "Loading…" : x.list ? "Upload a new list for them" : "Upload their list", onclick: () => input.click() }), input,
+    el("span", { class: "sub2", text: "CSV or Excel, with a company and a phone column." }),
+    u.msg ? el("span", { class: "gmsgok small3", text: u.msg }) : null,
+    u.error ? el("span", { class: "bad small", text: u.error }) : null,
+  ]);
+}
+
 function guestsPage() {
   if (state.guests === undefined) { state.guests = null; loadGuests(); }
   const g = state.guestNew || {};
@@ -1780,6 +1802,8 @@ function guestsPage() {
               const a = el("a", { href: url, download: `${x.list.name} - ${x.name}.csv` }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
             } }),
           ]) : el("p", { class: "sub2", text: "No call list uploaded yet." }),
+          // Upload their leads for them (10/21): the same as they would from their link.
+          guestUpload(x),
           x.sends.length ? el("details", { class: "gi-sends" }, [el("summary", { text: "What they sent" }),
             el("ul", {}, x.sends.slice(0, 100).map((s) => el("li", {}, [
               el("a", { href: closeLead(s.leadId), target: "_blank", rel: "noopener", text: s.company }),
