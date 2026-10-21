@@ -383,6 +383,16 @@ export function createApp(appDeps: AppDeps) {
     res.type("application/zip").setHeader("content-disposition", 'attachment; filename="westgate-assistant-extension.zip"');
     res.sendFile(EXTENSION_ZIP, (err) => { if (err) next(err); });
   });
+  // The extension from a guest link too (10/21), for a guest who has a Westgate login. An off or unknown link gets nothing.
+  app.get("/api/guest/:token/extension", guestRoute(async () => ({ version: packedVersion() })));
+  app.get("/api/guest/:token/extension.zip", async (req, res, next) => {
+    try {
+      if (!(await guestFromToken(String(req.params.token)))) throw new GuestError(403, "This link isn't active. Ask whoever sent it to you for a new one.");
+      if (!fs.existsSync(EXTENSION_ZIP)) throw new GuestError(404, "The extension isn't available right now.");
+      res.type("application/zip").setHeader("content-disposition", 'attachment; filename="westgate-assistant-extension.zip"');
+      res.sendFile(EXTENSION_ZIP, (err) => { if (err) next(err); });
+    } catch (err) { next(err); }
+  });
   // My leads (10/19): every lead whose Lead owner in Close is you, with where each stands. For the extension.
   app.get("/api/my-leads", authed, route(async (req, d) => myLeads(d, { fresh: req.query.fresh === "1" })));
   // The team (10/19): the owner sees who's signed up and can reset a teammate's password. A reset removes only
