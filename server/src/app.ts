@@ -245,6 +245,16 @@ export function createApp(appDeps: AppDeps) {
     // Every AI result reads as this rep, never as Walt (10/19: the playbook's examples are Walt's).
     const name = info.name;
     const llm = ((opts: Parameters<Llm>[0]) => appDeps.llm(opts).then((r) => ({ ...r, data: speakAsDeep(r.data, name) }))) as Llm;
+    // The line card PDF lives on Walt's email template, which teammates can't see (10/21: a 404 for the Work Trial
+    // login stopped every send). Anyone else reads it through the owner's account.
+    if (normalizeEmail(info.email) !== config.ownerEmail) {
+      const ownerRep = await repByEmail(config.ownerEmail).catch(() => null);
+      const viaOwner = ownerRep && normalizeEmail(ownerRep.email) !== normalizeEmail(info.email) ? appDeps.closeFor(ownerRep) : null;
+      if (viaOwner) {
+        const mine = close.emailTemplateAttachments.bind(close);
+        (close as { emailTemplateAttachments: typeof mine }).emailTemplateAttachments = (id: string) => mine(id).catch(() => viaOwner.emailTemplateAttachments(id));
+      }
+    }
     const own = info.sender && info.emailAccountId ? { sender: info.sender, emailAccountId: info.emailAccountId, email: info.email } : null;
     // No mailbox of their own, but set to send through a teammate (10/21: the Work Trial login sends from walt@).
     const viaEmail = !own ? config.sendVia[normalizeEmail(info.email)] : undefined;
