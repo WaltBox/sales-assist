@@ -29,7 +29,7 @@ import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
 import { myLeads } from "./myleads.js";
 import { EXTENSION_ZIP, packedVersion } from "./extension.js";
-import { guardSending, SendingError, sendingAccount } from "./sending.js";
+import { guardSending, SendingError, sendingAccount, sendThrough } from "./sending.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
@@ -246,6 +246,15 @@ export function createApp(appDeps: AppDeps) {
     const name = info.name;
     const llm = ((opts: Parameters<Llm>[0]) => appDeps.llm(opts).then((r) => ({ ...r, data: speakAsDeep(r.data, name) }))) as Llm;
     const own = info.sender && info.emailAccountId ? { sender: info.sender, emailAccountId: info.emailAccountId, email: info.email } : null;
+    // No mailbox of their own, but set to send through a teammate (10/21: the Work Trial login sends from walt@).
+    const viaEmail = !own ? config.sendVia[normalizeEmail(info.email)] : undefined;
+    if (viaEmail && viaEmail !== normalizeEmail(info.email)) {
+      const viaRep = await repByEmail(viaEmail);
+      const via = viaRep ? await depsFor(viaRep).catch(() => null) : null;
+      if (via && via.rep.emailAccountId) {
+        return { close: sendThrough(close, via.close, info.name, via.rep.name), llm, rep: { ...info, sender: via.rep.sender, emailAccountId: via.rep.emailAccountId }, website: appDeps.website } satisfies Deps;
+      }
+    }
     return { close: guardSending(close, own, info.email), llm, rep: info, website: appDeps.website } satisfies Deps;
   };
   /** Deps for whoever owns a review (webhook and catch-up job have no rep token). */

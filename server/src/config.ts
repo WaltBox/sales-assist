@@ -73,6 +73,9 @@ export const config = {
   signatureKeywords: process.env.SIGNATURE_KEYWORDS !== "0",
   // The first rep (10/19, a second rep joined): what was set up before there were two keeps its name. The memes
   // already in the library are theirs, and the dial views in Close keep their names (pinned there).
+  // Logins with no mailbox of their own that send through a teammate's (10/21): "from=to,from=to". The Work Trial
+  // login (sales@) sends from Walt's account.
+  sendVia: Object.fromEntries((process.env.SEND_VIA ?? "sales@westgatesupply.com=walt@westgatesupply.com").split(",").map((p) => p.split("=").map((x) => x.trim().toLowerCase())).filter((p) => p.length === 2 && p[0] && p[1])) as Record<string, string>,
   ownerEmail: (process.env.OWNER_EMAIL ?? process.env.MEME_LEGACY_OWNER ?? "walt@westgatesupply.com").toLowerCase(),
   // The only phone number an email may carry (Walt 10/7): the company line, on the header's Website line, only when set.
   company: { phone: process.env.COMPANY_PHONE?.trim() || null },

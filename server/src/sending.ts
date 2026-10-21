@@ -41,3 +41,37 @@ export function guardSending<C extends { createDraftEmail: (leadId: string, e: n
     },
   });
 }
+
+/**
+ * Sending through a teammate (Walt 10/21): the Work Trial login (sales@westgatesupply.com) has no mailbox connected in
+ * Close, so its emails go out through Walt's account, from walt@, signed with his name, the same way guest-link sends
+ * do. Reading stays on the rep's own key; making, editing and sending emails goes through the teammate's client
+ * (already guarded to their own account). Set in config.sendVia.
+ */
+const SEND_METHODS = new Set(["createDraftEmail", "sendDraft", "updateDraft", "unschedule", "deleteEmail", "email"]);
+export function renameSender(text: string, from: string, to: string): string {
+  const f = from.trim(), t = to.trim();
+  if (!f || !t || f === t || !text) return text;
+  const ff = f.split(/\s+/)[0], tf = t.split(/\s+/)[0];
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text
+    .replace(new RegExp(`\\b${esc(f)}\\b`, "g"), t)
+    .replace(new RegExp(`\\b(this is|I'm|I am|it's|my name is)\\s+${esc(ff)}\\b`, "gi"), (_m, lead: string) => `${lead} ${tf}`)
+    .replace(new RegExp(`^(\\s*)${esc(ff)}(\\s*)$`, "gm"), (_m, a: string, b: string) => `${a}${tf}${b}`);
+}
+export function sendThrough<C extends object>(close: C, via: object, fromName: string, toName: string): C {
+  return new Proxy(close, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && SEND_METHODS.has(prop)) {
+        const fn = (via as Record<string, unknown>)[prop] as (...a: unknown[]) => unknown;
+        if (prop === "createDraftEmail") return (leadId: string, e: Record<string, unknown>) =>
+          fn.call(via, leadId, { ...e, body: renameSender(String(e.body ?? ""), fromName, toName), html: e.html ? renameSender(String(e.html), fromName, toName) : e.html });
+        if (prop === "updateDraft") return (id: string, patch: Record<string, unknown>) =>
+          fn.call(via, id, { ...patch, ...(patch.body ? { body: renameSender(String(patch.body), fromName, toName) } : {}) });
+        return (...a: unknown[]) => fn.apply(via, a);
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+}

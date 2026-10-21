@@ -75,3 +75,21 @@ test("the extension zip the web app hands out is the current extension (run npm 
   const version = JSON.parse(fs.readFileSync(path.join(EXTENSION_DIR, "manifest.json"), "utf8")).version;
   assert.equal(packedVersion(), version);
 });
+
+test("the Work Trial login (sales@, no mailbox) sends through Walt: from walt@, signed by Walt; reading stays its own (10/21)", async () => {
+  const { sendThrough, renameSender, guardSending } = await import("../src/sending.js");
+  assert.equal(renameSender("Hi Dana,\n\nI'm Work with Westgate Supply.\n\nThanks,\nWork Trial", "Work Trial", "Walt Boxwell"), "Hi Dana,\n\nI'm Walt with Westgate Supply.\n\nThanks,\nWalt Boxwell");
+  const made: Array<{ who: string; e: Record<string, unknown> }> = [];
+  const fake = (who: string) => ({
+    createDraftEmail: async (_l: string, e: Record<string, unknown>) => { made.push({ who, e }); return { id: `${who}_e1` }; },
+    sendDraft: async (id: string) => { made.push({ who, e: { sent: id } }); return { id }; },
+    leadEmails: async () => [`${who} reads`],
+  });
+  const walt = guardSending(fake("walt"), { sender: '"Walt Boxwell" <walt@westgatesupply.com>', emailAccountId: "acct_walt", email: "walt@westgatesupply.com" }, "walt@westgatesupply.com");
+  const trial = sendThrough(fake("trial"), walt, "Work Trial", "Walt Boxwell");
+  const draft = await trial.createDraftEmail("lead_1", { to: ["a@b.com"], body: "Thanks,\nWork Trial", sender: null, emailAccountId: null } as never);
+  await trial.sendDraft(draft.id);
+  assert.deepEqual(made.map((m) => m.who), ["walt", "walt"], "made and sent on Walt's account");
+  assert.deepEqual([made[0].e.sender, made[0].e.emailAccountId, made[0].e.body], ['"Walt Boxwell" <walt@westgatesupply.com>', "acct_walt", "Thanks,\nWalt Boxwell"]);
+  assert.deepEqual(await trial.leadEmails(), ["trial reads"], "reading stays on the login's own key");
+});
