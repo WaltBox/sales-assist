@@ -1731,14 +1731,17 @@ function guestsPage() {
   if (state.guests === undefined) { state.guests = null; loadGuests(); }
   const g = state.guestNew || {};
   const create = async () => {
-    const name = (g.name || "").trim();
-    if (!name) { state.guestNew = { ...g, error: "Type their name first." }; return render(); }
-    state.guestNew = { ...g, busy: true, error: null }; render();
+    // What's typed now (10/21): the snapshot above is from before they typed, so it always looked empty.
+    const box = document.querySelector(".gnew input.heatq");
+    const cur = { ...(state.guestNew || {}), ...(box ? { name: box.value } : {}) };
+    const name = (cur.name || "").trim();
+    if (!name) { state.guestNew = { ...cur, error: "Type their name first." }; return render(); }
+    state.guestNew = { ...cur, busy: true, error: null }; render();
     try {
       const r = await api("/api/guests", { name });
       state.guestNew = { link: r.link, for: r.guest.name };
       await loadGuests();
-    } catch (e) { state.guestNew = { ...g, busy: false, error: e.message }; render(); }
+    } catch (e) { state.guestNew = { ...cur, busy: false, error: e.message }; render(); }
   };
   const toggle = async (x) => {
     try { await api(`/api/guests/${x.id}/active`, { active: !x.active }); await loadGuests(); } catch (e) { state.guestsErr = e.message; render(); }
