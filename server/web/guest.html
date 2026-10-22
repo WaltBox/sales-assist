@@ -100,9 +100,9 @@
     const token = location.pathname.split("/").filter(Boolean)[1] || "";
     const root = document.getElementById("g");
     const h = (tag, props = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null || v === false) continue; if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else if (k === "value") n.value = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v); } for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c); return n; };
-    const S = { tab: "list", me: null, list: undefined, i: null, q: "", st: "", show: "todo", inHours: false, busy: false, msg: null };
+    const S = { tab: "list", me: null, list: undefined, i: null, q: "", st: "", show: "todo", inHours: false, zone: "", before: 0, busy: false, msg: null };
     try { Object.assign(S, JSON.parse(localStorage.getItem(`gl:${token}`) || "{}")); } catch {}
-    const remember = () => { try { localStorage.setItem(`gl:${token}`, JSON.stringify({ tab: S.tab, i: S.i, q: S.q, st: S.st, show: S.show, inHours: S.inHours })); } catch {} };
+    const remember = () => { try { localStorage.setItem(`gl:${token}`, JSON.stringify({ tab: S.tab, i: S.i, q: S.q, st: S.st, show: S.show, inHours: S.inHours, zone: S.zone, before: S.before })); } catch {} };
     async function call(path, body) {
       const res = await fetch(`/api/guest/${encodeURIComponent(token)}${path}`, { method: body ? "POST" : "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
       const data = await res.json().catch(() => ({}));
@@ -122,6 +122,13 @@
     const FMT = {}, LOCAL = { min: -1, by: {} };
     const local = (st) => { const m = Math.floor(Date.now() / 60000); if (LOCAL.min !== m) { LOCAL.min = m; LOCAL.by = {}; } if (!(st in LOCAL.by)) LOCAL.by[st] = localNow(st); return LOCAL.by[st]; };
     const localNow = (st) => { const tz = TZ[st]; if (!tz) return null; FMT[tz] = FMT[tz] || new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", weekday: "short", hour12: false }); const p = Object.fromEntries(FMT[tz].formatToParts(new Date()).map((x) => [x.type, x.value])); return { hr: Number(p.hour) % 24, min: Number(p.minute), wd: p.weekday, label: new Date().toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }) }; };
+    // Filter by their local time (10/22): a time zone, and "their time is before…".
+    const ZONE_OF = { "America/New_York": "Eastern", "America/Detroit": "Eastern", "America/Indiana/Indianapolis": "Eastern", "America/Chicago": "Central",
+      "America/Denver": "Mountain", "America/Boise": "Mountain", "America/Phoenix": "Arizona", "America/Los_Angeles": "Pacific", "America/Anchorage": "Alaska", "Pacific/Honolulu": "Hawaii" };
+    const ZONES = ["Eastern", "Central", "Mountain", "Arizona", "Pacific", "Alaska", "Hawaii"];
+    const zoneOf = (st) => ZONE_OF[TZ[st]] || null;
+    const BEFORE = [[0, "Their time: any"], [600, "Their time before 10 AM"], [660, "Before 11 AM"], [720, "Before noon"], [780, "Before 1 PM"], [840, "Before 2 PM"], [900, "Before 3 PM"], [930, "Before 3:30 PM"], [960, "Before 4 PM"], [1020, "Before 5 PM"]];
+    const beforeOk = (st) => { if (!S.before) return true; const t = local(st); return !!t && t.hr * 60 + t.min < S.before; };
     const open = (st) => { const t = local(st); return !!t && !["Sat", "Sun"].includes(t.wd) && t.hr >= 8 && t.hr < 17; };
     const eastFirst = (st) => { const t = local(st); return t ? -(t.hr * 60 + t.min) : 0; };
 
@@ -135,6 +142,8 @@
       return S.list.leads.filter((l) => (!S.st || l.state === S.st)
         && (S.show === "all" || (S.show === "todo" ? !l.outcome : l.outcome === S.show))
         && (!S.inHours || open(l.state))
+        && (!S.zone || zoneOf(l.state) === S.zone)
+        && beforeOk(l.state)
         && (!q || `${l.company} ${l.askFor} ${l.city} ${l.phone}`.toLowerCase().includes(q)))
         .sort((a, b) => (!!a.outcome - !!b.outcome) || (open(b.state) - open(a.state)) || (eastFirst(a.state) - eastFirst(b.state)) || a.company.localeCompare(b.company));
     }
@@ -231,6 +240,15 @@
         h("input", { class: "gin", id: "q", placeholder: "Search a company, a name, a city", value: S.q, oninput: (e) => { S.q = e.target.value; remember(); drawSoon(); } }),
         h("select", { class: "gin", onchange: (e) => { commit(); S.st = e.target.value; S.i = null; remember(); draw(); } }, [h("option", { value: "", text: "All states" }), ...states.map((s) => h("option", { value: s, text: `${s} · ${todo[s]} to call`, selected: S.st === s }))]),
         h("select", { class: "gin", onchange: (e) => { commit(); S.show = e.target.value; S.i = null; remember(); draw(); } }, [["todo", "Not called yet"], ["all", "Everyone"], ...OUTS.map(([o]) => [o, o])].map(([v, t]) => h("option", { value: v, text: t, selected: S.show === v }))),
+        (() => {
+          const left = (z) => L.filter((l) => !l.outcome && zoneOf(l.state) === z).length;
+          const zones = ZONES.filter((z) => L.some((l) => zoneOf(l.state) === z));
+          const nowIn = (z) => { const st = Object.keys(TZ).find((k) => zoneOf(k) === z); const t = st && local(st); return t ? t.label : ""; };
+          return h("select", { class: "gin", title: "Only leads in this time zone", onchange: (e) => { commit(); S.zone = e.target.value; S.i = null; remember(); draw(); } },
+            [h("option", { value: "", text: "All time zones" }), ...zones.map((z) => h("option", { value: z, text: `${z} · ${nowIn(z)} · ${left(z)} to call`, selected: S.zone === z }))]);
+        })(),
+        h("select", { class: "gin", title: "Only leads where it's still before this time, their time", onchange: (e) => { commit(); S.before = Number(e.target.value); S.i = null; remember(); draw(); } },
+          BEFORE.map(([v, t]) => h("option", { value: String(v), text: t, selected: S.before === v }))),
         h("label", { class: "chk" }, [h("input", { type: "checkbox", checked: S.inHours, onchange: (e) => { commit(); S.inHours = e.target.checked; S.i = null; remember(); draw(); } }), "Open right now (8 to 5 their time)"]),
       ]);
       const list = h("div", { class: "rows" }, rows.length ? rows.slice(0, 500).map((l) => { const t = local(l.state); return h("button", { class: l.i === S.i ? "on" : "", onclick: () => moveTo(l.i) }, [
@@ -335,7 +353,7 @@
       S.fuLoading = true; S.fuErr = null; draw();
       call(`/followups${fresh ? "?fresh=1" : ""}`).then((r) => { S.fu = r; S.fuLoading = false; draw(); }).catch((err) => { S.fuLoading = false; S.fuErr = err.message; draw(); });
     }
-    function logCall(i) { S.tab = "list"; S.show = "all"; S.st = ""; S.q = ""; S.inHours = false; S.i = i; S.draft = null; remember(); draw(); }
+    function logCall(i) { S.tab = "list"; S.show = "all"; S.st = ""; S.q = ""; S.inHours = false; S.zone = ""; S.before = 0; S.i = i; S.draft = null; remember(); draw(); }
     function followTab() {
       if (S.fu === undefined && !S.fuLoading) { S.fu = null; loadFollow(false); }
       const head = h("div", { class: "lhead" }, [
