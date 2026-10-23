@@ -80,9 +80,11 @@ export type SequenceInfo = {
 };
 async function sequenceInfo(d: Deps, leadId: string): Promise<SequenceInfo | null> {
   try {
-    const { accountsBoard } = await import("./accounts.js");
+    const { cachedBoard } = await import("./accounts.js");
     const { INTRO_GAPS } = await import("./cadence.js");
-    const a = (await accountsBoard(d, { maxAgeMs: 30 * 60_000 })).accounts.find((x) => x.leadId === leadId);
+    // Never waits on a board rebuild (10/23: a card waited ~16s for one when the saved board was over 30 minutes old,
+    // cached cards included). The last saved board, refreshed behind it; none yet means no sequence line this time.
+    const a = (await cachedBoard(d))?.accounts.find((x) => x.leadId === leadId);
     if (!a?.cadence) return null;
     const c = a.cadence;
     return {
