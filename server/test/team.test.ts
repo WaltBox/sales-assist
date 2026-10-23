@@ -93,3 +93,31 @@ test("the Work Trial login (sales@, no mailbox) sends through Walt: from walt@, 
   assert.deepEqual([made[0].e.sender, made[0].e.emailAccountId, made[0].e.body], ['"Walt Boxwell" <walt@westgatesupply.com>', "acct_walt", "Thanks,\nWalt Boxwell"]);
   assert.deepEqual(await trial.leadEmails(), ["trial reads"], "reading stays on the login's own key");
 });
+
+test("a teammate's line card is their own uploaded copy; Walt's is the template's (10/23: \"You do not have access to this file\")", async () => {
+  const { lineCardAttachments, resetLineCardCache } = await import("../src/assistant.js");
+  const { FakeClose, demoLlm } = await import("../src/demo.js");
+  const tpl = [{ url: "https://app.close.com/go/file/walts", filename: "Westgate_Supply_Line_Card.pdf", content_type: "application/pdf", size: 9 }];
+  const make = () => {
+    const c = new FakeClose() as InstanceType<typeof FakeClose> & { uploadFile: (f: string, t: string, b: Buffer) => Promise<unknown>; uploads: string[] };
+    c.templateAttachments = tpl as never;
+    c.uploads = [];
+    c.uploadFile = async (f, t, b) => { c.uploads.push(f); return { url: `https://app.close.com/go/file/copy-${c.uploads.length}`, filename: f, content_type: t, size: b.length }; };
+    return c;
+  };
+  resetLineCardCache();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (u: string) => (String(u).includes("westgate-line-card.pdf") ? new Response("%PDF-1.4 card", { status: 200 }) : realFetch(u))) as typeof fetch;
+  const mine = make();
+  const walt = await lineCardAttachments({ close: mine, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: "user_walt_lc", timeZone: "America/Chicago" } } as never);
+  assert.equal(walt[0].url, "https://app.close.com/go/file/walts");
+  assert.equal(mine.uploads.length, 0, "Walt attaches the template's own file");
+  const theirs = make();
+  const d = { close: theirs, llm: demoLlm, rep: { name: "Ulysses Grant", email: "ulysses@westgatesupply.com", closeUserId: "user_ul_lc", timeZone: "America/Chicago" } } as never;
+  const u = await lineCardAttachments(d);
+  assert.equal(u[0].url, "https://app.close.com/go/file/copy-1");
+  assert.equal(u[0].filename, "Westgate_Supply_Line_Card.pdf");
+  await lineCardAttachments(d);
+  assert.equal(theirs.uploads.length, 1, "one copy, reused for 12 hours");
+  globalThis.fetch = realFetch;
+});

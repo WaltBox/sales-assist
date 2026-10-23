@@ -377,6 +377,20 @@ export class CloseClient {
     return this.request<{ id: string }>("PUT", `/task/${encodeURIComponent(taskId)}/`, patch);
   }
 
+  /**
+   * Upload a file into this account (Close's Files API): ask for an upload slot, post the file to it within 60
+   * seconds, then the download URL can go in an email's attachments for up to 24 hours.
+   */
+  async uploadFile(filename: string, contentType: string, bytes: Buffer): Promise<CloseAttachment> {
+    const slot = await this.request<{ upload: { url: string; fields: Record<string, string> }; download: { url: string } }>("POST", "/files/upload/", { filename, content_type: contentType });
+    const form = new FormData();
+    for (const [k, v] of Object.entries(slot.upload.fields)) form.append(k, v);
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: contentType }), filename);
+    const res = await fetch(slot.upload.url, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+    if (res.status !== 201 && !res.ok) throw new CloseError(`Close file upload failed (${res.status}): ${(await res.text().catch(() => "")).slice(0, 200)}`, res.status);
+    return { url: slot.download.url, filename, content_type: contentType, size: bytes.length };
+  }
+
   emailTemplateAttachments(templateId: string) {
     return this.request<{ attachments?: CloseAttachment[] }>("GET", `/email_template/${encodeURIComponent(templateId)}/?_fields=attachments`).then((t) => t.attachments ?? []);
   }

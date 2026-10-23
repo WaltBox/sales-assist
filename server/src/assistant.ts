@@ -978,16 +978,53 @@ export async function applyProposals(d: Deps, leadId: string, proposals: Proposa
   return { results, warnings };
 }
 
-let lineCard: { at: number; attachments: Awaited<ReturnType<Close["emailTemplateAttachments"]>> } | null = null;
+type Attachments = Awaited<ReturnType<Close["emailTemplateAttachments"]>>;
+// Per rep (10/23): the template's files belong to Walt's account, so a teammate gets their own copy (below).
+const lineCards = new Map<string, { at: number; attachments: Attachments }>();
+const lineCardJobs = new Map<string, Promise<Attachments>>();
 /** Tests only: forget the cached line card attachment list. */
 export function resetLineCardCache() {
-  lineCard = null;
+  lineCards.clear();
+  lineCardJobs.clear();
 }
 
-export async function lineCardAttachments(d: Deps) {
-  if (!lineCard || Date.now() - lineCard.at >= 12 * 3600 * 1000) lineCard = { at: Date.now(), attachments: await d.close.emailTemplateAttachments(config.lineCardTemplateId) };
-  return ownContactCard(lineCard.attachments, d.rep.name);
+/**
+ * The line card (and the rep's contact card) for an email. The PDF sits on Walt's email template, and Close won't let
+ * anyone else attach a file Walt's account uploaded (10/23: "You do not have access to this file" on every teammate
+ * send, after 10/21 had them read the template through Walt's account). Close's file links can't be downloaded
+ * through the API either, so a teammate's copy of the line card comes from the website (the same PDF) and is uploaded
+ * into their own account. Close keeps an upload 24 hours; the copy is redone every 12. Anything else on the template
+ * (a contact card) only goes with Walt's own emails.
+ */
+export async function lineCardAttachments(d: Deps): Promise<Attachments> {
+  const key = d.rep.closeUserId;
+  const hit = lineCards.get(key);
+  if (hit && Date.now() - hit.at < 12 * 3600 * 1000) return hit.attachments;
+  const running = lineCardJobs.get(key);
+  if (running) return running;
+  const job = (async () => {
+    const template = ownContactCard(await d.close.emailTemplateAttachments(config.lineCardTemplateId), d.rep.name);
+    const owner = normalizeEmailAddr(d.rep.email) === config.ownerEmail;
+    const c = d.close as Close & Partial<Pick<CloseClient, "uploadFile">>;
+    let attachments = template;
+    if (!owner && c.uploadFile) {
+      const card = template.find((a) => /line.?card/i.test(a.filename ?? "") && /\.pdf$/i.test(a.filename ?? ""));
+      if (!card) attachments = [];
+      else {
+        const res = await fetch(LINE_CARD_PUBLIC_URL, { signal: AbortSignal.timeout(20000) });
+        if (!res.ok) throw new Error(`Couldn't read the line card from the website (${res.status}).`);
+        attachments = [await c.uploadFile(card.filename, "application/pdf", Buffer.from(await res.arrayBuffer()))];
+      }
+    }
+    lineCards.set(key, { at: Date.now(), attachments });
+    return attachments;
+  })().finally(() => lineCardJobs.delete(key));
+  lineCardJobs.set(key, job);
+  return job;
 }
+const normalizeEmailAddr = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
+/** The same line card PDF the template carries, on the website (what the bumps link to). */
+const LINE_CARD_PUBLIC_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
 /** A contact card (.vcf) in the shared template is one rep's (10/19): it goes out only with the rep it names. */
 export function ownContactCard<T extends { filename?: string | null }>(attachments: T[], repName: string): T[] {
   const parts = repName.toLowerCase().split(/\s+/).filter((p) => p.length > 1);
