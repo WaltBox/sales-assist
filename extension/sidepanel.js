@@ -659,17 +659,17 @@ function renderSheet() {
   if (!lanes.length) { sheet?.remove(); document.body.classList.remove("has-race"); return; }
   document.body.classList.add("has-race");
   if (!sheet) {
-    sheet = el("section", { id: "racesheet", class: "racesheet", "aria-label": "The race" });
+    sheet = el("section", { id: "racesheet", class: "racesheet", "aria-label": "West Game" });
     document.body.append(sheet);
   }
   if (sheetDrag) return;
   sheet.classList.toggle("open", sheetOpen);
   sheet.style.height = sheetOpen ? `${sheetMax()}px` : `${SHEET_MIN}px`;
   const max = Math.max(RACE_GOAL, ...lanes.map((l) => l.dials));
-  const grab = el("div", { class: "sheetgrab", title: sheetOpen ? "Drag down to close" : "Drag up for the race" }, [
+  const grab = el("div", { class: "sheetgrab", title: sheetOpen ? "Drag down to close" : "Drag up for West Game" }, [
     el("span", { class: "handle", "aria-hidden": "true" }),
     el("span", { class: "racehead" }, [
-      el("span", { class: "racetitle", text: "Race" }),
+      el("span", { class: "racetitle", text: "West Game" }),
       el("span", { class: "racesum" }, raceSummary(lanes)),
       el("span", { class: "racego", text: sheetOpen ? "▾" : "▴" }),
     ]),
@@ -689,7 +689,7 @@ function sheetContent() {
   const max = Math.max(raceWeek ? RACE_GOAL * 5 : RACE_GOAL, ...lanes.map((l) => l.dials));
   const tab = (on, text, week) => el("button", { class: `pill ${on ? "ready" : "recent"}`, text, onclick: () => { raceWeek = week; renderSheet(); } });
   const out = [el("div", { class: "racetop" }, [
-    el("h2", { class: "racebig", text: raceWeek ? "This week" : "Today's race" }),
+    el("h2", { class: "racebig", text: raceWeek ? "West Game · this week" : "West Game · today" }),
     el("div", { class: "racetabs" }, [tab(!raceWeek, "Today", false), tab(raceWeek, "Week", true)]),
   ])];
   if (raceRoster && race.owner) out.push(rosterList());
@@ -717,7 +717,14 @@ function sheetContent() {
         : el("p", { class: "muted small", text: "None yet. The first one rolls a bowling ball across every panel." }),
     ]),
     el("p", { class: "muted small", text: `Points: dial ${race.points.dial} · conversation ${race.points.reached} · line card ${race.points.lineCard} · RFQ ${race.points.rfq} · first RFQ from an account +${race.points.firstRfq}. Resets every morning.` }),
-    race.owner ? el("button", { class: "link", style: "align-self:flex-start", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; renderSheet(); } }) : null,
+    race.owner ? el("div", { class: "linkrow" }, [
+      el("button", { class: "link", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; renderSheet(); } }),
+      // Walt 10/25: see what an RFQ looks like without waiting for one. Only on this screen, nothing is saved.
+      el("button", { class: "link", text: "Test the strike", onclick: () => {
+        const other = race.lanes.find((l) => l.email !== race.you) || race.lanes[0];
+        celebrateRfq({ id: "test", email: other.email, name: other.name, company: "Test Lead Fabrication", first: Math.random() < 0.5, day: race.day }, 1);
+      } }),
+    ]) : null,
   );
   return out;
 }
