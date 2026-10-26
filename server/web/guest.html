@@ -164,6 +164,7 @@
       remember(); draw();
       if (S.game) S.game.render();
       enqueue(l.i, patch);
+      bumpGame();
     }
     // Saving (10/15): taps queue up here and go to the server one batch at a time, so no save overwrites another and
     // nothing waits on Close. The queue is kept in the browser too, so closing the tab doesn't lose a tap.
@@ -201,6 +202,7 @@
       S.busy = true; S.msg = null; draw();
       try {
         const r = await call("/send", { company: l.company, name: personName(l.gotName || l.askFor), email, meme: !!S.meme });
+        bumpGame();
         S.busy = false; S.msg = { kind: "ok", text: `Line card sent to ${r.to}. Press Save & next when you're done.` };
         const dr = draftFor(l); dr.outcome = "Wants line card"; dr.email = email; draw();
       } catch (err) { S.busy = false; S.msg = { kind: "bad", text: err.message }; draw(); }
@@ -335,7 +337,7 @@
       const memeBox = h("input", { type: "checkbox", checked: !!S.meme, onchange: (e) => { S.meme = e.target.checked; } });
       const form = h("form", { class: "box", onsubmit: async (e) => {
         e.preventDefault(); const v = { company: company.value, name: name.value || null, email: email.value, meme: !!S.meme }; S.busy = true; S.msg = null; draw();
-        try { const r = await call("/send", v); S.me = await call(""); S.busy = false; S.msg = { kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` }; }
+        try { const r = await call("/send", v); bumpGame(); S.me = await call(""); S.busy = false; S.msg = { kind: "ok", text: `Sent to ${r.to}${r.newLead ? ` (new in Close: ${r.company})` : ` (${r.company})`}.` }; }
         catch (err) { if (err.status === 403) return off(err.message); S.busy = false; S.msg = { kind: "bad", text: err.message }; }
         draw();
       } }, [h("label", { class: "gfield" }, [h("span", { class: "label", text: "Company" }), company]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Name" }), name]), h("label", { class: "gfield" }, [h("span", { class: "label", text: "Email" }), email]), h("label", { class: "chk", style: "margin:0 0 14px" }, [memeBox, "Add a meme (picks one at random)"]), btn,
@@ -482,6 +484,9 @@
     window.addEventListener("pagehide", () => { if (S.list) commit(); });
     call("").then((v) => { S.me = v; draw(); startGame(); }).catch((err) => off(err.message || "This link isn't working."));
     // West Game (10/25): guests play while their link is on. Your own calls count the moment you mark them.
+    // Something that scores just happened: read West Game now, and again once the save has gone through.
+    let bumpTimer = null;
+    function bumpGame() { clearTimeout(bumpTimer); bumpTimer = setTimeout(() => { if (S.game) { S.game.load(true); setTimeout(() => S.game.load(true), 20_000); } }, 4000); }
     function startGame() {
       if (!window.WestGame || S.game) return;
       const today = () => new Date().toDateString();

@@ -29,6 +29,11 @@ chrome.declarativeNetRequest.updateSessionRules({
 
 // The web app (heat map, accounts board) asks for a lead: move the Close tab to it, in whatever window it lives,
 // and bring that window forward. The tab in the sender's own window is the last choice, so the board stays put.
+// The web app's "Reload extension" (10/26): load the files the rep just put in the folder.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "reload-ext") setTimeout(() => chrome.runtime.reload(), 150);
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg || msg.type !== "open-lead" || !/^lead_[A-Za-z0-9]+$/.test(msg.leadId)) return;
   const url = `https://app.close.com/lead/${msg.leadId}/`;

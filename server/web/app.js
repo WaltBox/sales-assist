@@ -103,10 +103,30 @@ function signOut() {
 
 // ---------- views ----------
 
+// ---------- keeping the Chrome extension current (Walt 10/26: "there needs to be an update extension in the app") ----------
+// The extension tells this page its version (bridge.js); the server knows the newest one it hands out.
+const newer = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+const installedExt = () => document.documentElement.dataset.westgateExt || null;
+window.addEventListener("westgate:ext", () => { if (token) render(); });
+function loadExtInfo() {
+  if (state.ext === undefined) { state.ext = null; api("/api/extension").then((r) => { state.ext = r; render(); }).catch((e) => { state.ext = { error: e.message }; render(); }); }
+}
+/** True when this computer's extension is older than the one the app hands out. */
+function extBehind() { const have = installedExt(), latest = state.ext && state.ext.version; return !!(have && latest && newer(latest, have)); }
+function updateBanner() {
+  if (state.page === "extension" || !extBehind() || state.extBannerOff === state.ext.version) return null;
+  return el("div", { class: "extbanner" }, [
+    el("span", {}, [el("b", { text: "Your Chrome extension is out of date. " }), `You have ${installedExt()}, the newest is ${state.ext.version}.`]),
+    el("button", { class: "btn small primary", text: "Update it", onclick: () => { location.hash = "#extension"; } }),
+    el("button", { class: "linkbtn", text: "Later", onclick: () => { state.extBannerOff = state.ext.version; render(); } }),
+  ]);
+}
+
 function render() {
   if (!token) return $app.replaceChildren(signIn());
+  loadExtInfo();
   const err = state.error ? el("p", { class: "empty", text: `Couldn't load everything: ${state.error}` }) : null;
-  $app.replaceChildren(topBar(), el("main", {}, state.page === "emails" ? [err, emailsSection()]
+  $app.replaceChildren(topBar(), updateBanner() || "", el("main", {}, state.page === "emails" ? [err, emailsSection()]
     : state.page === "rfqs" ? [err, rfqsPage()]
     : state.page === "tasks" ? [err, tasksPage()]
     : state.page === "guests" ? [err, guestsPage()]
@@ -1709,7 +1729,7 @@ function extensionPrompt(server) {
   ].join("\n");
 }
 function extensionPage() {
-  if (state.ext === undefined) { state.ext = null; api("/api/extension").then((r) => { state.ext = r; render(); }).catch((e) => { state.ext = { error: e.message }; render(); }); }
+  loadExtInfo();
   const x = state.ext || {};
   const server = location.origin;
   const prompt = extensionPrompt(server);
@@ -1727,9 +1747,29 @@ function extensionPage() {
   };
   const copy = () => { navigator.clipboard?.writeText(prompt).then(() => { state.extCopied = true; render(); setTimeout(() => { state.extCopied = false; render(); }, 2000); }).catch(() => {}); };
   const step = (n, kids) => el("li", {}, kids);
+  // Already installed: update it in three steps, with a button that reloads it once the new files are in place.
+  const have = installedExt();
+  const behind = extBehind();
+  const reload = () => {
+    state.extReloading = true; render();
+    window.dispatchEvent(new CustomEvent("westgate:reload-ext"));
+    // The extension restarts and tells this page its new version; check again after it's had a moment.
+    setTimeout(() => { state.extReloading = false; delete document.documentElement.dataset.westgateExt; render(); setTimeout(() => location.reload(), 1500); }, 1800);
+  };
+  const updateBox = have ? el("div", { class: `extupdate${behind ? " behind" : ""}` }, behind ? [
+    el("h2", { class: "rfqh", text: `Update to ${x.version}` }),
+    el("p", { class: "muted small3", text: `This computer has ${have}. Three steps, about a minute:` }),
+    el("ol", { class: "extsteps" }, [
+      el("li", {}, [el("button", { class: "btn primary small", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download ${x.version}`, onclick: download })]),
+      el("li", {}, ["Unzip it and put the new ", el("b", { text: "westgate-assistant" }), " folder where the old one is, replacing it (same name, same place)."]),
+      el("li", {}, [el("button", { class: "btn small", disabled: !!state.extReloading, text: state.extReloading ? "Reloading…" : "Reload the extension", onclick: reload }), el("span", { class: "muted small3", text: "  Chrome loads the new files. Close and reopen the side panel after." })]),
+    ]),
+  ] : [el("p", { class: "extok", text: `✓ You're on the newest version (${have}).` })]) : null;
   return el("section", { class: "extpage" }, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Chrome extension" })]),
     el("p", { class: "muted small3", text: "The side panel next to Close: the call card for each lead, after-call notes, line cards, your automatic emails and My leads. It uses this app, so there's nothing to run on your computer." }),
+    updateBox,
+    have ? el("h2", { class: "rfqh", text: "Installing it on another computer" }) : null,
     el("div", { class: "gnew" }, [
       el("button", { class: "btn primary", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download the extension${x.version ? ` (v${x.version})` : ""}`, onclick: download }),
       state.extErr || x.error ? el("span", { class: "bad small", text: state.extErr || x.error }) : null,

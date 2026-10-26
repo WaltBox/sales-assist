@@ -250,6 +250,7 @@ async function pickOutcome(outcome) {
     const r = await api(`/api/leads/${st.leadId}/outcome`, {
       outcome, note: drafts[`note:${st.leadId}`] || null, call_id: st.callId, rating: st.brief ? st.brief.rating : null, change,
     });
+    bumpGame();
     st.outcome = { picked: outcome, busy: false, result: r, noteSent: drafts[`note:${st.leadId}`] || "",
       origStatus: change ? change.prev_status : r.prevStatus, changedFrom: prev ? prev.picked : null };
     st.handledCallId = st.callId;
@@ -549,6 +550,13 @@ function startGame() {
     webApp: `${settings.server}/#team`,
   });
 }
+// Something that scores just happened (a line card, an RFQ, a call tapped): West Game reads the numbers now, and again
+// a little later for what Close takes a moment to show (Walt 10/26: "these points need to all be updating").
+let bumpTimer = null;
+function bumpGame() {
+  clearTimeout(bumpTimer);
+  bumpTimer = setTimeout(() => { if (!game) return; game.load(true); setTimeout(() => game.load(true), 30_000); }, 1500);
+}
 // From the console: celebrateRfq({ name: "Chase", company: "Rodda Electric", first: true }); a scene by name as the third
 // argument (news, jackpot, fire, rocket, money, mic).
 window.celebrateRfq = (e, n = 1, scene) => game && game.celebrate({ id: "test", email: "", day: "", ...e }, n, scene);
@@ -807,6 +815,21 @@ function myLineButton(extra = "") {
   });
 }
 
+// A newer extension is out (10/26): say so on the top bar; tapping it opens the web app's Update steps.
+let latestExt = null;
+const myVersion = () => (PREVIEW ? null : chrome.runtime.getManifest().version);
+const versionNewer = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+async function checkForUpdate() {
+  if (!settings.token) return;
+  try { latestExt = (await api("/api/extension")).version || null; } catch { return; }
+  render();
+}
+function updatePill() {
+  const mine = myVersion();
+  if (!latestExt || !mine || !versionNewer(latestExt, mine)) return null;
+  return el("button", { class: "pill attn", title: `You have ${mine}. ${latestExt} is out.`, text: "Update ready", onclick: () => chrome.tabs.create({ url: `${settings.server}/#extension` }) });
+}
+
 function header(phase, phaseClick) {
   return el("header", { class: "header" }, [
     el("div", { class: "brand" }, [el("b", { text: "Westgate" }), " Assistant"]),
@@ -818,6 +841,7 @@ function header(phase, phaseClick) {
     }) : null,
     view !== "emails" ? el("button", { class: "pill recent", text: emails.todaySent != null ? `Emails ${emails.todaySent}` : "Emails", title: "Automatic emails: what went out, what's queued, who opened or replied", onclick: () => { view = "emails"; loadEmails(); render(); } }) : null,
     view !== "mine" && settings.token ? el("button", { class: "pill recent", text: mine.leads ? `My leads ${mine.leads.length}` : "My leads", title: "Every lead with you as Lead owner in Close, and where each stands", onclick: () => { view = "mine"; loadMine(); render(); } }) : null,
+    updatePill(),
     phase ? el(phaseClick ? "button" : "span", { class: `pill ${phase.cls || "phase"}`, text: phase.text, onclick: phaseClick }) : null,
     settings.token ? el("div", { class: "hrow2" }, [
       statsStrip(),
@@ -973,6 +997,7 @@ async function sendLineCardNow(st) {
     const r = await api(`/api/leads/${st.leadId}/linecard/send`, { cold: st.phase !== "on" && st.phase !== "ended", ...(st.lc.meme !== undefined ? { meme: st.lc.meme } : {}), to: st.lc.to, name: st.lc.name || null, referred_by: st.lc.referredBy || null, ask_for: b.ask_for ? b.ask_for.name : null, buys: activePitch(st).buys, format: st.lc.format || "pdf_only" });
     st.lc.sent = r;
     watchBounce(st, r);
+    bumpGame();
   } catch (e) {
     st.lc.error = e.message;
   }
@@ -1020,6 +1045,7 @@ function rfqButton(st) {
     try {
       const res = await api(`/api/leads/${st.leadId}/rfq-received`, { note: st.rfqIn.note || null });
       st.rfqIn = { saved: true, completed: res.completedTasks };
+      bumpGame();
     } catch (e) { st.rfqIn = { ...st.rfqIn, busy: false, error: e.message }; }
     if (st === S) render();
   };
@@ -2641,6 +2667,8 @@ async function init() {
   setInterval(poll, POLL_MS);
   setInterval(refreshQueue, 15_000);
   startGame();
+  checkForUpdate();
+  setInterval(checkForUpdate, 30 * 60_000);
 }
 
 init();

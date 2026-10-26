@@ -19,7 +19,7 @@
     for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c);
     return n;
   };
-  const GOAL = 100; // the finish line, until someone passes it
+  const GOAL = 300; // the finish line in points, until someone passes it
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -339,7 +339,8 @@
       return lead === 0 ? `Tied with ${firstName(ls[1])}` : `Up ${lead} on ${firstName(ls[1])}`;
     }
 
-    const pctOf = (l, max) => (l.error ? 0 : Math.min(1, l.dials / max) * 100);
+    // The dot moves with points, so anything that scores moves you, not just calls (Walt 10/26).
+    const pctOf = (l, max) => (l.error ? 0 : Math.min(1, l.points / max) * 100);
     // shift: how many dots over to nudge this one, so people sitting on the same spot fan out instead of hiding.
     const dot = (l, i, max, big, shift = 0) => h("span", {
       class: `wg-dot${l.email === g.race.you ? " me" : ""}${i === 0 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}${l.guest ? " guest" : ""}`,
@@ -398,7 +399,7 @@
     function content() {
       const r = g.race;
       const ls = lanes();
-      const max = Math.max(g.week ? GOAL * 5 : GOAL, ...ls.map((l) => l.dials));
+      const max = Math.max(g.week ? GOAL * 5 : GOAL, ...ls.map((l) => l.points));
       const tab = (on, text, week) => h("button", { class: `wg-tab${on ? " on" : ""}`, text, onclick: () => { g.week = week; render(); } });
       const today = r.events.filter((e) => e.day === r.day);
       return [
@@ -430,7 +431,7 @@
       const closed = g.party ? PARTY : MIN;
       sheet.style.height = g.open ? `${maxH()}px` : `${closed}px`;
       document.body.style.setProperty("--rb", `${closed}px`);
-      const max = Math.max(GOAL, ...ls.map((l) => l.dials));
+      const max = Math.max(GOAL, ...ls.map((l) => l.points));
       // The closed bar is a little scoreboard: your place, the whole team on one track, your points.
       const at = ls.findIndex((l) => l.email === g.race.you);
       const mine = at >= 0 ? ls[at] : ls[0];
@@ -553,7 +554,7 @@
     }
 
     load(false);
-    setInterval(() => load(false), opts.pollMs || 45_000);
+    setInterval(() => load(false), opts.pollMs || 20_000);
     return { render, load, celebrate, get race() { return g.race; } };
   }
 

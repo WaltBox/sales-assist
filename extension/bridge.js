@@ -8,3 +8,10 @@ window.addEventListener("westgate:open-lead", (e) => {
     window.dispatchEvent(new CustomEvent("westgate:open-lead-ack", { detail: { leadId, ok: !chrome.runtime.lastError && r && r.ok } }));
   });
 });
+
+// Updating (Walt 10/26): the web app shows "update" when this copy is behind. It reads the installed version here, and
+// after the rep has replaced the folder, its Reload button asks Chrome to load the new files.
+const installed = chrome.runtime.getManifest().version;
+document.documentElement.dataset.westgateExt = installed;
+window.dispatchEvent(new CustomEvent("westgate:ext", { detail: { version: installed } }));
+window.addEventListener("westgate:reload-ext", () => { chrome.runtime.sendMessage({ type: "reload-ext" }); });

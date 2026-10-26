@@ -42,12 +42,14 @@ const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: n
   x.dials * POINTS.dial + x.reached * POINTS.reached + x.lineCards * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
 
 const RACE_KEY = "race:team";
-const FRESH_MS = 60_000;
+const FRESH_MS = 20_000;
 let building: Promise<Race> | null = null;
 
 /** The race as of the last minute: the shared copy if it's fresh, else worked out now (one build at a time). */
 export async function teamRace(team: Deps[], ownerId: string, opts: { fresh?: boolean } = {}): Promise<Race> {
   const saved = await store.cacheGet<Race>(RACE_KEY).catch(() => null);
+  // Every panel asks for a fresh read right after someone scores; one every 10 seconds is plenty for the whole team.
+  if (saved && opts.fresh && Date.now() - Date.parse(saved.at) < 10_000) return saved;
   if (saved && !opts.fresh && Date.now() - Date.parse(saved.at) < FRESH_MS) return saved;
   if (saved && !opts.fresh && Date.now() - Date.parse(saved.at) < 10 * FRESH_MS) {
     // A little old: show it now, rebuild behind it.
@@ -55,11 +57,12 @@ export async function teamRace(team: Deps[], ownerId: string, opts: { fresh?: bo
     background(building, "race");
     return saved;
   }
-  if (!building) building = buildRace(team, ownerId).finally(() => { building = null; });
+  if (!building) building = buildRace(team, ownerId, !!opts.fresh).finally(() => { building = null; });
   return building;
 }
 
-async function buildRace(team: Deps[], ownerId: string): Promise<Race> {
+/** fresh: someone just did something that scores (sent a line card, logged an RFQ), so read today's numbers now. */
+async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<Race> {
   const roster = await raceRoster(ownerId);
   const racers = team.filter((t) => !roster.excluded.includes(t.rep.email.toLowerCase()));
   const now = new Date();
@@ -68,8 +71,8 @@ async function buildRace(team: Deps[], ownerId: string): Promise<Race> {
     try {
       const today = localDay(t.rep.timeZone, now).day;
       const [day, line, week] = await Promise.all([
-        dayStats(t),
-        rfqTimeline(t, { savedOk: true, refreshAfterMs: 4 * 60_000 }).catch(() => null),
+        dayStats(t, { fresh }),
+        rfqTimeline(t, { savedOk: true, refreshAfterMs: fresh ? 30_000 : 4 * 60_000 }).catch(() => null),
         periodStats(t, "week").catch(() => null),
       ]);
       const todays = line?.days.find((x) => x.day === today)?.accounts ?? [];
@@ -78,7 +81,7 @@ async function buildRace(team: Deps[], ownerId: string): Promise<Race> {
       const weekRfqs = line ? line.days.filter((x) => x.day >= weekStart(today)).reduce((n, x) => n + x.accounts.length, 0) : 0;
       const lane: RaceLane = {
         email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base),
-        week: week ? { dials: week.dials, reached: week.reached, lineCards: week.lineCards, rfqs: weekRfqs, points: scoreOf({ ...week, rfqs: weekRfqs }) } : null,
+        week: weekOf(week, base, weekRfqs),
         error: null,
       };
       const events: RaceEvent[] = todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
@@ -100,6 +103,16 @@ async function buildRace(team: Deps[], ownerId: string): Promise<Race> {
   };
   await store.cacheSet(RACE_KEY, race, 24 * 3600_000).catch(() => undefined);
   return race;
+}
+
+/**
+ * The week so far. The week's numbers are saved for a while and today's are fresher, so a count can show today ahead
+ * of the week it's part of (Walt 10/26: 6 line cards today, 5 this week). The week is never less than today.
+ */
+function weekOf(week: { dials: number; reached: number; lineCards: number } | null, today: { dials: number; reached: number; lineCards: number; rfqs: number }, weekRfqs: number) {
+  if (!week) return null;
+  const w = { dials: Math.max(week.dials, today.dials), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards), rfqs: Math.max(weekRfqs, today.rfqs) };
+  return { ...w, points: scoreOf(w) };
 }
 
 /** Monday of the week containing `day` (YYYY-MM-DD). */
@@ -141,7 +154,7 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
       const email = `guest:${g.id}`;
       out.push({
         lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
-          week: { ...wk, rfqs: weekRfqs, points: scoreOf({ ...wk, rfqs: weekRfqs }) }, error: null },
+          week: weekOf(wk, base, weekRfqs), error: null },
         events: todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
       });
       // The same RFQs come off the rep's lane, so nobody gets them twice.

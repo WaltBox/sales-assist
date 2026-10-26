@@ -785,3 +785,11 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .tstat b { font-size: 26px; line-height: 1; }
 .gi-up { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .gi-up .gmsgok { padding: 4px 8px; }
+
+/* keeping the extension current (10/26) */
+.extbanner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 20px; background: #ffcc00; color: var(--ink); border-bottom: 1.5px solid var(--ink); font-size: 14px; }
+.extbanner > span { flex: 1; min-width: 220px; }
+.extupdate { margin: 16px 0 8px; padding: 14px 16px; background: var(--white); border: 1.5px solid var(--ink); }
+.extupdate.behind { border-color: var(--red); box-shadow: 4px 4px 0 var(--red); }
+.extupdate .rfqh { margin-top: 0; }
+.extok { margin: 0; color: var(--green); font-weight: 600; }
