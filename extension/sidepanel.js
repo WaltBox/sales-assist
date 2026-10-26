@@ -568,17 +568,49 @@ async function loadRace() {
   render();
 }
 
+// An RFQ anywhere on the team rolls a bowling ball down the bottom of every panel (Walt 10/25: "make them say funny shit").
+const STRIKE_LINES = [
+  (n, co) => `${n} just bowled a strike at ${co}. The rest of you are in the gutter.`,
+  (n, co) => `STRIKE. ${n} got an RFQ out of ${co}. Somebody get this person a shoe rental.`,
+  (n, co) => `${co} just went down like ten pins. ${n} with the RFQ.`,
+  (n, co) => `${n} rolled one straight down the middle. ${co} sent an RFQ.`,
+  (n, co) => `Pins everywhere. ${n} just pulled an RFQ from ${co}.`,
+  (n, co) => `${n} landed an RFQ from ${co}. Bumpers are off, people.`,
+  (n, co) => `${n} picked up the spare nobody wanted: an RFQ from ${co}.`,
+  (n, co) => `${co} RFQ for ${n}. Everybody else, back to your lanes.`,
+];
+const MY_STRIKE_LINES = [
+  (co) => `Strike. ${co} sent the RFQ. Everyone else just watched you bowl.`,
+  (co) => `You knocked ${co} flat. RFQ in the bag.`,
+  (co) => `That's a strike from ${co}. Go ahead, do the little dance.`,
+  (co) => `RFQ from ${co}. The whole alley heard that one.`,
+];
+const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
+const PIN = '<svg viewBox="0 0 12 30" aria-hidden="true"><path d="M6 1c2 0 3 2 3 4.5S7.6 9 7.6 11s3.4 4.5 3.4 9.5S9 29 6 29s-5-3.5-5-8.5S4.4 13 4.4 11 3 8 3 5.5 4 1 6 1z" fill="#fff" stroke="#111114" stroke-width="1.2"/><path d="M3.6 8.4h4.8M3.9 10h4.2" stroke="#dc0025" stroke-width="1.3"/></svg>';
+
 function celebrateRfq(e, n) {
+  document.getElementById("bowl")?.remove();
   const you = e.email === race.you;
-  const first = (e.name || "").split(/\s+/)[0] || "Someone";
+  const name = (e.name || "").split(/\s+/)[0] || "Someone";
+  const co = e.company || "a new account";
   const pts = race.points.rfq + (e.first ? race.points.firstRfq : 0);
-  party({
-    cls: "rfqparty",
-    big: `+${pts}`,
-    label: n > 1 ? `${n} RFQs just came in` : e.first ? "first RFQ from a new account" : "RFQ landed",
-    msg: `${you ? "You" : first} brought in an RFQ${e.company ? ` from ${e.company}` : ""}.${you ? " Nice." : " Your move."}`,
-    button: you ? "Let's go" : "Back to dialing",
-  });
+  let line = n > 1 ? `${n} RFQs just landed. That's a lot of pins on the floor.` : you ? pick(MY_STRIKE_LINES)(co) : pick(STRIKE_LINES)(name, co);
+  if (e.first && n === 1) line += " First one ever from them.";
+  const pins = el("span", { class: "pins" });
+  for (let i = 0; i < 6; i++) {
+    const p = el("span", { class: "pin", style: `--i:${i}; --t:${(i % 2) * 4}px; --dx:${(Math.random() * 90 - 20).toFixed(0)}px; --dy:${(-30 - Math.random() * 50).toFixed(0)}px; --r:${(Math.random() * 540 - 270).toFixed(0)}deg` });
+    p.innerHTML = PIN;
+    pins.append(p);
+  }
+  const banner = el("div", { id: "bowl", class: "bowl", role: "status", onclick: () => banner.remove() }, [
+    el("div", { class: "alley" }, [el("span", { class: "ball", "aria-hidden": "true" }), pins]),
+    el("div", { class: "bowltext" }, [
+      el("p", { class: "strike" }, [el("b", { text: "STRIKE!" }), el("span", { class: "mono", text: ` +${pts}` })]),
+      el("p", { class: "bowlline", text: line }),
+    ]),
+  ]);
+  document.body.append(banner);
+  setTimeout(() => banner.remove(), 9000);
 }
 
 /** The lanes, with your own dials counted live (the panel knows before Close does). */
@@ -595,13 +627,12 @@ function raceLanes() {
 const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
 const firstName = (l) => l.first || (l.name || l.email).split(/[\s@]/)[0];
 
-function raceCar(l, place, max) {
+function raceDot(l, place, max) {
   const pct = l.error ? 0 : Math.min(1, l.dials / max) * 100;
   return el("span", {
-    class: `car${l.email === race.you ? " me" : ""}${place === 1 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}`,
-    style: `left: calc(${pct}% - ${pct / 100} * var(--car))`,
+    class: `rdot${l.email === race.you ? " me" : ""}${place === 1 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}`,
+    style: `left: calc(${pct}% - ${pct / 100} * var(--dot))`,
     title: `${l.name}: ${l.dials} dials, ${l.points} points`,
-    text: firstName(l).slice(0, 1).toUpperCase(),
   });
 }
 
@@ -613,76 +644,120 @@ function raceSummary(lanes) {
     meAt > 0 ? ` · ${lanes[meAt - 1].points - lanes[meAt].points + 1} pts to pass ${firstName(lanes[meAt - 1])}` : lanes.length > 1 ? ` · up ${lanes[0].points - lanes[1].points}` : ""];
 }
 
-// The bottom bar on every screen (Walt 10/25: "make this bottom bar the game"): every car on one track. Tap it for the race.
-function raceBar() {
-  if (!race || !settings.token) return null;
-  const lanes = raceLanes();
-  if (!lanes.length) return null;
+// The race is a sheet on the bottom of every screen (Walt 10/25: "drag the game up and see more details"). Closed it's
+// one track of dots; drag it up (or tap) for the lanes, each rep's numbers and today's RFQs. It lives outside #app so
+// the panel's redraws every few seconds don't snap it shut mid-drag.
+let raceWeek = false;
+let sheetOpen = false;
+let sheetDrag = null; // { y, h, moved }
+const SHEET_MIN = 62;
+const sheetMax = () => Math.round(window.innerHeight * 0.82);
+
+function renderSheet() {
+  let sheet = document.getElementById("racesheet");
+  const lanes = settings.token ? raceLanes() : [];
+  if (!lanes.length) { sheet?.remove(); document.body.classList.remove("has-race"); return; }
+  document.body.classList.add("has-race");
+  if (!sheet) {
+    sheet = el("section", { id: "racesheet", class: "racesheet", "aria-label": "The race" });
+    document.body.append(sheet);
+  }
+  if (sheetDrag) return;
+  sheet.classList.toggle("open", sheetOpen);
+  sheet.style.height = sheetOpen ? `${sheetMax()}px` : `${SHEET_MIN}px`;
   const max = Math.max(RACE_GOAL, ...lanes.map((l) => l.dials));
-  return el("button", { class: "racebar", title: "Open the race", onclick: openRace }, [
+  const grab = el("div", { class: "sheetgrab", title: sheetOpen ? "Drag down to close" : "Drag up for the race" }, [
+    el("span", { class: "handle", "aria-hidden": "true" }),
     el("span", { class: "racehead" }, [
       el("span", { class: "racetitle", text: "Race" }),
       el("span", { class: "racesum" }, raceSummary(lanes)),
-      el("span", { class: "racego", text: "Open ›" }),
+      el("span", { class: "racego", text: sheetOpen ? "▾" : "▴" }),
     ]),
-    el("span", { class: "track shared" }, [...lanes.map((l, i) => raceCar(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]),
+    el("span", { class: "track shared" }, [...lanes.map((l, i) => raceDot(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]),
   ]);
+  grab.addEventListener("pointerdown", sheetDown);
+  const oldBody = sheet.querySelector(".sheetbody");
+  const scroll = oldBody ? oldBody.scrollTop : 0;
+  const body = el("div", { class: "sheetbody" }, sheetOpen || sheet.classList.contains("peek") ? sheetContent() : []);
+  sheet.replaceChildren(grab, body);
+  body.scrollTop = scroll;
 }
 
-let raceBack = "lead";
-let raceWeek = false;
-function openRace() {
-  if (view === "race") return;
-  raceBack = view;
-  view = "race";
-  raceLane = race && race.you;
-  render();
-  api("/api/race?fresh=1").then((r) => { race = r; render(); }).catch(() => {});
-}
-
-function renderRace() {
-  const back = el("button", { class: "link", style: "align-self:flex-start", text: S && S.header && raceBack === "lead" ? `← Back to ${S.header.company}` : "← Back", onclick: () => { view = raceBack; raceRoster = false; render(); } });
-  if (!race) return [header(null), el("main", { class: "page" }, [back, el("p", { class: "empty", text: "Loading the race…" })])];
+function sheetContent() {
   let lanes = raceLanes();
   if (raceWeek) lanes = lanes.filter((l) => l.week).map((l) => ({ ...l, ...l.week })).sort((a, b) => b.points - a.points || b.dials - a.dials);
   const max = Math.max(raceWeek ? RACE_GOAL * 5 : RACE_GOAL, ...lanes.map((l) => l.dials));
-  const tab = (on, text, week) => el("button", { class: `pill ${on ? "ready" : "recent"}`, text, onclick: () => { raceWeek = week; render(); } });
-  const page = el("main", { class: "page racepage" }, [
-    back,
-    el("div", { class: "racetop" }, [
-      el("h2", { class: "racebig", text: raceWeek ? "This week" : "Today's race" }),
-      el("div", { class: "racetabs" }, [tab(!raceWeek, "Today", false), tab(raceWeek, "Week", true)]),
-    ]),
-    el("p", { class: "racesum big" }, raceSummary(lanes)),
-  ]);
-  if (raceRoster && race.owner) page.append(rosterList());
+  const tab = (on, text, week) => el("button", { class: `pill ${on ? "ready" : "recent"}`, text, onclick: () => { raceWeek = week; renderSheet(); } });
+  const out = [el("div", { class: "racetop" }, [
+    el("h2", { class: "racebig", text: raceWeek ? "This week" : "Today's race" }),
+    el("div", { class: "racetabs" }, [tab(!raceWeek, "Today", false), tab(raceWeek, "Week", true)]),
+  ])];
+  if (raceRoster && race.owner) out.push(rosterList());
   else {
     const field = el("div", { class: "racefield" });
     for (const [i, l] of lanes.entries()) {
       field.append(el("button", {
-        class: `lane big${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
-        onclick: () => { raceLane = raceLane === l.email ? null : l.email; render(); },
+        class: `lane${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
+        onclick: () => { raceLane = raceLane === l.email ? null : l.email; renderSheet(); },
       }, [
         el("span", { class: "laneplace mono", text: String(i + 1) }),
         el("span", { class: "lanename", text: firstName(l) }),
-        el("span", { class: "track" }, [raceCar(l, i + 1, max), el("span", { class: "finish", "aria-hidden": "true" })]),
+        el("span", { class: "track" }, [raceDot(l, i + 1, max), el("span", { class: "finish", "aria-hidden": "true" })]),
         el("span", { class: "lanepts mono", text: l.error ? "!" : String(l.points) }),
       ]));
       if (raceLane === l.email) field.append(laneStats(race.lanes.find((x) => x.email === l.email) || l, i + 1));
     }
-    page.append(field);
+    out.push(field);
   }
   const today = race.events.filter((e) => e.day === race.day);
-  page.append(
+  out.push(
     el("section", { class: "plain" }, [
       el("p", { class: "label", text: today.length ? `RFQs today · ${today.length}` : "RFQs today" }),
       today.length ? el("ul", { class: "rfqfeed" }, today.slice().reverse().map((e) => el("li", {}, [el("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? el("span", { class: "chip3 good", text: "first RFQ" }) : null])))
-        : el("p", { class: "muted small", text: "None yet. First one sets off the confetti on every panel." }),
+        : el("p", { class: "muted small", text: "None yet. The first one rolls a bowling ball across every panel." }),
     ]),
     el("p", { class: "muted small", text: `Points: dial ${race.points.dial} · conversation ${race.points.reached} · line card ${race.points.lineCard} · RFQ ${race.points.rfq} · first RFQ from an account +${race.points.firstRfq}. Resets every morning.` }),
-    race.owner ? el("button", { class: "link", style: "align-self:flex-start", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; render(); } }) : null,
+    race.owner ? el("button", { class: "link", style: "align-self:flex-start", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; renderSheet(); } }) : null,
   );
-  return [header(null), page];
+  return out;
+}
+
+function sheetDown(e) {
+  const sheet = document.getElementById("racesheet");
+  sheetDrag = { y: e.clientY, h: sheet.getBoundingClientRect().height, moved: 0, lastY: e.clientY, lastT: performance.now(), v: 0 };
+  sheet.classList.add("dragging");
+  // Show what's inside as soon as it starts coming up.
+  if (!sheetOpen && !sheet.classList.contains("peek")) { sheet.classList.add("peek"); sheet.querySelector(".sheetbody").replaceChildren(...sheetContent()); }
+  e.currentTarget.setPointerCapture(e.pointerId);
+  e.currentTarget.addEventListener("pointermove", sheetMove);
+  e.currentTarget.addEventListener("pointerup", sheetUp, { once: true });
+  e.currentTarget.addEventListener("pointercancel", sheetUp, { once: true });
+}
+function sheetMove(e) {
+  if (!sheetDrag) return;
+  const sheet = document.getElementById("racesheet");
+  const now = performance.now();
+  sheetDrag.v = (sheetDrag.lastY - e.clientY) / Math.max(1, now - sheetDrag.lastT); // px/ms, up is positive
+  sheetDrag.lastY = e.clientY; sheetDrag.lastT = now;
+  sheetDrag.moved = Math.max(sheetDrag.moved, Math.abs(e.clientY - sheetDrag.y));
+  const h = Math.min(sheetMax(), Math.max(SHEET_MIN, sheetDrag.h + (sheetDrag.y - e.clientY)));
+  sheet.style.height = `${h}px`;
+}
+function sheetUp(e) {
+  const sheet = document.getElementById("racesheet");
+  e.currentTarget.removeEventListener("pointermove", sheetMove);
+  const d = sheetDrag;
+  sheetDrag = null;
+  sheet.classList.remove("dragging", "peek");
+  if (!d) return;
+  const h = sheet.getBoundingClientRect().height;
+  if (d.moved < 6) sheetOpen = !sheetOpen; // a tap
+  else if (Math.abs(d.v) > 0.5) sheetOpen = d.v > 0; // a flick
+  else sheetOpen = h > (SHEET_MIN + sheetMax()) / 2;
+  if (sheetOpen && !raceLane) raceLane = race.you;
+  if (!sheetOpen) raceRoster = false;
+  renderSheet();
+  if (sheetOpen) api("/api/race?fresh=1").then((r) => { race = r; renderSheet(); }).catch(() => {});
 }
 
 function laneStats(l, place) {
@@ -954,7 +1029,6 @@ function render() {
   else if (view === "item") app.replaceChildren(...renderItem());
   else if (view === "stats") app.replaceChildren(...renderStats());
   else if (view === "week") app.replaceChildren(...renderWeek());
-  else if (view === "race") app.replaceChildren(...renderRace());
   else if (view === "draft" && S && S.draft) app.replaceChildren(...renderDraft());
   else if (view === "site" && S) app.replaceChildren(...renderSite());
   else if (!S) app.replaceChildren(header(null), el("main", { class: "page" }, [
@@ -964,14 +1038,7 @@ function render() {
   else if (S.phase === "ended") app.replaceChildren(...renderEnded());
   else app.replaceChildren(...renderPre());
 
-  // The race rides along the bottom of every screen; where there's a chat box it sits under it.
-  const bar = view !== "race" && raceBar();
-  if (bar) {
-    // A screen with its own bottom bar (chat, Save, I just hung up) gets the race tucked under it, so nothing is covered.
-    const foots = app.querySelectorAll(":scope > footer.chatbar, :scope > .footer, :scope > .oncall > .foot");
-    const foot = foots[foots.length - 1];
-    if (foot) { bar.classList.add("inset"); foot.append(bar); } else app.append(el("footer", { class: "racefoot" }, [bar]));
-  }
+  renderSheet();
 
   if (key) {
     const n = app.querySelector(`[data-key="${CSS.escape(key)}"]`);

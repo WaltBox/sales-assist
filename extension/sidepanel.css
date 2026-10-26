@@ -661,45 +661,52 @@ details.objtap .say { margin-top: 6px; }
 .erow.mrow .eflags { flex-direction: column; align-items: flex-end; gap: 4px; }
 .erow.mrow .eto { white-space: normal; }
 
-/* ---------- the race (10/25): the bottom bar on every screen, and the full race view ---------- */
-.racefoot { position: sticky; bottom: 0; z-index: 5; margin-top: auto; background: var(--paper-light); border-top: 1px solid var(--ink); }
-.racebar.inset { align-self: stretch; margin: 2px -14px -14px; width: calc(100% + 28px); border-top: 1px solid var(--ink); }
-.chatbar .racebar.inset { margin: 10px -14px -12px; }
-.racebar { --car: 18px; display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 8px 14px 10px; font: inherit; color: inherit; text-align: left; background: var(--paper-light); border: 0; cursor: pointer; }
-.racebar:hover { background: var(--white); }
-.racebar:hover .racego { color: var(--red); }
+/* ---------- the race (10/25): a sheet on the bottom of every screen; drag it up for the details ---------- */
+body.has-race { --rb: 62px; }
+body.has-race #app { padding-bottom: var(--rb); }
+/* screens with their own bottom bar (chat, Save, I just hung up) sit on top of the race instead of under it */
+body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bottom: var(--rb); }
+.racesheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 62px;
+  background: var(--paper-light); border-top: 2px solid var(--ink); box-shadow: 0 -4px 0 rgba(17, 17, 20, .12); transition: height .28s cubic-bezier(.2, .9, .3, 1); }
+.racesheet.dragging { transition: none; }
+.racesheet.open { box-shadow: 0 -10px 30px rgba(17, 17, 20, .25); }
+.sheetgrab { --dot: 12px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 5px 14px 9px; cursor: grab; touch-action: none; user-select: none; }
+.racesheet.dragging .sheetgrab { cursor: grabbing; }
+.handle { align-self: center; width: 36px; height: 4px; border-radius: 2px; background: var(--ink-line); }
+.sheetgrab:hover .handle { background: var(--ink); }
+.sheetbody { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 14px 18px; display: flex; flex-direction: column; gap: 14px; }
 .racehead { display: flex; align-items: center; gap: 8px; font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .racetitle { color: var(--ink); }
 .racetitle::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px;
   background: conic-gradient(var(--ink) 25%, var(--white) 0 50%, var(--ink) 0 75%, var(--white) 0) 0 0 / 4.5px 4.5px; outline: 1px solid var(--ink); }
 .racesum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .racesum b { color: var(--red); font-weight: 400; }
-.racego { color: var(--ink); }
-.track { position: relative; height: var(--car); border-bottom: 1px dashed var(--ink-line); }
-.finish { position: absolute; right: 0; top: 0; bottom: -1px; width: 5px; background: conic-gradient(var(--ink) 25%, var(--paper-light) 0 50%, var(--ink) 0 75%, var(--paper-light) 0) 0 0 / 5px 5px; }
-.car { position: absolute; top: 0; width: var(--car); height: var(--car); display: grid; place-items: center; z-index: 1;
-  font-family: var(--display); font-weight: 700; font-size: calc(var(--car) * .6); line-height: 1; color: var(--paper); background: var(--navy); border: 1px solid var(--ink);
-  box-shadow: 1px 1px 0 var(--ink), 2px 2px 0 var(--ink); transition: left .8s cubic-bezier(.3, 1.3, .5, 1); }
-.car.me { background: var(--red); z-index: 2; }
-.car.lead::after { content: ""; position: absolute; top: -5px; right: -4px; width: 7px; height: 7px; background: #ffcc00; border: 1px solid var(--ink); transform: rotate(45deg); }
-.car.broken { background: var(--paper-dark); color: var(--muted); box-shadow: none; }
+.racego { color: var(--ink); font-size: 12px; }
+.track { position: relative; height: var(--dot); }
+.track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--ink-line); }
+.finish { position: absolute; right: 0; top: -2px; bottom: -2px; width: 5px; background: conic-gradient(var(--ink) 25%, var(--paper-light) 0 50%, var(--ink) 0 75%, var(--paper-light) 0) 0 0 / 5px 5px; }
+.rdot { position: absolute; top: 0; width: var(--dot); height: var(--dot); border-radius: 50%; z-index: 1; background: var(--navy); border: 2px solid var(--paper-light);
+  box-shadow: 0 0 0 1px var(--ink); transition: left .8s cubic-bezier(.3, 1.3, .5, 1); }
+.rdot.me { background: var(--red); z-index: 2; }
+.rdot.lead { box-shadow: 0 0 0 1px var(--ink), 0 0 0 3px #ffcc00; }
+.rdot.broken { background: var(--paper-dark); }
 
-.racepage { --car: 28px; }
-.racetop { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
-.racebig { margin: 0; font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; text-transform: uppercase; letter-spacing: -.01em; }
+.racetop { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.racebig { margin: 0; font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1; text-transform: uppercase; letter-spacing: -.01em; }
 .racetabs { display: flex; gap: 6px; }
-.racesum.big { flex: none; font-family: var(--label); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); white-space: normal; }
-.racefield { position: relative; isolation: isolate; --d: 6px; display: flex; flex-direction: column; gap: 4px; padding: 12px 12px 10px; background: var(--paper-light); border: 2px solid var(--ink); }
+.racefield { --dot: 16px; position: relative; isolation: isolate; --d: 6px; display: flex; flex-direction: column; padding: 8px 12px; background: var(--white); border: 2px solid var(--ink); margin-right: 6px; }
 .racefield::before { content: ""; position: absolute; z-index: -1; top: -2px; left: -2px; width: calc(100% + 4px + var(--d)); height: calc(100% + 4px + var(--d)); background: var(--ink);
   clip-path: polygon(calc(100% - var(--d)) 0, 100% var(--d), 100% 100%, var(--d) 100%, 0 calc(100% - var(--d)), calc(100% - var(--d)) calc(100% - var(--d))); }
-.lane { display: grid; grid-template-columns: 16px 62px 1fr 40px; align-items: center; gap: 8px; width: 100%; padding: 4px 0; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-align: left; }
+.racefield .rdot, .racefield .finish { border-color: var(--white); }
+.racefield .finish { background: conic-gradient(var(--ink) 25%, var(--white) 0 50%, var(--ink) 0 75%, var(--white) 0) 0 0 / 5px 5px; }
+.lane { display: grid; grid-template-columns: 16px 62px 1fr 40px; align-items: center; gap: 8px; width: 100%; padding: 7px 0; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-align: left; }
 .lane + .lane { border-top: 1px solid var(--ink-line); }
 .lane:hover .lanename, .lane.on .lanename { text-decoration: underline; text-underline-offset: 3px; }
 .laneplace { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--muted); }
 .lanename { font-family: var(--label); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lane.me .lanename, .lane.me .lanepts { color: var(--red); }
 .lanepts { font-family: var(--display); font-weight: 700; font-size: 18px; text-align: right; }
-.lanestats { margin: 2px 0 6px; padding: 8px 10px; background: var(--white); border: 1px solid var(--ink); box-shadow: var(--shadow-sm); }
+.lanestats { margin: 0 0 8px; padding: 8px 10px; background: var(--paper-light); border: 1px solid var(--ink); }
 .lanestatshead { font-size: 12.5px; margin-bottom: 4px; }
 .lanestats table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .lanestats th { font-family: var(--label); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 400; text-align: right; }
@@ -712,8 +719,34 @@ details.objtap .say { margin-top: 6px; }
 .rosterrow { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .rosterrow .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rosterrow input { accent-color: var(--red); margin: 0; }
-.rfqparty .partynum { color: var(--green); }
-@media (prefers-reduced-motion: reduce) { .car { transition: none; } }
+
+/* the bowling banner: a ball rolls down a lane above the race and takes out the pins */
+.bowl { position: fixed; left: 8px; right: 8px; bottom: calc(var(--rb, 0px) + 8px); z-index: 60; background: var(--ink); color: var(--paper); border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--red); cursor: pointer; overflow: hidden; animation: bowlin .3s cubic-bezier(.2, 1.3, .4, 1), bowlout .4s ease-in 8.6s forwards; }
+.alley { position: relative; height: 46px; background: repeating-linear-gradient(90deg, #c8955a 0 14px, #b9844b 14px 15px); border-bottom: 2px solid var(--ink); }
+.alley::before, .alley::after { content: ""; position: absolute; left: 0; right: 0; height: 5px; background: #3b2a1a; }
+.alley::before { top: 0; } .alley::after { bottom: 0; }
+.ball { position: absolute; top: 10px; left: -30px; width: 26px; height: 26px; border-radius: 50%; z-index: 2;
+  background: radial-gradient(circle at 35% 32%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 52% 26%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 46% 46%, #111 0 2.2px, transparent 2.7px), radial-gradient(circle at 30% 30%, #ff4d6a, #dc0025 55%, #7a0015);
+  animation: roll 1.25s cubic-bezier(.4, .1, .9, .6) .25s forwards; }
+.pins { position: absolute; right: 14px; top: 6px; width: 70px; height: 34px; }
+.pin { position: absolute; width: 11px; height: 28px; left: calc(var(--i) * 10px); top: var(--t); animation: pinhit .9s cubic-bezier(.2, .7, .4, 1) 1.38s forwards; }
+.pin svg { width: 100%; height: 100%; display: block; }
+.bowltext { padding: 8px 12px 10px; }
+.strike { font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .02em; opacity: 0; animation: pop .35s cubic-bezier(.2, 1.6, .4, 1) 1.45s forwards; }
+.strike b { color: #ffcc00; font-weight: 700; }
+.strike .mono { color: #7be39b; font-size: 16px; }
+.bowlline { margin-top: 4px; font-size: 14px; line-height: 1.35; opacity: 0; animation: fadein .4s ease-out 1.7s forwards; }
+@keyframes roll { to { left: calc(100% - 70px); transform: rotate(720deg); } }
+@keyframes pinhit { to { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; } }
+@keyframes pop { from { transform: scale(.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes fadein { to { opacity: 1; } }
+@keyframes bowlin { from { transform: translateY(120%); } to { transform: none; } }
+@keyframes bowlout { to { transform: translateY(140%); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rdot, .racesheet { transition: none; }
+  .ball { display: none; } .pin { animation: none; opacity: .4; } .strike, .bowlline { animation: none; opacity: 1; }
+}
 
 /* connection problems (10/25): the reason and the fix on one card */
 .flag.fix { display: flex; flex-direction: column; gap: 8px; color: var(--ink); padding: 12px 14px; }
