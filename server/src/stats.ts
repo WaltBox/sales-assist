@@ -16,6 +16,30 @@ const VM_GREETING = /leave (a|your) message|after the (tone|beep)|mailbox/i;
 const REACHED = new Set(["reached_buyer", "got_name"]);
 const DAY_MS = 24 * 3600 * 1000;
 
+/**
+ * Line cards that opened an account: the first email of ours to that company in the two weeks before, and not a reply
+ * in a thread already going. Every automatic follow-up carries the line card too (10/12), so counting attachments
+ * alone gave Walt 57 "line cards" on 10/26, all of them "Re:" follow-ups, on a day he sent none by hand.
+ */
+function newLineCardLeads(lineCardMails: Array<Record<string, unknown>>, emails: Array<Record<string, unknown>>, me: string): Set<string> {
+  const firstOut = new Map<string, number>();
+  for (const e of emails) {
+    if (e.user_id !== me || e.status !== "sent" || e.direction === "incoming") continue;
+    const t = Date.parse(String(e.date_sent ?? e.date_updated ?? ""));
+    const lead = String(e.lead_id ?? "");
+    if (!lead || !Number.isFinite(t)) continue;
+    if (!firstOut.has(lead) || t < firstOut.get(lead)!) firstOut.set(lead, t);
+  }
+  const out = new Set<string>();
+  for (const e of lineCardMails) {
+    if (/^\s*re:/i.test(String(e.subject ?? ""))) continue; // a follow-up in the thread, not a first line card
+    const lead = String(e.lead_id ?? "");
+    const t = Date.parse(String(e.date_sent ?? e.date_updated ?? ""));
+    if (lead && firstOut.get(lead) === t) out.add(lead);
+  }
+  return out;
+}
+
 export type DayStats = {
   day: string; // YYYY-MM-DD in the rep's time zone
   since: string; // the rep's local midnight, UTC
@@ -25,6 +49,8 @@ export type DayStats = {
   voicemails: number;
   emailsSent: number;
   lineCards: number;
+  /** Line cards that were the first email of ours to that company: the ones a person sends, not the sequence's follow-ups (West Game, 10/26). */
+  newLineCards: number;
   rfqs: number; // leads that promised an RFQ today
   rfqAsked: number; // leads we asked for a benchmark RFQ/PO today
   rfqReceived: number; // leads we'd asked or that promised (last 30 days) whose RFQ came in today
@@ -83,6 +109,8 @@ export function theirFiles(a: unknown): string[] {
   return realAttachments(a).filter((f) => !OUR_FILE.test(f));
 }
 const hasRealAttachment = (a: unknown) => theirFiles(a).length > 0;
+/** A Westgate quote ("WG-2YT8TF_Quote.pdf"): ours, even when a customer sends it back. */
+const OUR_QUOTE = /^WG-[A-Z0-9]+.*quote/i;
 
 async function myCalls(d: Deps, since: Date, until: Date) {
   return (await d.close.calls({ since: since.toISOString(), max: 2000 }))
@@ -105,7 +133,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     // A draft can be sent days after it was written: look back two weeks and count by send date.
     d.close.listSince<Record<string, unknown>>("email", {
       since: new Date(since.getTime() - 14 * DAY_MS).toISOString(), userId: me, max: 2000,
-      fields: "id,user_id,lead_id,status,direction,date_sent,date_created,date_updated,attachments",
+      fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,date_updated,attachments",
     }),
     // A month of the rep's notes: an RFQ that arrives today may have been promised weeks ago.
     d.close.listSince<Record<string, unknown>>("note", { since: new Date(since.getTime() - 30 * DAY_MS).toISOString(), userId: me, fields: "id,note,user_id,lead_id,date_created", max: 3000 }),
@@ -162,6 +190,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     voicemails: calls.filter((c) => isVoicemail(c, tapped)).length,
     emailsSent: sent.length,
     lineCards: lineCards.length,
+    newLineCards: newLineCardLeads(lineCards, emails, me).size,
     rfqs: rfqLeads.size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: received.size,
@@ -219,7 +248,7 @@ const BOUNCE = /delivery status notification|undeliverable|undelivered mail|mail
 export type PeriodStats = {
   period: Period; since: string;
   dials: number; companies: number; reached: number; voicemails: number;
-  emailsSent: number; lineCards: number; rfqs: number; rfqAsked: number; rfqReceived: number;
+  emailsSent: number; lineCards: number; newLineCards: number; rfqs: number; rfqAsked: number; rfqReceived: number;
   /** Accounts that wrote back (not bounce notices). What outreach is for. */
   replied: number;
 };
@@ -288,6 +317,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     emailsSent: sent.length,
     // Accounts, not emails: a resend to a fixed address doesn't count twice.
     lineCards: new Set(lineCardMails.map((e) => e.lead_id)).size,
+    newLineCards: newLineCardLeads(lineCardMails, emails, me).size,
     replied: new Set(replyMails.map((e) => e.lead_id)).size,
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
@@ -489,10 +519,19 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     const k = `${leadId}|${localDay(tz, new Date(at)).day}`;
     if (!found.has(k)) found.set(k, { at, leadId, how });
   };
+  // Files we sent each company. Our own quote coming back in a forwarded chain isn't their RFQ (10/26: Reagan Power's
+  // "FW: FW: FW:" with WG-2YT8TF_Quote.pdf counted as a new RFQ).
+  const sentFiles = new Map<string, Set<string>>();
+  for (const e of emails) {
+    if (e.direction === "incoming") continue;
+    const set = sentFiles.get(String(e.lead_id)) ?? new Set<string>();
+    for (const a of (e.attachments as Array<{ filename?: string }> | undefined) ?? []) if (a.filename) set.add(a.filename.toLowerCase());
+    sentFiles.set(String(e.lead_id), set);
+  }
   for (const e of emails) {
     const leadId = String(e.lead_id);
     if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never)) continue;
-    const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f));
+    const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f) && !sentFiles.get(leadId)?.has(f.toLowerCase()));
     if (files.length) add(leadId, String(e.date_created), "file");
     else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email");
   }
@@ -509,9 +548,10 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   // Not the rep's own test leads ("Test Lead Fabrication"), and not suppliers quoting us (Valves & Fittings of
   // Houston, a Vendor: their quote on NAVCO valves isn't a customer's RFQ).
   const statusOf = new Map<string, string>();
+  const addedOf = new Map<string, string>();
   await Promise.all([...new Set([...found.values()].map((f) => f.leadId))].map(async (id) => {
     const l = await d.close.lead(id).catch(() => null);
-    if (l) statusOf.set(id, l.status_label ?? "");
+    if (l) { statusOf.set(id, l.status_label ?? ""); addedOf.set(id, String((l as { date_created?: string }).date_created ?? "")); }
   }));
   for (const [k, f] of found) if (/^test lead\b/i.test(names.get(f.leadId) ?? "") || /vendor/i.test(statusOf.get(f.leadId) ?? "")) found.delete(k);
   // Each company's first RFQ day: that's a new customer coming in, the number Walt wants to see grow.
@@ -523,7 +563,10 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   const byDay = new Map<string, RfqTimeline["days"][number]["accounts"]>();
   for (const f of found.values()) {
     const day = localDay(tz, new Date(f.at)).day;
-    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day }]);
+    // A new company, not an established one (Walt 10/26): their first RFQ here, and in Close only since this window
+    // began. A long-standing customer quiet for four months isn't a new account.
+    const newToUs = (addedOf.get(f.leadId) ?? "") >= window;
+    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day && newToUs }]);
   }
   // Every day from the first line card to today, so the line shows the quiet days too.
   const days: RfqTimeline["days"] = [];

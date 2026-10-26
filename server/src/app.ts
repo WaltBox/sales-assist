@@ -28,7 +28,7 @@ import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, we
 import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
 import { myLeads } from "./myleads.js";
-import { EXTENSION_ZIP, packedVersion } from "./extension.js";
+import { EXTENSION_ZIP, packedFiles, packedVersion } from "./extension.js";
 import { guardSending, SendingError, sendingAccount, sendThrough } from "./sending.js";
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
@@ -398,6 +398,11 @@ export function createApp(appDeps: AppDeps) {
 
   // The Chrome extension (10/19): the packed zip for signed-in reps, with its version for the setup page.
   app.get("/api/extension", authed, route(async () => ({ version: packedVersion(), server: config.publicUrl ?? null })));
+  app.get("/api/extension/files", authed, route(async () => {
+    const out = packedFiles();
+    if (!out) throw new GuestError(404, "The extension hasn't been packed yet. Run npm run pack-extension.");
+    return out;
+  }));
   app.get("/api/extension.zip", authed, (_req, res, next) => {
     if (!fs.existsSync(EXTENSION_ZIP)) { res.status(404).json({ error: "The extension hasn't been packed yet. Run npm run pack-extension." }); return; }
     res.type("application/zip").setHeader("content-disposition", 'attachment; filename="westgate-assistant-extension.zip"');

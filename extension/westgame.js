@@ -19,7 +19,8 @@
     for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c);
     return n;
   };
-  const GOAL = 300; // the finish line in points, until someone passes it
+  // The finish line (Walt 10/26: "should take like 8 RFQs"). Fixed, so getting there means a big day; past it, you stay on the flag.
+  const GOAL = 400;
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -399,7 +400,7 @@
     function content() {
       const r = g.race;
       const ls = lanes();
-      const max = Math.max(g.week ? GOAL * 5 : GOAL, ...ls.map((l) => l.points));
+      const max = g.week ? GOAL * 5 : GOAL;
       const tab = (on, text, week) => h("button", { class: `wg-tab${on ? " on" : ""}`, text, onclick: () => { g.week = week; render(); } });
       const today = r.events.filter((e) => e.day === r.day);
       return [
@@ -431,7 +432,7 @@
       const closed = g.party ? PARTY : MIN;
       sheet.style.height = g.open ? `${maxH()}px` : `${closed}px`;
       document.body.style.setProperty("--rb", `${closed}px`);
-      const max = Math.max(GOAL, ...ls.map((l) => l.points));
+      const max = GOAL;
       // The closed bar is a little scoreboard: your place, the whole team on one track, your points.
       const at = ls.findIndex((l) => l.email === g.race.you);
       const mine = at >= 0 ? ls[at] : ls[0];

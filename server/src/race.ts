@@ -13,7 +13,9 @@ import { store } from "./store.js";
  * Worked out once a minute for the whole team and shared: every panel reads the same copy, so Close isn't asked once
  * per panel. A rep whose numbers can't be read (a Close login that's been turned off) still has a lane, flagged.
  */
-export const POINTS = { dial: 1, reached: 5, lineCard: 10, rfq: 50, firstRfq: 25 } as const;
+// Rebalanced 10/26 (Walt: "way too many points being issued"): RFQs are what wins. A strong day of calling without one
+// is worth about half the finish line; the finish (400) is about 8 RFQs.
+export const POINTS = { dial: 1, reached: 3, lineCard: 5, rfq: 50, firstRfq: 25 } as const;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
   email: string; name: string; first: string; guest?: boolean;
@@ -77,11 +79,14 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       ]);
       const todays = line?.days.find((x) => x.day === today)?.accounts ?? [];
       const rfqs = todays.length, firstRfqs = todays.filter((a) => a.first).length;
-      const base = { dials: day.dials, reached: day.reached, lineCards: day.lineCards, rfqs, firstRfqs };
-      const weekRfqs = line ? line.days.filter((x) => x.day >= weekStart(today)).reduce((n, x) => n + x.accounts.length, 0) : 0;
+      // Line cards a person sent, not the automatic follow-ups that carry one too.
+      const base = { dials: day.dials, reached: day.reached, lineCards: day.newLineCards ?? day.lineCards, rfqs, firstRfqs };
+      const weekDays = line ? line.days.filter((x) => x.day >= weekStart(today)) : [];
+      const weekRfqs = weekDays.reduce((n, x) => n + x.accounts.length, 0);
+      const weekFirst = weekDays.reduce((n, x) => n + x.accounts.filter((a) => a.first).length, 0);
       const lane: RaceLane = {
         email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base),
-        week: weekOf(week, base, weekRfqs),
+        week: weekOf(week ? { ...week, lineCards: week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
         error: null,
       };
       const events: RaceEvent[] = todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
@@ -109,9 +114,10 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
  * The week so far. The week's numbers are saved for a while and today's are fresher, so a count can show today ahead
  * of the week it's part of (Walt 10/26: 6 line cards today, 5 this week). The week is never less than today.
  */
-function weekOf(week: { dials: number; reached: number; lineCards: number } | null, today: { dials: number; reached: number; lineCards: number; rfqs: number }, weekRfqs: number) {
+function weekOf(week: { dials: number; reached: number; lineCards: number } | null, today: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number }, weekRfqs: number, weekFirst = 0) {
   if (!week) return null;
-  const w = { dials: Math.max(week.dials, today.dials), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards), rfqs: Math.max(weekRfqs, today.rfqs) };
+  const w = { dials: Math.max(week.dials, today.dials), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards),
+    rfqs: Math.max(weekRfqs, today.rfqs), firstRfqs: Math.max(weekFirst, today.firstRfqs ?? 0) };
   return { ...w, points: scoreOf(w) };
 }
 
@@ -148,13 +154,14 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
         return { dials: m.length, reached: m.filter((l) => REACHED_OUTCOMES.has(l.outcome!)).length, lineCards: g.sends.filter((x) => dayOf(x.at) >= from && dayOf(x.at) <= today).length };
       };
       const todays = (line?.days.find((x) => x.day === today)?.accounts ?? []).filter((a) => ids.has(a.leadId));
-      const weekRfqs = (line?.days ?? []).filter((x) => x.day >= monday).reduce((n, x) => n + x.accounts.filter((a) => ids.has(a.leadId)).length, 0);
+      const weekMine = (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => ids.has(a.leadId)));
+      const weekRfqs = weekMine.length, weekFirst = weekMine.filter((a) => a.first).length;
       const base = { ...count(today), rfqs: todays.length, firstRfqs: todays.filter((a) => a.first).length };
       const wk = count(monday);
       const email = `guest:${g.id}`;
       out.push({
         lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
-          week: weekOf(wk, base, weekRfqs), error: null },
+          week: weekOf(wk, base, weekRfqs, weekFirst), error: null },
         events: todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
       });
       // The same RFQs come off the rep's lane, so nobody gets them twice.

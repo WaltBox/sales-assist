@@ -15,3 +15,16 @@ export function packedVersion(): string | null {
     return m ? JSON.parse(Buffer.from(m).toString("utf8")).version ?? null : null;
   } catch { return null; }
 }
+
+/**
+ * The packed extension's files, for the web app's Update button (Walt 10/26: "when you click it, it makes sure the
+ * files you have locally are the newest"): the page writes them into the folder the rep picked.
+ */
+export function packedFiles(): { version: string | null; files: Array<{ path: string; b64: string }> } | null {
+  try {
+    const all = unzipSync(new Uint8Array(fs.readFileSync(EXTENSION_ZIP)));
+    const files = Object.entries(all).filter(([name]) => !name.endsWith("/"))
+      .map(([name, data]) => ({ path: name.replace(/^westgate-assistant\//, ""), b64: Buffer.from(data).toString("base64") }));
+    return { version: packedVersion(), files };
+  } catch { return null; }
+}

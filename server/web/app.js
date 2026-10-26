@@ -113,11 +113,63 @@ function loadExtInfo() {
 }
 /** True when this computer's extension is older than the one the app hands out. */
 function extBehind() { const have = installedExt(), latest = state.ext && state.ext.version; return !!(have && latest && newer(latest, have)); }
+// One-click update (Walt 10/26: "when you click it, it makes sure the files you have locally are the newest"). Chrome
+// lets a page write into a folder the person picks: the first time they pick their westgate-assistant folder, then the
+// app remembers it, writes the newest files into it, and asks the extension to reload itself.
+const kv = (() => {
+  let dbp = null;
+  const db = () => dbp || (dbp = new Promise((res, rej) => { const r = indexedDB.open("westgate", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
+  const run = async (mode, fn) => { const d = await db(); return new Promise((res) => { const q = fn(d.transaction("kv", mode).objectStore("kv")); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); };
+  return { get: (k) => run("readonly", (st) => st.get(k)).catch(() => null), set: (k, v) => run("readwrite", (st) => st.put(v, k)).catch(() => null) };
+})();
+const isExtFolder = async (dir) => {
+  try { const m = JSON.parse(await (await (await dir.getFileHandle("manifest.json")).getFile()).text()); return m.name === "Westgate Sales Assistant"; } catch { return false; }
+};
+async function updateExtension() {
+  if (state.upd && state.upd.busy) return;
+  if (!window.showDirectoryPicker) { state.upd = { error: "This works in Google Chrome on a computer. Use the download below instead." }; render(); return; }
+  state.upd = { busy: true, text: "Getting your extension folder…" }; render();
+  try {
+    let dir = await kv.get("extDir");
+    if (dir && dir.requestPermission && (await dir.requestPermission({ mode: "readwrite" })) !== "granted") dir = null;
+    if (!dir) {
+      state.upd = { busy: true, text: "Pick your westgate-assistant folder (the one Chrome loads the extension from)." }; render();
+      dir = await window.showDirectoryPicker({ id: "westgate-ext", mode: "readwrite" });
+      // Picked the folder it's in (like Westgate)? Use the extension inside it.
+      if (!(await isExtFolder(dir))) { const inner = await dir.getDirectoryHandle("westgate-assistant").catch(() => null); if (inner && (await isExtFolder(inner))) dir = inner; }
+    }
+    if (!(await isExtFolder(dir))) throw new Error(`"${dir.name}" isn't the extension's folder. Pick the westgate-assistant folder you loaded in chrome://extensions.`);
+    await kv.set("extDir", dir);
+    state.upd = { busy: true, text: "Writing the newest files…" }; render();
+    const { version, files } = await api("/api/extension/files");
+    for (const f of files) {
+      const parts = f.path.split("/");
+      let here = dir;
+      for (const p of parts.slice(0, -1)) here = await here.getDirectoryHandle(p, { create: true });
+      const w = await (await here.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+      await w.write(Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)));
+      await w.close();
+    }
+    const couldReload = !!installedExt(); // 2.84 and later reload when asked; older ones need the button in chrome://extensions once
+    if (couldReload) window.dispatchEvent(new CustomEvent("westgate:reload-ext"));
+    state.upd = { done: true, text: couldReload
+      ? `Updated to ${version}. The extension restarted: close and reopen the side panel.`
+      : `The files are updated to ${version}. One last time, go to chrome://extensions and click the reload arrow on Westgate Sales Assistant. After that, this button does it all.` };
+    render();
+    if (couldReload) setTimeout(() => { delete document.documentElement.dataset.westgateExt; location.reload(); }, 2500);
+  } catch (e) {
+    state.upd = e && e.name === "AbortError" ? null : { error: e.message || String(e) };
+    render();
+  }
+}
+const updateButton = (cls = "btn primary") => el("button", { class: cls, disabled: !!(state.upd && state.upd.busy), text: state.upd && state.upd.busy ? "Updating…" : "Update extension", onclick: updateExtension });
+const updateStatus = () => state.upd ? el("p", { class: state.upd.error ? "bad small" : state.upd.done ? "extok" : "muted small3", text: state.upd.error || state.upd.text }) : null;
+
 function updateBanner() {
-  if (state.page === "extension" || !extBehind() || state.extBannerOff === state.ext.version) return null;
+  if (state.page === "extension" || ((!extBehind() || state.extBannerOff === state.ext.version) && !state.upd)) return null;
   return el("div", { class: "extbanner" }, [
     el("span", {}, [el("b", { text: "Your Chrome extension is out of date. " }), `You have ${installedExt()}, the newest is ${state.ext.version}.`]),
-    el("button", { class: "btn small primary", text: "Update it", onclick: () => { location.hash = "#extension"; } }),
+    updateButton("btn small primary"), updateStatus(),
     el("button", { class: "linkbtn", text: "Later", onclick: () => { state.extBannerOff = state.ext.version; render(); } }),
   ]);
 }
@@ -228,7 +280,7 @@ function topBar() {
       state.me ? el("span", { text: state.me.rep.name }) : null,
       // The phone that goes in your emails (10/19, each rep their own).
       state.me ? el("button", { class: "linkbtn", title: "The phone number in your line card emails", text: state.me.rep.phone ? `Email phone ${prettyPhone(state.me.rep.phone)}` : "Add your phone", onclick: setPhone }) : null,
-      el("button", { class: "linkbtn", text: "Get the extension", onclick: () => go("extension") }),
+      el("button", { class: `linkbtn${extBehind() ? " extbehind" : ""}`, text: extBehind() ? "Update extension" : "Update or get the extension", onclick: () => go("extension") }),
       state.me && state.me.owner ? el("button", { class: "linkbtn", text: "Team", onclick: () => go("team") }) : null,
       el("button", { class: "linkbtn", text: "Sign out", onclick: signOut }),
     ]),
@@ -1750,26 +1802,29 @@ function extensionPage() {
   // Already installed: update it in three steps, with a button that reloads it once the new files are in place.
   const have = installedExt();
   const behind = extBehind();
-  const reload = () => {
-    state.extReloading = true; render();
-    window.dispatchEvent(new CustomEvent("westgate:reload-ext"));
-    // The extension restarts and tells this page its new version; check again after it's had a moment.
-    setTimeout(() => { state.extReloading = false; delete document.documentElement.dataset.westgateExt; render(); setTimeout(() => location.reload(), 1500); }, 1800);
-  };
-  const updateBox = have ? el("div", { class: `extupdate${behind ? " behind" : ""}` }, behind ? [
-    el("h2", { class: "rfqh", text: `Update to ${x.version}` }),
-    el("p", { class: "muted small3", text: `This computer has ${have}. Three steps, about a minute:` }),
+
+  // The one button that matters; the by-hand steps stay underneath for anyone it doesn't work for.
+  const byHand = el("details", { class: "extbyhand" }, [
+    el("summary", { text: "Or update it by hand" }),
     el("ol", { class: "extsteps" }, [
-      el("li", {}, [el("button", { class: "btn primary small", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download ${x.version}`, onclick: download })]),
-      el("li", {}, ["Unzip it and put the new ", el("b", { text: "westgate-assistant" }), " folder where the old one is, replacing it (same name, same place)."]),
-      el("li", {}, [el("button", { class: "btn small", disabled: !!state.extReloading, text: state.extReloading ? "Reloading…" : "Reload the extension", onclick: reload }), el("span", { class: "muted small3", text: "  Chrome loads the new files. Close and reopen the side panel after." })]),
+      el("li", {}, [el("button", { class: "btn small", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download ${x.version || "the update"}`, onclick: download })]),
+      el("li", {}, ["Unzip it and put the new ", el("b", { text: "westgate-assistant" }), " folder where the old one is, replacing it."]),
+      el("li", {}, ["In ", el("code", { text: "chrome://extensions" }), ", click the reload arrow on Westgate Sales Assistant."]),
     ]),
-  ] : [el("p", { class: "extok", text: `✓ You're on the newest version (${have}).` })]) : null;
+  ]);
+  const updateBox = have && !behind && !state.upd
+    ? el("div", { class: "extupdate" }, [el("p", { class: "extok", text: `✓ You're on the newest version (${have}).` }), el("div", { class: "extrow" }, [updateButton("btn small"), el("span", { class: "muted small3", text: "Puts the newest files in your extension folder again." })])])
+    : el("div", { class: "extupdate behind" }, [
+      el("h2", { class: "rfqh", text: have ? `Update from ${have} to ${x.version || "the newest"}` : `Update to ${x.version || "the newest version"}` }),
+      el("p", { class: "muted small3", text: "One click: the app writes the newest files into your extension folder and restarts it. The first time, Chrome asks you to pick the westgate-assistant folder and to allow edits." }),
+      el("div", { class: "extrow" }, [updateButton(), updateStatus()]),
+      byHand,
+    ]);
   return el("section", { class: "extpage" }, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Chrome extension" })]),
     el("p", { class: "muted small3", text: "The side panel next to Close: the call card for each lead, after-call notes, line cards, your automatic emails and My leads. It uses this app, so there's nothing to run on your computer." }),
     updateBox,
-    have ? el("h2", { class: "rfqh", text: "Installing it on another computer" }) : null,
+    el("h2", { class: "rfqh", text: have ? "Installing it on another computer" : "First time? Install it" }),
     el("div", { class: "gnew" }, [
       el("button", { class: "btn primary", disabled: !!state.extBusy, text: state.extBusy ? "Downloading…" : `Download the extension${x.version ? ` (v${x.version})` : ""}`, onclick: download }),
       state.extErr || x.error ? el("span", { class: "bad small", text: state.extErr || x.error }) : null,
