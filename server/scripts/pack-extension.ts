@@ -17,6 +17,8 @@ const walk = (dir: string) => {
   }
 };
 walk(EXTENSION_DIR);
+// West Game is shared with the guest page (10/25): the hosted app only deploys server/, so it gets a copy.
+for (const f of ["westgame.js", "westgame.css"]) fs.copyFileSync(path.join(EXTENSION_DIR, f), path.resolve(EXTENSION_DIR, "..", "server", "web", f));
 // Fixed timestamps, so the zip only changes when the extension does.
 const zip = zipSync(Object.fromEntries(Object.entries(files).sort().map(([k, v]) => [k, [v, { mtime: new Date("2026-01-01T00:00:00Z") }]])), { level: 9 });
 fs.mkdirSync(path.dirname(EXTENSION_ZIP), { recursive: true });

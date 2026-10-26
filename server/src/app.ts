@@ -33,7 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
-import { setRaceRoster, teamRace } from "./race.js";
+import { raceRoster, setRaceRoster, teamRace } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -459,6 +459,20 @@ export function createApp(appDeps: AppDeps) {
     const race = await teamRace(team, ownerId, { fresh: req.query.fresh === "1" });
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
+  }));
+  // West Game on a guest's page (10/25): guests play while their link is on. Same shared copy the panels read.
+  app.get("/api/guest/:token/race", guestRoute(async (req, g) => {
+    const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+    const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
+    if (!owner) throw new GuestError(503, "West Game isn't available right now.");
+    const race = await teamRace(team, owner.rep.closeUserId, { fresh: req.query.fresh === "1" });
+    return { ...race, you: `guest:${g.guest.id}`, owner: false, roster: { excluded: [] } };
+  }));
+  // Who's in West Game, for the web app's Team page (Walt 10/25: "in the application, not the Chrome extension").
+  app.get("/api/race/roster", authed, route(async (_req, d) => {
+    ownerOnly(d);
+    const { ownerId } = await raceTeam(d);
+    return raceRoster(ownerId);
   }));
   app.post("/api/race/roster", authed, route(async (req, d) => {
     ownerOnly(d);

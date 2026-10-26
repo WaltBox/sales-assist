@@ -535,280 +535,22 @@ async function saveCloseKey(key, retry) {
   catch (e) { fixing = { msg: e.message.replace(/^OFFLINE: /, "") }; render(); }
 }
 
-// ---------- the race (Walt 10/25) ----------
-// Every rep is a lane: the car moves with each dial, points decide who's winning (dial 1, conversation 5, line card 10,
-// RFQ 50, first-ever RFQ from an account +25). When anyone lands an RFQ, every panel celebrates it.
-
-let race = null; // /api/race
-let raceLane = null; // email of the lane opened for stats
-let raceRoster = false; // the owner's "Who's racing" list
-let raceSeen = null; // { day, ids } RFQ events already celebrated
-const RACE_GOAL = 100; // the finish line, until someone passes it
-
-const raceStore = PREVIEW
+// ---------- West Game (Walt 10/25): westgame.js, shared with the guest page ----------
+let game = null;
+const gameStore = PREVIEW
   ? { get: async (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } }
   : { get: async (k) => (await chrome.storage.local.get(k))[k] ?? null, set: (k, v) => chrome.storage.local.set({ [k]: v }) };
-
-async function loadRace() {
-  if (!settings.token) return;
-  try { race = await api("/api/race"); } catch { return; }
-  if (raceSeen === null) {
-    const saved = await raceStore.get("raceSeen");
-    // First look today: what already happened isn't news.
-    raceSeen = saved && saved.day === race.day ? saved : { day: race.day, ids: race.events.map((e) => e.id) };
-    raceStore.set("raceSeen", raceSeen);
-  }
-  if (raceSeen.day !== race.day) raceSeen = { day: race.day, ids: [] };
-  const fresh = race.events.filter((e) => !raceSeen.ids.includes(e.id));
-  if (fresh.length) {
-    raceSeen.ids.push(...fresh.map((e) => e.id));
-    raceStore.set("raceSeen", raceSeen);
-    celebrateRfq(fresh[fresh.length - 1], fresh.length);
-  }
-  render();
-}
-
-// An RFQ anywhere on the team rolls a bowling ball down the bottom of every panel (Walt 10/25: "make them say funny shit").
-const STRIKE_LINES = [
-  (n, co) => `${n} just bowled a strike at ${co}. The rest of you are in the gutter.`,
-  (n, co) => `STRIKE. ${n} got an RFQ out of ${co}. Somebody get this person a shoe rental.`,
-  (n, co) => `${co} just went down like ten pins. ${n} with the RFQ.`,
-  (n, co) => `${n} rolled one straight down the middle. ${co} sent an RFQ.`,
-  (n, co) => `Pins everywhere. ${n} just pulled an RFQ from ${co}.`,
-  (n, co) => `${n} landed an RFQ from ${co}. Bumpers are off, people.`,
-  (n, co) => `${n} picked up the spare nobody wanted: an RFQ from ${co}.`,
-  (n, co) => `${co} RFQ for ${n}. Everybody else, back to your lanes.`,
-];
-const MY_STRIKE_LINES = [
-  (co) => `Strike. ${co} sent the RFQ. Everyone else just watched you bowl.`,
-  (co) => `You knocked ${co} flat. RFQ in the bag.`,
-  (co) => `That's a strike from ${co}. Go ahead, do the little dance.`,
-  (co) => `RFQ from ${co}. The whole alley heard that one.`,
-];
-const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
-const PIN = '<svg viewBox="0 0 12 30" aria-hidden="true"><path d="M6 1c2 0 3 2 3 4.5S7.6 9 7.6 11s3.4 4.5 3.4 9.5S9 29 6 29s-5-3.5-5-8.5S4.4 13 4.4 11 3 8 3 5.5 4 1 6 1z" fill="#fff" stroke="#111114" stroke-width="1.2"/><path d="M3.6 8.4h4.8M3.9 10h4.2" stroke="#dc0025" stroke-width="1.3"/></svg>';
-
-function celebrateRfq(e, n) {
-  document.getElementById("bowl")?.remove();
-  const you = e.email === race.you;
-  const name = (e.name || "").split(/\s+/)[0] || "Someone";
-  const co = e.company || "a new account";
-  const pts = race.points.rfq + (e.first ? race.points.firstRfq : 0);
-  let line = n > 1 ? `${n} RFQs just landed. That's a lot of pins on the floor.` : you ? pick(MY_STRIKE_LINES)(co) : pick(STRIKE_LINES)(name, co);
-  if (e.first && n === 1) line += " First one ever from them.";
-  const pins = el("span", { class: "pins" });
-  for (let i = 0; i < 6; i++) {
-    const p = el("span", { class: "pin", style: `--i:${i}; --t:${(i % 2) * 4}px; --dx:${(Math.random() * 90 - 20).toFixed(0)}px; --dy:${(-30 - Math.random() * 50).toFixed(0)}px; --r:${(Math.random() * 540 - 270).toFixed(0)}deg` });
-    p.innerHTML = PIN;
-    pins.append(p);
-  }
-  const banner = el("div", { id: "bowl", class: "bowl", role: "status", onclick: () => banner.remove() }, [
-    el("div", { class: "alley" }, [el("span", { class: "ball", "aria-hidden": "true" }), pins]),
-    el("div", { class: "bowltext" }, [
-      el("p", { class: "strike" }, [el("b", { text: "STRIKE!" }), el("span", { class: "mono", text: ` +${pts}` })]),
-      el("p", { class: "bowlline", text: line }),
-    ]),
-  ]);
-  document.body.append(banner);
-  setTimeout(() => banner.remove(), 9000);
-}
-
-/** The lanes, with your own dials counted live (the panel knows before Close does). */
-function raceLanes() {
-  if (!race) return [];
-  const lanes = race.lanes.map((l) => {
-    if (l.email !== race.you || !statsFresh() || stats.dials <= l.dials) return l;
-    const extra = stats.dials - l.dials;
-    return { ...l, dials: stats.dials, points: l.points + extra * race.points.dial };
-  });
-  return lanes.sort((a, b) => b.points - a.points || b.dials - a.dials);
-}
-
-const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
-const firstName = (l) => l.first || (l.name || l.email).split(/[\s@]/)[0];
-
-function raceDot(l, place, max) {
-  const pct = l.error ? 0 : Math.min(1, l.dials / max) * 100;
-  return el("span", {
-    class: `rdot${l.email === race.you ? " me" : ""}${place === 1 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}`,
-    style: `left: calc(${pct}% - ${pct / 100} * var(--dot))`,
-    title: `${l.name}: ${l.dials} dials, ${l.points} points`,
+function startGame() {
+  if (game || !settings.token || !window.WestGame) return;
+  game = WestGame.create({
+    load: (fresh) => api(`/api/race${fresh ? "?fresh=1" : ""}`),
+    liveDials: () => (statsFresh() ? stats.dials : null),
+    store: gameStore,
+    webApp: `${settings.server}/#team`,
   });
 }
-
-/** Where you stand, in a few words: "2nd of 4 · 8 pts to pass Chase". */
-function raceSummary(lanes) {
-  const meAt = lanes.findIndex((l) => l.email === race.you);
-  if (meAt < 0) return [`${firstName(lanes[0])} leads with `, el("b", { text: String(lanes[0].points) })];
-  return [el("b", { text: ordinal(meAt + 1) }), ` of ${lanes.length}`,
-    meAt > 0 ? ` · ${lanes[meAt - 1].points - lanes[meAt].points + 1} pts to pass ${firstName(lanes[meAt - 1])}` : lanes.length > 1 ? ` · up ${lanes[0].points - lanes[1].points}` : ""];
-}
-
-// The race is a sheet on the bottom of every screen (Walt 10/25: "drag the game up and see more details"). Closed it's
-// one track of dots; drag it up (or tap) for the lanes, each rep's numbers and today's RFQs. It lives outside #app so
-// the panel's redraws every few seconds don't snap it shut mid-drag.
-let raceWeek = false;
-let sheetOpen = false;
-let sheetDrag = null; // { y, h, moved }
-const SHEET_MIN = 62;
-const sheetMax = () => Math.round(window.innerHeight * 0.82);
-
-function renderSheet() {
-  let sheet = document.getElementById("racesheet");
-  const lanes = settings.token ? raceLanes() : [];
-  if (!lanes.length) { sheet?.remove(); document.body.classList.remove("has-race"); return; }
-  document.body.classList.add("has-race");
-  if (!sheet) {
-    sheet = el("section", { id: "racesheet", class: "racesheet", "aria-label": "West Game" });
-    document.body.append(sheet);
-  }
-  if (sheetDrag) return;
-  sheet.classList.toggle("open", sheetOpen);
-  sheet.style.height = sheetOpen ? `${sheetMax()}px` : `${SHEET_MIN}px`;
-  const max = Math.max(RACE_GOAL, ...lanes.map((l) => l.dials));
-  const grab = el("div", { class: "sheetgrab", title: sheetOpen ? "Drag down to close" : "Drag up for West Game" }, [
-    el("span", { class: "handle", "aria-hidden": "true" }),
-    el("span", { class: "racehead" }, [
-      el("span", { class: "racetitle", text: "West Game" }),
-      el("span", { class: "racesum" }, raceSummary(lanes)),
-      el("span", { class: "racego", text: sheetOpen ? "▾" : "▴" }),
-    ]),
-    el("span", { class: "track shared" }, [...lanes.map((l, i) => raceDot(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]),
-  ]);
-  grab.addEventListener("pointerdown", sheetDown);
-  const oldBody = sheet.querySelector(".sheetbody");
-  const scroll = oldBody ? oldBody.scrollTop : 0;
-  const body = el("div", { class: "sheetbody" }, sheetOpen || sheet.classList.contains("peek") ? sheetContent() : []);
-  sheet.replaceChildren(grab, body);
-  body.scrollTop = scroll;
-}
-
-function sheetContent() {
-  let lanes = raceLanes();
-  if (raceWeek) lanes = lanes.filter((l) => l.week).map((l) => ({ ...l, ...l.week })).sort((a, b) => b.points - a.points || b.dials - a.dials);
-  const max = Math.max(raceWeek ? RACE_GOAL * 5 : RACE_GOAL, ...lanes.map((l) => l.dials));
-  const tab = (on, text, week) => el("button", { class: `pill ${on ? "ready" : "recent"}`, text, onclick: () => { raceWeek = week; renderSheet(); } });
-  const out = [el("div", { class: "racetop" }, [
-    el("h2", { class: "racebig", text: raceWeek ? "West Game · this week" : "West Game · today" }),
-    el("div", { class: "racetabs" }, [tab(!raceWeek, "Today", false), tab(raceWeek, "Week", true)]),
-  ])];
-  if (raceRoster && race.owner) out.push(rosterList());
-  else {
-    const field = el("div", { class: "racefield" });
-    for (const [i, l] of lanes.entries()) {
-      field.append(el("button", {
-        class: `lane${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
-        onclick: () => { raceLane = raceLane === l.email ? null : l.email; renderSheet(); },
-      }, [
-        el("span", { class: "laneplace mono", text: String(i + 1) }),
-        el("span", { class: "lanename", text: firstName(l) }),
-        el("span", { class: "track" }, [raceDot(l, i + 1, max), el("span", { class: "finish", "aria-hidden": "true" })]),
-        el("span", { class: "lanepts mono", text: l.error ? "!" : String(l.points) }),
-      ]));
-      if (raceLane === l.email) field.append(laneStats(race.lanes.find((x) => x.email === l.email) || l, i + 1));
-    }
-    out.push(field);
-  }
-  const today = race.events.filter((e) => e.day === race.day);
-  out.push(
-    el("section", { class: "plain" }, [
-      el("p", { class: "label", text: today.length ? `RFQs today · ${today.length}` : "RFQs today" }),
-      today.length ? el("ul", { class: "rfqfeed" }, today.slice().reverse().map((e) => el("li", {}, [el("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? el("span", { class: "chip3 good", text: "first RFQ" }) : null])))
-        : el("p", { class: "muted small", text: "None yet. The first one rolls a bowling ball across every panel." }),
-    ]),
-    el("p", { class: "muted small", text: `Points: dial ${race.points.dial} · conversation ${race.points.reached} · line card ${race.points.lineCard} · RFQ ${race.points.rfq} · first RFQ from an account +${race.points.firstRfq}. Resets every morning.` }),
-    race.owner ? el("div", { class: "linkrow" }, [
-      el("button", { class: "link", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; renderSheet(); } }),
-      // Walt 10/25: see what an RFQ looks like without waiting for one. Only on this screen, nothing is saved.
-      el("button", { class: "link", text: "Test the strike", onclick: () => {
-        const other = race.lanes.find((l) => l.email !== race.you) || race.lanes[0];
-        celebrateRfq({ id: "test", email: other.email, name: other.name, company: "Test Lead Fabrication", first: Math.random() < 0.5, day: race.day }, 1);
-      } }),
-    ]) : null,
-  );
-  return out;
-}
-
-function sheetDown(e) {
-  const sheet = document.getElementById("racesheet");
-  sheetDrag = { y: e.clientY, h: sheet.getBoundingClientRect().height, moved: 0, lastY: e.clientY, lastT: performance.now(), v: 0 };
-  sheet.classList.add("dragging");
-  // Show what's inside as soon as it starts coming up.
-  if (!sheetOpen && !sheet.classList.contains("peek")) { sheet.classList.add("peek"); sheet.querySelector(".sheetbody").replaceChildren(...sheetContent()); }
-  e.currentTarget.setPointerCapture(e.pointerId);
-  e.currentTarget.addEventListener("pointermove", sheetMove);
-  e.currentTarget.addEventListener("pointerup", sheetUp, { once: true });
-  e.currentTarget.addEventListener("pointercancel", sheetUp, { once: true });
-}
-function sheetMove(e) {
-  if (!sheetDrag) return;
-  const sheet = document.getElementById("racesheet");
-  const now = performance.now();
-  sheetDrag.v = (sheetDrag.lastY - e.clientY) / Math.max(1, now - sheetDrag.lastT); // px/ms, up is positive
-  sheetDrag.lastY = e.clientY; sheetDrag.lastT = now;
-  sheetDrag.moved = Math.max(sheetDrag.moved, Math.abs(e.clientY - sheetDrag.y));
-  const h = Math.min(sheetMax(), Math.max(SHEET_MIN, sheetDrag.h + (sheetDrag.y - e.clientY)));
-  sheet.style.height = `${h}px`;
-}
-function sheetUp(e) {
-  const sheet = document.getElementById("racesheet");
-  e.currentTarget.removeEventListener("pointermove", sheetMove);
-  const d = sheetDrag;
-  sheetDrag = null;
-  sheet.classList.remove("dragging", "peek");
-  if (!d) return;
-  const h = sheet.getBoundingClientRect().height;
-  if (d.moved < 6) sheetOpen = !sheetOpen; // a tap
-  else if (Math.abs(d.v) > 0.5) sheetOpen = d.v > 0; // a flick
-  else sheetOpen = h > (SHEET_MIN + sheetMax()) / 2;
-  if (sheetOpen && !raceLane) raceLane = race.you;
-  if (!sheetOpen) raceRoster = false;
-  renderSheet();
-  if (sheetOpen) api("/api/race?fresh=1").then((r) => { race = r; renderSheet(); }).catch(() => {});
-}
-
-function laneStats(l, place) {
-  if (l.error) return el("div", { class: "lanestats" }, [el("p", { class: "small", text: `${l.error}. Their numbers will show once that's sorted.` })]);
-  const row = (label, today, week, each) => el("tr", {}, [
-    el("td", { text: label }), el("td", { class: "mono", text: String(today) }), el("td", { class: "mono", text: week == null ? "–" : String(week) }), el("td", { class: "mono muted", text: each }),
-  ]);
-  const w = l.week;
-  return el("div", { class: "lanestats" }, [
-    el("p", { class: "lanestatshead" }, [el("b", { text: l.name }), ` · ${ordinal(place)} today`]),
-    el("table", {}, [
-      el("tr", {}, [el("th", {}), el("th", { text: "Today" }), el("th", { text: "Week" }), el("th", { text: "Pts" })]),
-      row("Dials", l.dials, w && w.dials, `×${race.points.dial}`),
-      row("Conversations", l.reached, w && w.reached, `×${race.points.reached}`),
-      row("Line cards", l.lineCards, w && w.lineCards, `×${race.points.lineCard}`),
-      row("RFQs", l.rfqs, w && w.rfqs, `×${race.points.rfq}`),
-      l.firstRfqs ? row("First RFQs", l.firstRfqs, null, `+${race.points.firstRfq}`) : null,
-      el("tr", { class: "total" }, [el("td", { text: "Points" }), el("td", { class: "mono", text: String(l.points) }), el("td", { class: "mono", text: w ? String(w.points) : "–" }), el("td")]),
-    ]),
-  ]);
-}
-
-function rosterList() {
-  const out = new Set(race.roster.excluded);
-  return el("div", { class: "roster" }, [
-    el("p", { class: "small muted", text: "Only you can change this. People left out don't show and their RFQs don't set off the party." }),
-    ...(race.everyone || []).map((p) => el("label", { class: "rosterrow" }, [
-      el("input", {
-        type: "checkbox", checked: !out.has(p.email),
-        onchange: async (e) => {
-          const racing = e.currentTarget.checked;
-          e.currentTarget.disabled = true;
-          try {
-            race.roster = await api("/api/race/roster", { email: p.email, racing });
-            race = await api("/api/race?fresh=1");
-          } catch (err) { alert(err.message); }
-          render();
-        },
-      }),
-      el("span", { text: p.name || p.email }),
-      el("span", { class: "muted small", text: p.email }),
-    ])),
-  ]);
-}
+// From the console: celebrateRfq({ name: "Chase", company: "Rodda Electric", first: true }, 1)
+window.celebrateRfq = (e, n = 1) => game && game.celebrate({ id: "test", email: "", day: "", ...e }, n);
 
 function countReached(callId) {
   if (!stats || !callId || stats.reachedIds.includes(callId)) return;
@@ -1045,7 +787,7 @@ function render() {
   else if (S.phase === "ended") app.replaceChildren(...renderEnded());
   else app.replaceChildren(...renderPre());
 
-  renderSheet();
+  if (game) game.render(); else startGame();
 
   if (key) {
     const n = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -2882,7 +2624,7 @@ async function init() {
       if (!changes.server && !changes.token) return;
       if (changes.server) settings.server = changes.server.newValue;
       if (changes.token) settings.token = changes.token.newValue;
-      leads.clear(); S = null; stats = null; race = null; raceSeen = null; chrome.storage.local.remove(["stats", "raceSeen"]); loadRace(); syncLead(); refreshQueue(); syncStats(true); loadMe();
+      leads.clear(); S = null; stats = null; chrome.storage.local.remove(["stats", "westGameSeen"]); if (game) game.load(true); else startGame(); syncLead(); refreshQueue(); syncStats(true); loadMe();
     });
     chrome.tabs.onActivated.addListener(syncLead);
     chrome.tabs.onUpdated.addListener((_id, info, tab) => { if (info.url && tab.active) syncLead(); });
@@ -2897,8 +2639,7 @@ async function init() {
   loadMe();
   setInterval(poll, POLL_MS);
   setInterval(refreshQueue, 15_000);
-  loadRace();
-  setInterval(loadRace, 45_000);
+  startGame();
 }
 
 init();

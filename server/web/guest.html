@@ -7,6 +7,7 @@
   <title>Westgate Supply · Calls</title>
   <link rel="icon" href="/brand/world-mark-filled.svg">
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/westgame.css">
   <style>
     body { background: var(--paper); margin: 0; }
     .top .gchip { margin-left: auto; font-family: var(--label); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; padding: 4px 9px; border: 1px solid rgba(255,255,255,.5); color: #fff; }
@@ -96,6 +97,7 @@
   </div></header>
   <main class="gwrap"><div id="g"></div></main>
   <script src="/sheet.js"></script>
+  <script src="/westgame.js"></script>
   <script>
     const token = location.pathname.split("/").filter(Boolean)[1] || "";
     const root = document.getElementById("g");
@@ -160,6 +162,7 @@
         S.flash = { i: l.i, company: l.company, outcome: patch.outcome, prev };
       }
       remember(); draw();
+      if (S.game) S.game.render();
       enqueue(l.i, patch);
     }
     // Saving (10/15): taps queue up here and go to the server one batch at a time, so no save overwrites another and
@@ -477,7 +480,17 @@
       root.replaceChildren(ccBar(), ...(S.tab === "send" ? sendTab() : S.tab === "follow" ? followTab() : S.tab === "ext" ? extTab() : listTab()).filter(Boolean));
     }
     window.addEventListener("pagehide", () => { if (S.list) commit(); });
-    call("").then((v) => { S.me = v; draw(); }).catch((err) => off(err.message || "This link isn't working."));
+    call("").then((v) => { S.me = v; draw(); startGame(); }).catch((err) => off(err.message || "This link isn't working."));
+    // West Game (10/25): guests play while their link is on. Your own calls count the moment you mark them.
+    function startGame() {
+      if (!window.WestGame || S.game) return;
+      const today = () => new Date().toDateString();
+      S.game = WestGame.create({
+        load: (fresh) => call(`/race${fresh ? "?fresh=1" : ""}`),
+        liveDials: () => (S.list ? S.list.leads.filter((l) => l.outcome && l.outcomeAt && new Date(l.outcomeAt).toDateString() === today()).length : null),
+        store: { get: async (k) => { try { return JSON.parse(localStorage.getItem(`${k}:${token}`) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(`${k}:${token}`, JSON.stringify(v)); } catch {} } },
+      });
+    }
     // Local times move: redraw each minute unless they're typing.
     setInterval(() => { const a = document.activeElement; if (S.tab === "list" && S.list && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) draw(); }, 60_000);
   </script>

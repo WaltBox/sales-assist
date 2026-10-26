@@ -774,6 +774,11 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .tcard { background: #fff; border: 1.5px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 16px 18px; }
 .tcard.ttotal { background: #f6f3ea; }
 .tcardhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.tcardacts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.gameswitch { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--ink-line); background: var(--paper-dark); cursor: pointer;
+  font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.gameswitch.on { border-color: var(--ink); background: var(--white); color: var(--ink); }
+.gameswitch input { margin: 0; accent-color: var(--red); }
 .tcardhead h3 { margin: 0 0 2px; font-family: var(--display); font-weight: 800; font-size: 22px; text-transform: uppercase; }
 .tstats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
 .tstat { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--ink-line, rgba(17,17,20,.2)); padding: 10px 12px; }

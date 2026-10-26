@@ -260,6 +260,11 @@ export function listCsv(list: CallList) {
 // ---------- follow-ups (Walt 10/15): the guest sees where the companies they called stand now ----------
 
 const idsKey = (guestId: string) => `guestLeadIds:${guestId}`;
+/** Every Close lead a guest has touched: the line cards they sent and the list rows matched to a lead (West Game, 10/25). */
+export async function guestLeadIds(repId: string, guest: Guest): Promise<Set<string>> {
+  const ids = (await store.getSetting<Record<string, string>>(repId, idsKey(guest.id)).catch(() => null)) ?? {};
+  return new Set([...guest.sends.map((s) => s.leadId), ...Object.values(ids)].filter(Boolean));
+}
 const followKey = (guestId: string) => `guestFollow:${guestId}`;
 /** Statuses Walt has taken over: the RFQ is in, the guest doesn't need to call. */
 const RFQ_STATUSES = /rfq|quoted|customer|vendor/i;

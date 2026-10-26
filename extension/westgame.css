@@ -1,0 +1,113 @@
+/* West Game (10/25): the bottom sheet, the lanes, and the bowling banner. Shared by the side panel and the guest page
+   (copied to server/web/ by npm run pack-extension). Uses the page's own tokens, with fallbacks. */
+body.has-race { --rb: 62px; padding-bottom: var(--rb); }
+.wg-sheet {
+  --wg-ink: var(--ink, #111114); --wg-red: var(--red, #dc0025); --wg-navy: var(--navy, #001939); --wg-paper: var(--paper-light, #f4f0e5);
+  --wg-line: var(--ink-line, rgba(17, 17, 20, .25)); --wg-muted: var(--muted, #53524f); --wg-gold: #f5b400;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 62px; color: var(--wg-ink);
+  background: var(--wg-paper); border-top: 2px solid var(--wg-ink); box-shadow: 0 -4px 0 rgba(17, 17, 20, .12); transition: height .28s cubic-bezier(.2, .9, .3, 1);
+}
+.wg-sheet.dragging { transition: none; }
+.wg-sheet.open { box-shadow: 0 -10px 30px rgba(17, 17, 20, .25); }
+.wg-grab { --wg-dot: 12px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 5px 14px 9px; cursor: grab; touch-action: none; user-select: none; }
+.wg-sheet.dragging .wg-grab { cursor: grabbing; }
+.wg-handle { align-self: center; width: 36px; height: 4px; border-radius: 2px; background: var(--wg-line); }
+.wg-grab:hover .wg-handle { background: var(--wg-ink); }
+.wg-bar { display: flex; align-items: center; gap: 8px; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); }
+.wg-brand { color: var(--wg-ink); white-space: nowrap; }
+.wg-brand::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px;
+  background: conic-gradient(var(--wg-ink) 25%, #fff 0 50%, var(--wg-ink) 0 75%, #fff 0) 0 0 / 4.5px 4.5px; outline: 1px solid var(--wg-ink); }
+.wg-sum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-sum b { color: var(--wg-red); font-weight: 400; }
+.wg-chev { color: var(--wg-ink); font-size: 12px; }
+.wg-mini { position: relative; height: var(--wg-dot); }
+.wg-mini::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--wg-line); }
+.wg-mini .wg-flag { top: -2px; bottom: -2px; }
+.wg-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px 20px; display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 720px; margin: 0 auto; box-sizing: border-box; }
+
+/* the dots */
+.wg-dot { position: absolute; top: 0; width: var(--wg-dot); height: var(--wg-dot); border-radius: 50%; z-index: 2; box-sizing: border-box;
+  display: grid; place-items: center; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: calc(var(--wg-dot) * .5); line-height: 1; color: #fff;
+  background: var(--wg-navy); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--wg-ink), 0 2px 0 1px rgba(17, 17, 20, .35); transition: left .8s cubic-bezier(.3, 1.3, .5, 1); }
+.wg-dot.guest { background: #4b5d73; }
+.wg-dot.me { background: var(--wg-red); z-index: 3; }
+.wg-dot.lead { box-shadow: 0 0 0 1px var(--wg-ink), 0 0 0 4px var(--wg-gold), 0 3px 0 4px rgba(17, 17, 20, .3); }
+.wg-dot.broken { background: #cfc8b6; color: var(--wg-muted); }
+.wg-flag { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; z-index: 1;
+  background: conic-gradient(var(--wg-ink) 25%, #fff 0 50%, var(--wg-ink) 0 75%, #fff 0) 0 0 / 8px 8px; }
+
+/* the open sheet */
+.wg-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.wg-title { margin: 0; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: 24px; line-height: 1; text-transform: uppercase; letter-spacing: -.01em; }
+.wg-tabs { display: flex; border: 1.5px solid var(--wg-ink); }
+.wg-tab { font: inherit; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding: 6px 11px; border: 0; background: #fff; color: var(--wg-ink); cursor: pointer; }
+.wg-tab + .wg-tab { border-left: 1.5px solid var(--wg-ink); }
+.wg-tab.on { background: var(--wg-ink); color: #fff; }
+.wg-field { display: flex; flex-direction: column; gap: 8px; }
+
+/* a lane: name and points, the track with its trail, then what they did */
+.wg-lane { --wg-dot: 26px; --wg-trail: var(--wg-navy); display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 10px 12px 9px; box-sizing: border-box;
+  font: inherit; color: inherit; text-align: left; background: #fff; border: 1.5px solid var(--wg-ink); box-shadow: 3px 3px 0 var(--wg-ink); cursor: pointer;
+  transition: transform .08s ease, box-shadow .08s ease; }
+.wg-lane:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--wg-ink); }
+.wg-lane.me { --wg-trail: var(--wg-red); background: #fff6f6; border-color: var(--wg-red); box-shadow: 3px 3px 0 var(--wg-red); }
+.wg-lane.broken { --wg-trail: #cfc8b6; background: #faf8f2; }
+.wg-ltop { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wg-place { flex: none; width: 22px; height: 22px; display: grid; place-items: center; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: 13px; background: var(--wg-ink); color: #fff; }
+.wg-lane.me .wg-place { background: var(--wg-red); }
+.wg-name { min-width: 0; font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-tag { flex: none; font-family: var(--label, Arial, sans-serif); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--wg-line); color: var(--wg-muted); background: #fff; }
+.wg-tag.gold { background: var(--wg-gold); border-color: var(--wg-ink); color: var(--wg-ink); }
+.wg-tag.good { border-color: #0b6b2f; color: #0b6b2f; }
+.wg-pts { margin-left: auto; flex: none; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: 24px; line-height: 1; }
+.wg-pts small { font-family: var(--label, Arial, sans-serif); font-weight: 400; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); margin-left: 3px; }
+.wg-lane.me .wg-pts { color: var(--wg-red); }
+.wg-track { position: relative; height: var(--wg-dot); border-radius: calc(var(--wg-dot) / 2); background: repeating-linear-gradient(90deg, #ece6d6 0 18px, #e4ddca 18px 19px); box-shadow: inset 0 1px 2px rgba(17, 17, 20, .18); overflow: visible; }
+.wg-track .wg-flag { border-radius: 0 calc(var(--wg-dot) / 2) calc(var(--wg-dot) / 2) 0; width: 12px; }
+.wg-trail { position: absolute; left: 0; top: 0; bottom: 0; border-radius: calc(var(--wg-dot) / 2); background: linear-gradient(90deg, transparent, var(--wg-trail)); opacity: .85; transition: width .8s cubic-bezier(.3, 1.3, .5, 1); }
+.wg-tick { position: absolute; top: 6px; bottom: 6px; width: 1px; background: rgba(17, 17, 20, .15); }
+.wg-sub { font-size: 12px; color: var(--wg-muted); }
+.wg-stats { margin: -2px 0 4px; padding: 8px 12px; background: #fff; border: 1.5px solid var(--wg-ink); border-top-width: 0; }
+.wg-stats table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wg-stats th { font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); font-weight: 400; text-align: right; }
+.wg-stats td { padding: 2px 0; text-align: right; font-variant-numeric: tabular-nums; }
+.wg-stats td:first-child { text-align: left; }
+.wg-stats .wg-each { color: var(--wg-muted); }
+.wg-stats .wg-total td { border-top: 1px solid var(--wg-ink); padding-top: 4px; font-weight: 600; }
+.wg-label { margin: 0; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); }
+.wg-feed ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wg-feed li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.wg-muted { margin: 0; font-size: 12.5px; color: var(--wg-muted); }
+.wg-feed .wg-muted { margin-top: 4px; }
+.wg-links { display: flex; gap: 16px; flex-wrap: wrap; }
+.wg-links a, .wg-links button { font: inherit; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-ink);
+  background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* the bowling banner: a ball rolls down a lane above the bar and takes out the pins */
+.wg-bowl { position: fixed; left: 8px; right: 8px; bottom: calc(var(--rb, 0px) + 8px); z-index: 60; max-width: 560px; margin: 0 auto; background: #111114; color: #e5e0d1; border: 2px solid #111114;
+  box-shadow: 4px 4px 0 #dc0025; cursor: pointer; overflow: hidden; animation: wgin .3s cubic-bezier(.2, 1.3, .4, 1), wgout .4s ease-in 8.6s forwards; }
+.wg-sheet.open ~ .wg-bowl { bottom: auto; top: 8px; }
+.wg-alley { position: relative; height: 46px; background: repeating-linear-gradient(90deg, #c8955a 0 14px, #b9844b 14px 15px); border-bottom: 2px solid #111114; }
+.wg-alley::before, .wg-alley::after { content: ""; position: absolute; left: 0; right: 0; height: 5px; background: #3b2a1a; }
+.wg-alley::before { top: 0; } .wg-alley::after { bottom: 0; }
+.wg-ball { position: absolute; top: 10px; left: -30px; width: 26px; height: 26px; border-radius: 50%; z-index: 2;
+  background: radial-gradient(circle at 35% 32%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 52% 26%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 46% 46%, #111 0 2.2px, transparent 2.7px), radial-gradient(circle at 30% 30%, #ff4d6a, #dc0025 55%, #7a0015);
+  animation: wgroll 1.25s cubic-bezier(.4, .1, .9, .6) .25s forwards; }
+.wg-pins { position: absolute; right: 14px; top: 6px; width: 70px; height: 34px; }
+.wg-pin { position: absolute; width: 11px; height: 28px; left: calc(var(--i) * 10px); top: var(--t); animation: wghit .9s cubic-bezier(.2, .7, .4, 1) 1.38s forwards; }
+.wg-pin svg { width: 100%; height: 100%; display: block; }
+.wg-btext { padding: 8px 12px 10px; }
+.wg-strike { margin: 0; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .02em; opacity: 0; animation: wgpop .35s cubic-bezier(.2, 1.6, .4, 1) 1.45s forwards; }
+.wg-strike b { color: #ffcc00; font-weight: 700; }
+.wg-strike span { color: #7be39b; font-size: 16px; font-variant-numeric: tabular-nums; }
+.wg-bline { margin: 4px 0 0; font-size: 14px; line-height: 1.35; opacity: 0; animation: wgfade .4s ease-out 1.7s forwards; }
+@keyframes wgroll { to { left: calc(100% - 70px); transform: rotate(720deg); } }
+@keyframes wghit { to { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; } }
+@keyframes wgpop { from { transform: scale(.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes wgfade { to { opacity: 1; } }
+@keyframes wgin { from { transform: translateY(120%); } to { transform: none; } }
+@keyframes wgout { to { transform: translateY(140%); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .wg-dot, .wg-trail, .wg-sheet { transition: none; }
+  .wg-ball { display: none; } .wg-pin { animation: none; opacity: .4; } .wg-strike, .wg-bline { animation: none; opacity: 1; }
+}

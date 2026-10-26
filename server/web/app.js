@@ -1606,6 +1606,16 @@ async function loadTeam() {
   try { state.team = await api("/api/team"); } catch (e) { state.team = { error: e.message }; }
   render();
 }
+async function loadRoster() {
+  try { state.roster = await api("/api/race/roster"); } catch (e) { state.roster = { error: e.message }; }
+  render();
+}
+async function setRacing(r, racing) {
+  state.rosterBusy = r.email; render();
+  try { state.roster = await api("/api/race/roster", { email: r.email, racing }); }
+  catch (e) { state.teamMsg = e.message; }
+  state.rosterBusy = null; render();
+}
 async function loadTeamStats() {
   const p = state.teamPeriod || "week";
   state.teamStatsLoading = true; render();
@@ -1615,6 +1625,7 @@ async function loadTeamStats() {
 function teamPage() {
   if (state.team === undefined) { state.team = null; loadTeam(); }
   if (state.teamStats === undefined) { state.teamStats = null; loadTeamStats(); }
+  if (state.roster === undefined) { state.roster = null; loadRoster(); }
   const t = state.team, ts = state.teamStats;
   const period = state.teamPeriod || "week";
   const reset = async (r) => {
@@ -1647,16 +1658,29 @@ function teamPage() {
     return el("div", { class: "tcard" }, [
       el("div", { class: "tcardhead" }, [
         el("div", {}, [el("h3", { text: r.name }), el("span", { class: "muted small3", text: `${r.email}${r.you ? " · you" : ""} · ${r.hasPassword ? `last sign-in ${when(r.lastLogin)}` : "hasn't signed in yet"}` })]),
-        r.you || !r.hasPassword ? null : el("button", { class: "btn small", disabled: state.teamBusy === r.email, text: state.teamBusy === r.email ? "Resetting…" : "Reset password", onclick: () => reset(r) }),
+        el("div", { class: "tcardacts" }, [
+          gameSwitch(r),
+          r.you || !r.hasPassword ? null : el("button", { class: "btn small", disabled: state.teamBusy === r.email, text: state.teamBusy === r.email ? "Resetting…" : "Reset password", onclick: () => reset(r) }),
+        ]),
       ]),
       !ts || state.teamStatsLoading && !st ? el("p", { class: "loading", text: "Counting from Close…" })
         : st && st.error ? el("p", { class: "empty", text: `Couldn't load their numbers: ${st.error}` })
           : el("div", { class: "tstats" }, tiles(st && st.stats, st && st.rfqCompanies)),
     ]);
   };
+  // West Game (10/25): who's in the competition on the Chrome extension. People who call but aren't BDRs can sit out.
+  const gameSwitch = (r) => {
+    const ro = state.roster;
+    if (!ro || ro.error) return null;
+    const on = !ro.excluded.includes(r.email.toLowerCase());
+    return el("label", { class: `gameswitch${on ? " on" : ""}`, title: on ? "In West Game. Untick to leave them out." : "Not in West Game. Tick to put them in." }, [
+      el("input", { type: "checkbox", checked: on, disabled: state.rosterBusy === r.email, onchange: (e) => setRacing(r, e.currentTarget.checked) }),
+      el("span", { text: "West Game" }),
+    ]);
+  };
   return el("section", { class: "teampage" }, [
     el("div", { class: "head pagehead" }, [el("h1", { class: "ptitle", text: "Team" })]),
-    el("p", { class: "muted small3", text: "Each person's numbers from Close, the same ones they see on their own home page. Only you can see this page." }),
+    el("p", { class: "muted small3", text: "Each person's numbers from Close, the same ones they see on their own home page. Only you can see this page. Tick West Game for the people who should be in the competition on the Chrome extension." }),
     el("div", { class: "heatcard" }, [el("span", { class: "label", text: "Show" }), chip("today", "Today"), chip("week", "This week"), chip("month", "This month"), chip("all", "All time"),
       state.teamStatsLoading ? el("span", { class: "muted small3", text: "Updating…" }) : null]),
     state.teamMsg ? el("p", { class: "gmsgok", text: state.teamMsg }) : null,

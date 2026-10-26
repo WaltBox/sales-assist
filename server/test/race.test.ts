@@ -34,3 +34,29 @@ test("points: an RFQ is worth 50 dials; the roster leaves people out; a broken C
   await setRaceRoster(ownerId, "ulysses@westgatesupply.com", true);
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"]);
 });
+
+test("West Game: a guest plays while their link is on; their calls are the marks on their list, line cards their sends", async () => {
+  const { createGuest, setGuestActive, putList, listGuests } = await import("../src/guests.js");
+  const ownerId = "user_wg_owner";
+  const team: Deps[] = [{ close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", ownerId) }] as never;
+  const { guest } = await createGuest(ownerId, "Dana Trial");
+  await putList(ownerId, guest, { rows: [{ company: "A Co", phone: "5551110000" }, { company: "B Co", phone: "5551110001" }, { company: "C Co", phone: "5551110002" }] });
+  const list = (await store.getSetting<{ leads: Array<Record<string, unknown>> }>(ownerId, `guestList:${guest.id}`))!;
+  const now = new Date().toISOString();
+  Object.assign(list.leads[0], { outcome: "Reached buyer", outcomeAt: now });
+  Object.assign(list.leads[1], { outcome: "Voicemail", outcomeAt: now });
+  await store.putSetting(ownerId, `guestList:${guest.id}`, list);
+  const guests = await listGuests(ownerId);
+  guests.find((g) => g.id === guest.id)!.sends.push({ at: now, company: "A Co", to: "buyer@aco.com", name: null, leadId: "lead_aco", newLead: false });
+  await store.putSetting(ownerId, "guests", guests);
+
+  const race = await teamRace(team, ownerId, { fresh: true });
+  const lane = race.lanes.find((l) => l.email === `guest:${guest.id}`)!;
+  assert.ok(lane.guest);
+  assert.deepEqual([lane.dials, lane.reached, lane.lineCards], [2, 1, 1]);
+  assert.equal(lane.points, 2 * POINTS.dial + POINTS.reached + POINTS.lineCard);
+
+  await setGuestActive(ownerId, guest.id, false);
+  const off = await teamRace(team, ownerId, { fresh: true });
+  assert.ok(!off.lanes.some((l) => l.guest), "a switched-off link doesn't play");
+});

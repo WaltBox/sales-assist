@@ -1,6 +1,7 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
 import { dayStats, localDay, periodStats, rfqTimeline } from "./stats.js";
+import { getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { store } from "./store.js";
 
 /**
@@ -14,12 +15,13 @@ import { store } from "./store.js";
  */
 export const POINTS = { dial: 1, reached: 5, lineCard: 10, rfq: 50, firstRfq: 25 } as const;
 export type RaceLane = {
-  email: string; name: string; first: string;
+  /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
+  email: string; name: string; first: string; guest?: boolean;
   dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs: number; points: number;
   week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number } | null;
   error: string | null;
 };
-export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string };
+export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string; leadId?: string };
 export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; roster: { excluded: string[] } };
 
 const ROSTER_KEY = "raceRoster";
@@ -79,21 +81,22 @@ async function buildRace(team: Deps[], ownerId: string): Promise<Race> {
         week: week ? { dials: week.dials, reached: week.reached, lineCards: week.lineCards, rfqs: weekRfqs, points: scoreOf({ ...week, rfqs: weekRfqs }) } : null,
         error: null,
       };
-      const events: RaceEvent[] = todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today }));
-      return { lane, events };
+      const events: RaceEvent[] = todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
+      return { lane, events, line, today, t };
     } catch (e) {
       const msg = (e as Error).message;
       return {
         lane: { email: t.rep.email.toLowerCase(), name: t.rep.name, first, dials: 0, reached: 0, lineCards: 0, rfqs: 0, firstRfqs: 0, points: 0, week: null,
           error: /403|no access/i.test(msg) ? "Close login needs fixing" : "Couldn't read their numbers" },
-        events: [] as RaceEvent[],
+        events: [] as RaceEvent[], line: null, today: "", t,
       };
     }
   }));
+  const guestLanes = await guestRacers(team, roster, results, now);
   const race: Race = {
     day: localDay(team[0]?.rep.timeZone ?? "America/Chicago", now).day, at: now.toISOString(),
-    lanes: results.map((r) => r.lane).sort((a, b) => b.points - a.points || b.dials - a.dials),
-    events: results.flatMap((r) => r.events), points: POINTS, roster,
+    lanes: [...results.map((r) => r.lane), ...guestLanes.map((g) => g.lane)].sort((a, b) => b.points - a.points || b.dials - a.dials),
+    events: [...results.flatMap((r) => r.events), ...guestLanes.flatMap((g) => g.events)].map(({ leadId: _l, ...e }) => e), points: POINTS, roster,
   };
   await store.cacheSet(RACE_KEY, race, 24 * 3600_000).catch(() => undefined);
   return race;
@@ -104,4 +107,52 @@ function weekStart(day: string) {
   const t = Date.parse(`${day}T12:00:00Z`);
   const back = (new Date(t).getUTCDay() + 6) % 7;
   return new Date(t - back * 86_400_000).toISOString().slice(0, 10);
+}
+
+const REACHED_OUTCOMES = new Set(["Reached buyer", "Wants line card", "Sending an RFQ", "Got a name"]);
+type RepResult = { lane: RaceLane; events: RaceEvent[]; line: Awaited<ReturnType<typeof rfqTimeline>> | null; today: string; t: Deps };
+
+/**
+ * Guests play too (Walt 10/25), but only while their link is on. A guest's dials are the calls they mark on their list,
+ * conversations the marks where they got someone, line cards the ones they sent. Their line cards go out from the
+ * rep's Close account, so an RFQ from a company the guest worked lands on the rep: it moves from the rep's lane to theirs.
+ */
+async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: RepResult[], now: Date) {
+  const out: Array<{ lane: RaceLane; events: RaceEvent[] }> = [];
+  for (const t of team) {
+    const guests = (await listGuests(t.rep.closeUserId).catch(() => [] as Guest[])).filter((g) => g.active && !roster.excluded.includes(`guest:${g.id}`));
+    if (!guests.length) continue;
+    const tz = t.rep.timeZone;
+    const today = localDay(tz, now).day, monday = weekStart(today);
+    const dayOf = (iso: string | null | undefined) => (iso ? localDay(tz, new Date(iso)).day : "");
+    const host = reps.find((r) => r.t.rep.closeUserId === t.rep.closeUserId);
+    const line = host?.line ?? (await rfqTimeline(t, { savedOk: true, refreshAfterMs: 4 * 60_000 }).catch(() => null));
+    for (const g of guests) {
+      const [list, ids] = await Promise.all([getList(t.rep.closeUserId, g.id).catch(() => null), guestLeadIds(t.rep.closeUserId, g)]);
+      const marks = (list?.leads ?? []).filter((l) => l.outcome && l.outcomeAt);
+      const count = (from: string) => {
+        const m = marks.filter((l) => dayOf(l.outcomeAt) >= from && dayOf(l.outcomeAt) <= today);
+        return { dials: m.length, reached: m.filter((l) => REACHED_OUTCOMES.has(l.outcome!)).length, lineCards: g.sends.filter((x) => dayOf(x.at) >= from && dayOf(x.at) <= today).length };
+      };
+      const todays = (line?.days.find((x) => x.day === today)?.accounts ?? []).filter((a) => ids.has(a.leadId));
+      const weekRfqs = (line?.days ?? []).filter((x) => x.day >= monday).reduce((n, x) => n + x.accounts.filter((a) => ids.has(a.leadId)).length, 0);
+      const base = { ...count(today), rfqs: todays.length, firstRfqs: todays.filter((a) => a.first).length };
+      const wk = count(monday);
+      const email = `guest:${g.id}`;
+      out.push({
+        lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
+          week: { ...wk, rfqs: weekRfqs, points: scoreOf({ ...wk, rfqs: weekRfqs }) }, error: null },
+        events: todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
+      });
+      // The same RFQs come off the rep's lane, so nobody gets them twice.
+      if (host && (todays.length || weekRfqs)) {
+        const l = host.lane;
+        const gone = new Set(todays.map((a) => a.leadId));
+        l.rfqs -= todays.length; l.firstRfqs -= base.firstRfqs; l.points = scoreOf(l);
+        if (l.week) { l.week.rfqs = Math.max(0, l.week.rfqs - weekRfqs); l.week.points = scoreOf(l.week); }
+        host.events = host.events.filter((e) => !(e.leadId && gone.has(e.leadId)));
+      }
+    }
+  }
+  return out;
 }

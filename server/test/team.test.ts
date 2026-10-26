@@ -76,6 +76,15 @@ test("the extension zip the web app hands out is the current extension (run npm 
   assert.equal(packedVersion(), version);
 });
 
+test("the guest page's West Game is the same file as the extension's (run npm run pack-extension after changing it)", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { EXTENSION_DIR } = await import("../src/extension.js");
+  for (const f of ["westgame.js", "westgame.css"]) {
+    assert.equal(fs.readFileSync(path.resolve(EXTENSION_DIR, "..", "server", "web", f), "utf8"), fs.readFileSync(path.join(EXTENSION_DIR, f), "utf8"), f);
+  }
+});
+
 test("the Work Trial login (sales@, no mailbox) sends through Walt: from walt@, signed by Walt; reading stays its own (10/21)", async () => {
   const { sendThrough, renameSender, guardSending } = await import("../src/sending.js");
   assert.equal(renameSender("Hi Dana,\n\nI'm Work with Westgate Supply.\n\nThanks,\nWork Trial", "Work Trial", "Walt Boxwell"), "Hi Dana,\n\nI'm Walt with Westgate Supply.\n\nThanks,\nWalt Boxwell");
