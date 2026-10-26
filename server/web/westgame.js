@@ -286,31 +286,65 @@
 
   /**
    * opts: load() → the race; liveDials() → your calls today as this screen counts them (it knows before Close does);
-   * store { get(key), set(key, value) }; pollMs; webApp (a link for the owner to pick who plays); onChange().
+   * store { get(key), set(key, value) }; pollMs; webApp (a link for the owner to pick who plays); onChange();
+   * live() → { now, day, events with showAt }: the quick check that plays RFQs on every screen at once.
    */
   function create(opts) {
     const g = { race: null, seen: null, open: false, week: false, lane: null, drag: null, party: null, back: false };
+
+    // What's been celebrated already today. (A new key 10/26: RFQs are now one id per company per day.)
+    const SEEN = "westGameSeen2";
+    async function seenFor(day, events) {
+      if (!g.seen) {
+        const saved = await opts.store.get(SEEN);
+        // First look today: what already happened isn't news.
+        g.seen = saved && saved.day === day ? saved : { day, ids: events.map((e) => e.id) };
+        opts.store.set(SEEN, g.seen);
+      }
+      if (g.seen.day !== day) g.seen = { day, ids: [] };
+      return g.seen;
+    }
+    const markSeen = (id) => { if (!g.seen.ids.includes(id)) { g.seen.ids.push(id); opts.store.set(SEEN, g.seen); } };
 
     async function load(fresh) {
       let r;
       try { r = await opts.load(fresh); } catch { return; }
       g.race = r;
-      if (!g.seen) {
-        const saved = await opts.store.get("westGameSeen");
-        // First look today: what already happened isn't news.
-        g.seen = saved && saved.day === r.day ? saved : { day: r.day, ids: r.events.map((e) => e.id) };
-        opts.store.set("westGameSeen", g.seen);
-      }
-      if (g.seen.day !== r.day) g.seen = { day: r.day, ids: [] };
-      const fresh2 = r.events.filter((e) => !g.seen.ids.includes(e.id));
-      if (fresh2.length) {
-        g.seen.ids.push(...fresh2.map((e) => e.id));
-        opts.store.set("westGameSeen", g.seen);
-        celebrate(fresh2[fresh2.length - 1], fresh2.length);
+      await seenFor(r.day, r.events);
+      // Without the live check (an older server), celebrate from here.
+      if (!opts.live) {
+        const fresh2 = r.events.filter((e) => !g.seen.ids.includes(e.id));
+        fresh2.forEach((e) => markSeen(e.id));
+        if (fresh2.length) celebrate(fresh2[fresh2.length - 1], fresh2.length);
       }
       render();
       if (opts.onChange) opts.onChange();
     }
+
+    // Every screen at the same moment (Walt 10/26): each RFQ comes with the time it plays, set once by the server, and
+    // this screen waits for that moment on the server's clock. Checked every few seconds, so a tap shows within seconds.
+    let clock = 0; // the server's time minus this computer's
+    const waiting = new Set();
+    const queue = [];
+    async function live() {
+      if (!g.race) return;
+      const t0 = Date.now();
+      let r;
+      try { r = await opts.live(); } catch { return; }
+      const t1 = Date.now();
+      clock = Date.parse(r.now) - (t0 + t1) / 2;
+      await seenFor(r.day, r.events);
+      const serverNow = Date.now() + clock;
+      for (const e of r.events) {
+        if (g.seen.ids.includes(e.id) || waiting.has(e.id)) continue;
+        const at = Date.parse(e.showAt || r.now);
+        if (serverNow - at > 60_000) { markSeen(e.id); continue; } // opened the panel late: it's old news
+        waiting.add(e.id);
+        setTimeout(() => { waiting.delete(e.id); markSeen(e.id); play(e); load(true); }, Math.max(0, at - serverNow));
+      }
+    }
+    // Two at once take turns.
+    function play(e) { if (g.party) queue.push(e); else celebrate(e, 1); }
 
     /** The lanes, with your own calls counted live. */
     function lanes() {
@@ -524,7 +558,11 @@
       const scene = BUILD[sc.key]({ shout, co, you, pts });
       const count = h("b", { class: "wg-count", text: "+0" });
       const canvases = [scene.fx, scene.fx2].filter(Boolean).map(() => h("canvas", { class: "wg-fx" }));
-      const done = () => { if (g.party !== party) return; clearTimeout(party.timer); g.party = null; g.back = true; render(); };
+      const done = () => {
+        if (g.party !== party) return;
+        clearTimeout(party.timer); g.party = null; g.back = true; render();
+        if (queue.length) setTimeout(() => celebrate(queue.shift(), 1), 600);
+      };
       const el = h("div", { class: `wg-party wg-x-${sc.key}`, role: "status", onclick: done, style: `--at:${scene.at}s` }, [
         h("div", { class: "wg-stage", "aria-hidden": "true" }, [...scene.kids.slice(0, 1), ...canvases, ...scene.kids.slice(1)]),
         h("div", { class: "wg-btext" }, [h("p", { class: "wg-bline", text: line }), count]),
@@ -556,6 +594,7 @@
 
     load(false);
     setInterval(() => load(false), opts.pollMs || 20_000);
+    if (opts.live) setInterval(live, 3000);
     return { render, load, celebrate, get race() { return g.race; } };
   }
 

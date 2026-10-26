@@ -24,7 +24,8 @@ export type RaceLane = {
   week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number } | null;
   error: string | null;
 };
-export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string; leadId?: string };
+/** showAt: the moment every screen plays it, the same for everyone (10/26: "hit everyone's device at the exact same time"). */
+export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string; leadId?: string; showAt?: string };
 export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; roster: { excluded: string[] } };
 
 const ROSTER_KEY = "raceRoster";
@@ -69,15 +70,18 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
   const roster = await raceRoster(ownerId);
   const racers = team.filter((t) => !roster.excluded.includes(t.rep.email.toLowerCase()));
   const now = new Date();
+  const taps = await todaysTaps(ownerId, team[0]?.rep.timeZone ?? "America/Chicago", now);
+  const previous = await store.cacheGet<Race>(RACE_KEY).catch(() => null);
   const results = await Promise.all(racers.map(async (t) => {
     const first = t.rep.name.split(/\s+/)[0] || t.rep.name;
     try {
       const today = localDay(t.rep.timeZone, now).day;
-      const [day, line, week] = await Promise.all([
+      const [day, rawLine, week] = await Promise.all([
         dayStats(t, { fresh }),
         rfqTimeline(t, { savedOk: true, refreshAfterMs: fresh ? 30_000 : 4 * 60_000 }).catch(() => null),
         periodStats(t, "week").catch(() => null),
       ]);
+      const line = newCompaniesOnly(withTaps(rawLine, taps.filter((x) => x.email === t.rep.email.toLowerCase()), today));
       const todays = line?.days.find((x) => x.day === today)?.accounts ?? [];
       const rfqs = todays.length, firstRfqs = todays.filter((a) => a.first).length;
       // Line cards a person sent, not the automatic follow-ups that carry one too.
@@ -90,7 +94,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
         week: weekOf(week ? { ...week, lineCards: week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
         error: null,
       };
-      const events: RaceEvent[] = todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
+      const events: RaceEvent[] = todays.map((a) => ({ id: `${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
       return { lane, events, line, today, t };
     } catch (e) {
       const msg = (e as Error).message;
@@ -103,10 +107,16 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
   }));
   await oneOwnerPerRfq(results);
   const guestLanes = await guestRacers(team, roster, results, now);
+  // One showtime per RFQ, kept from the first time it was seen (a tap's, or the last copy's), so every screen agrees.
+  const shown = new Map<string, string>([
+    ...(previous?.events ?? []).filter((e) => e.showAt).map((e) => [e.id, e.showAt!] as const),
+    ...taps.map((x) => [x.id, showTime(x.at)] as const),
+  ]);
   const race: Race = {
     day: localDay(team[0]?.rep.timeZone ?? "America/Chicago", now).day, at: now.toISOString(),
     lanes: [...results.map((r) => r.lane), ...guestLanes.map((g) => g.lane)].sort((a, b) => b.points - a.points || b.dials - a.dials),
-    events: [...results.flatMap((r) => r.events), ...guestLanes.flatMap((g) => g.events)].map(({ leadId: _l, ...e }) => e), points: POINTS, roster,
+    events: [...results.flatMap((r) => r.events), ...guestLanes.flatMap((g) => g.events)]
+      .map(({ leadId: _l, ...e }) => ({ ...e, showAt: shown.get(e.id) ?? showTime(now.toISOString()) })), points: POINTS, roster,
   };
   await store.cacheSet(RACE_KEY, race, 24 * 3600_000).catch(() => undefined);
   return race;
@@ -147,7 +157,7 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
     const today = localDay(tz, now).day, monday = weekStart(today);
     const dayOf = (iso: string | null | undefined) => (iso ? localDay(tz, new Date(iso)).day : "");
     const host = reps.find((r) => r.t.rep.closeUserId === t.rep.closeUserId);
-    const line = host?.line ?? (await rfqTimeline(t, { savedOk: true, refreshAfterMs: 4 * 60_000 }).catch(() => null));
+    const line = host?.line ?? newCompaniesOnly(await rfqTimeline(t, { savedOk: true, refreshAfterMs: 4 * 60_000 }).catch(() => null));
     for (const g of guests) {
       const [list, ids] = await Promise.all([getList(t.rep.closeUserId, g.id).catch(() => null), guestLeadIds(t.rep.closeUserId, g)]);
       const marks = (list?.leads ?? []).filter((l) => l.outcome && l.outcomeAt);
@@ -164,8 +174,10 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
       out.push({
         lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
           week: weekOf(wk, base, weekRfqs, weekFirst), error: null },
-        events: todays.map((a) => ({ id: `${t.rep.closeUserId}:${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
+        events: todays.map((a) => ({ id: `${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
       });
+      // Their line cards went out from the rep's account: they count for the guest, not the rep.
+      if (host && base.lineCards) { host.lane.lineCards = Math.max(0, host.lane.lineCards - base.lineCards); host.lane.points = scoreOf(host.lane); }
       // The same RFQs come off the rep's lane, so nobody gets them twice.
       if (host && (todays.length || weekRfqs)) {
         const l = host.lane;
@@ -185,14 +197,14 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
  * in Close; if that's nobody racing, whoever's account it showed up in first. Everyone else's copy comes off their lane.
  */
 async function oneOwnerPerRfq(results: RepResult[]) {
-  type Entry = { r: RepResult; leadId: string; day: string; how: string; first: boolean; company: string };
+  type Entry = { r: RepResult; leadId: string; day: string; how: string; first: boolean; marked: boolean; company: string };
   const live = results.filter((r) => r.line && r.today);
   const byKey = new Map<string, Entry[]>();
   for (const r of live) {
     const monday = weekStart(r.today);
     for (const d of r.line!.days) if (d.day >= monday) for (const a of d.accounts) {
       const k = `${a.leadId}|${d.day}`;
-      byKey.set(k, [...(byKey.get(k) ?? []), { r, leadId: a.leadId, day: d.day, how: a.how, first: a.first, company: a.company }]);
+      byKey.set(k, [...(byKey.get(k) ?? []), { r, leadId: a.leadId, day: d.day, how: a.how, first: a.first, marked: !!a.marked || a.how === "marked", company: a.company }]);
     }
   }
   const shared = [...byKey.values()].filter((es) => new Set(es.map((e) => e.r)).size > 1);
@@ -209,7 +221,7 @@ async function oneOwnerPerRfq(results: RepResult[]) {
   const lose = new Map<RepResult, Set<string>>(); // rep → lead|day keys they don't get
   for (const es of shared) {
     const owner = ownerOf.get(es[0].leadId);
-    const keep = es.find((e) => e.how === "marked") ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0];
+    const keep = es.find((e) => e.marked) ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0];
     for (const e of es) if (e.r !== keep.r) lose.set(e.r, new Set([...(lose.get(e.r) ?? []), `${e.leadId}|${e.day}`]));
   }
   for (const [r, keys] of lose) {
@@ -229,4 +241,69 @@ async function oneOwnerPerRfq(results: RepResult[]) {
     const drop = new Set(today.map((k) => k.split("|")[0]));
     r.events = r.events.filter((e) => !(e.leadId && drop.has(e.leadId)));
   }
+}
+
+// ---------- RFQs the moment they're tapped, shown on every screen at once (Walt 10/26) ----------
+
+/** How long after an RFQ is first seen every screen plays it: long enough for every panel to have checked in. */
+export const SHOW_DELAY_MS = 7_000;
+const showTime = (at: string) => new Date(Date.parse(at) + SHOW_DELAY_MS).toISOString();
+const TAPS_KEY = "raceTaps";
+export type RaceTap = { id: string; email: string; name: string; leadId: string; company: string; at: string; day: string; first: boolean };
+
+async function todaysTaps(ownerId: string, tz: string, now: Date): Promise<RaceTap[]> {
+  const today = localDay(tz, now).day;
+  return ((await store.getSetting<RaceTap[]>(ownerId, TAPS_KEY).catch(() => null)) ?? []).filter((x) => x.day === today);
+}
+
+/**
+ * Someone tapped "RFQ came in": it counts now, not when Close is next read. It's a new company (the only kind that
+ * scores, 10/26) when the lead was added to Close in the last 120 days and nobody on the team has had an RFQ from it before.
+ */
+export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadId: string): Promise<RaceTap> {
+  const now = new Date();
+  const today = localDay(d.rep.timeZone, now).day;
+  const lead = (await d.close.lead(leadId).catch(() => null)) as { display_name?: string; date_created?: string } | null;
+  const added = Date.parse(String(lead?.date_created ?? ""));
+  const newToUs = Number.isFinite(added) && now.getTime() - added < 120 * 86_400_000;
+  let before = false;
+  for (const t of team) {
+    const line = await rfqTimeline(t, { savedOk: true }).catch(() => null);
+    if (line?.days.some((x) => x.day < today && x.accounts.some((a) => a.leadId === leadId))) { before = true; break; }
+  }
+  const tap: RaceTap = { id: `${leadId}:${today}`, email: d.rep.email.toLowerCase(), name: d.rep.name, leadId, company: lead?.display_name ?? "An account", at: now.toISOString(), day: today, first: newToUs && !before };
+  const taps = (await todaysTaps(ownerId, d.rep.timeZone, now)).filter((x) => x.id !== tap.id);
+  await store.putSetting(ownerId, TAPS_KEY, [...taps, tap]);
+  return tap;
+}
+
+/** Taps go into the rep's RFQs for today, ahead of Close showing them. */
+function withTaps(line: RfqLine, taps: RaceTap[], today: string): RfqLine {
+  if (!line && !taps.length) return line;
+  const base: NonNullable<RfqLine> = line ?? { since: today, total: 0, thisWeek: 0, lastWeek: 0, firstToday: 0, firstThisWeek: 0, companies: 0, newThisWeek: 0, newLastWeek: 0, newThisMonth: 0, newLastMonth: 0, days: [] };
+  const days = base.days.map((x) => ({ ...x, accounts: [...x.accounts] }));
+  let day = days.find((x) => x.day === today);
+  if (!day && taps.length) { day = { day: today, count: 0, total: 0, newCompanies: 0, companiesTotal: 0, accounts: [] }; days.push(day); }
+  for (const tap of taps) {
+    const have = day!.accounts.find((a) => a.leadId === tap.leadId);
+    if (have) { have.marked = true; have.first = have.first || tap.first; }
+    else day!.accounts.push({ leadId: tap.leadId, company: tap.company, how: "marked", first: tap.first, marked: true });
+  }
+  return { ...base, days };
+}
+
+/** Only new companies score (Walt 10/26: "not companies that have been compounding over time"). */
+function newCompaniesOnly(line: RfqLine): RfqLine {
+  return line ? { ...line, days: line.days.map((x) => ({ ...x, accounts: x.accounts.filter((a) => a.first) })) } : line;
+}
+type RfqLine = Awaited<ReturnType<typeof rfqTimeline>>;
+
+/** The day's RFQs and their showtimes, for the screens to play in sync: cheap, read every few seconds. */
+export async function raceLive(ownerId: string, tz: string) {
+  const now = new Date();
+  const [saved, taps] = await Promise.all([store.cacheGet<Race>(RACE_KEY).catch(() => null), todaysTaps(ownerId, tz, now)]);
+  const events = new Map<string, RaceEvent>();
+  for (const e of saved?.events ?? []) events.set(e.id, e);
+  for (const x of taps) if (x.first && !events.has(x.id)) events.set(x.id, { id: x.id, email: x.email, name: x.name, company: x.company, first: true, day: x.day, showAt: showTime(x.at) });
+  return { now: now.toISOString(), day: localDay(tz, now).day, events: [...events.values()] };
 }

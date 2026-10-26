@@ -545,6 +545,7 @@ function startGame() {
   if (game || !settings.token || !window.WestGame) return;
   game = WestGame.create({
     load: (fresh) => api(`/api/race${fresh ? "?fresh=1" : ""}`),
+    live: () => api("/api/race/live"),
     liveDials: () => (statsFresh() ? stats.dials : null),
     store: gameStore,
     webApp: `${settings.server}/#team`,

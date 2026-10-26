@@ -33,7 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
-import { raceRoster, setRaceRoster, teamRace } from "./race.js";
+import { raceLive, raceRoster, recordRfqTap, setRaceRoster, teamRace } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -460,6 +460,17 @@ export function createApp(appDeps: AppDeps) {
   }));
   // The BDR race (10/25): every rep on the roster, today's dials and points, the week, and today's RFQs to celebrate.
   // Everyone sees it; only the owner picks who's in it.
+  // The live RFQ check runs every few seconds on every screen: whose settings to read is worked out once in a while.
+  let liveOwner: { at: number; id: string; tz: string } | null = null;
+  const liveOwnerInfo = async () => {
+    if (!liveOwner || Date.now() - liveOwner.at > 10 * 60_000) {
+      const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+      const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
+      if (!owner) throw new GuestError(503, "West Game isn't available right now.");
+      liveOwner = { at: Date.now(), id: owner.rep.closeUserId, tz: owner.rep.timeZone };
+    }
+    return liveOwner;
+  };
   const raceTeam = async (d: Deps) => {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
     if (!team.some((t) => t.rep.closeUserId === d.rep.closeUserId)) team.unshift(d);
@@ -472,6 +483,10 @@ export function createApp(appDeps: AppDeps) {
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
   }));
+  app.get("/api/guest/:token/race/live", guestRoute(async () => {
+    const o = await liveOwnerInfo();
+    return raceLive(o.id, o.tz);
+  }));
   // West Game on a guest's page (10/25): guests play while their link is on. Same shared copy the panels read.
   app.get("/api/guest/:token/race", guestRoute(async (req, g) => {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
@@ -479,6 +494,11 @@ export function createApp(appDeps: AppDeps) {
     if (!owner) throw new GuestError(503, "West Game isn't available right now.");
     const race = await teamRace(team, owner.rep.closeUserId, { fresh: req.query.fresh === "1" });
     return { ...race, you: `guest:${g.guest.id}`, owner: false, roster: { excluded: [] } };
+  }));
+  // The day's RFQs with the moment each one plays, read every few seconds by every screen so they celebrate together.
+  app.get("/api/race/live", authed, route(async (_req, d) => {
+    const o = await liveOwnerInfo();
+    return raceLive(o.id, d.rep.timeZone);
   }));
   // Who's in West Game, for the web app's Team page (Walt 10/25: "in the application, not the Chrome extension").
   app.get("/api/race/roster", authed, route(async (_req, d) => {
@@ -733,7 +753,17 @@ export function createApp(appDeps: AppDeps) {
     bustBoard(d);
     return { heard: potential.profile.heard, ask: potential.ask, tier: potential.tier, status };
   }));
-  app.post("/api/leads/:leadId/rfq-received", authed, route((req, d) => markRfqReceived(d, leadId(req), typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null)));
+  app.post("/api/leads/:leadId/rfq-received", authed, route(async (req, d) => {
+    const id = leadId(req);
+    const r = await markRfqReceived(d, id, typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null);
+    // West Game counts it now and every screen celebrates it together (10/26), without waiting on the next Close read.
+    try {
+      const { team, ownerId } = await raceTeam(d);
+      await recordRfqTap(team, ownerId, d, id);
+      background(teamRace(team, ownerId, { fresh: true }).then(() => undefined), "race after RFQ tap");
+    } catch (e) { console.error(`[rfq tap ${id}]`, (e as Error).message); }
+    return r;
+  }));
   // Where an RFQ stands, set by the rep ("With pricing · Berni has it"): a [RFQ status] note in Close.
   // "Shot down" from the side panel (Walt 10/5): Not Interested in Close, callbacks cleared, and out of the
   // automatic emails: a bump already scheduled is pulled back and the unsent rescue draft goes.

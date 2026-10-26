@@ -69,14 +69,42 @@ test("West Game: an RFQ two people both have goes to the one who marked it came 
     { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
   ] as never;
   const today = localDay("America/Chicago", new Date()).day;
-  const line = (how: string) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
-    days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_haley", company: "Haley Contracting", how, first: true }] }] });
+  const line = (how: string, marked = false) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+    days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_haley", company: "Haley Contracting", how, first: true, marked }] }] });
   await store.cacheSet(`rfqline:${walt}`, line("file"), 3600_000);
-  await store.cacheSet(`rfqline:${chase}`, line("marked"), 3600_000);
+  // The file landed in Chase's account too before he tapped "RFQ came in": found by file, but marked.
+  await store.cacheSet(`rfqline:${chase}`, line("file", true), 3600_000);
   await store.cacheSet("race:team", null, 1);
   const race = await teamRace(team, walt, { fresh: true });
   const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!;
   assert.deepEqual([c.rfqs, c.firstRfqs, w.rfqs, w.firstRfqs], [1, 1, 0, 0]);
   assert.equal(race.events.filter((e) => e.company === "Haley Contracting").length, 1, "celebrated once");
   assert.equal(race.events.find((e) => e.company === "Haley Contracting")!.email, "chase@westgatesupply.com");
+});
+
+test("West Game: an RFQ tap scores right away with one showtime for every screen; established customers don't score (10/26)", async () => {
+  const { recordRfqTap, raceLive, SHOW_DELAY_MS } = await import("../src/race.js");
+  const { localDay } = await import("../src/stats.js");
+  const owner = "user_wg_tap_owner";
+  const close = new FakeClose();
+  const fresh = new Date(Date.now() - 5 * 86_400_000).toISOString(), old = new Date(Date.now() - 400 * 86_400_000).toISOString();
+  close.lead = (async (id: string) => ({ id, display_name: id === "lead_new" ? "Brand New Co" : "Old Customer Inc", date_created: id === "lead_new" ? fresh : old })) as never;
+  const team: Deps[] = [{ close, llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", owner) }] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  await store.cacheSet(`rfqline:${owner}`, { since: today, total: 0, thisWeek: 0, lastWeek: 0, firstToday: 0, firstThisWeek: 0, companies: 0, newThisWeek: 0, newLastWeek: 0, newThisMonth: 0, newLastMonth: 0, at: new Date().toISOString(), days: [] }, 3600_000);
+  await store.cacheSet("race:team", null, 1);
+
+  const tap = await recordRfqTap(team, owner, team[0], "lead_new");
+  assert.equal(tap.first, true, "added to Close 5 days ago, no RFQ before: new");
+  const oldTap = await recordRfqTap(team, owner, team[0], "lead_old");
+  assert.equal(oldTap.first, false, "in Close for over a year: established");
+
+  const live = await raceLive(owner, "America/Chicago");
+  assert.deepEqual(live.events.map((e) => e.company), ["Brand New Co"], "only the new company celebrates");
+  assert.equal(Date.parse(live.events[0].showAt!) - Date.parse(tap.at), SHOW_DELAY_MS, "one showtime, from the tap");
+
+  const race = await teamRace(team, owner, { fresh: true });
+  const c = race.lanes.find((l) => l.first === "Chase")!;
+  assert.deepEqual([c.rfqs, c.firstRfqs], [1, 1], "the tap counts before Close is read again; the old customer doesn't");
+  assert.equal(race.events.find((e) => e.company === "Brand New Co")!.showAt, live.events[0].showAt, "the full copy keeps the same showtime");
 });

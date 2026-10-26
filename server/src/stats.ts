@@ -17,27 +17,14 @@ const REACHED = new Set(["reached_buyer", "got_name"]);
 const DAY_MS = 24 * 3600 * 1000;
 
 /**
- * Line cards that opened an account: the first email of ours to that company in the two weeks before, and not a reply
- * in a thread already going. Every automatic follow-up carries the line card too (10/12), so counting attachments
- * alone gave Walt 57 "line cards" on 10/26, all of them "Re:" follow-ups, on a day he sent none by hand.
+ * Line cards a person sent (West Game, 10/26): every email with the line card on it, replies included, except the ones
+ * the automatic sequence sent, which are recorded by their Close email id. Counted by company, so a resend to a
+ * corrected address doesn't count twice. (Counting attachments alone gave Walt 57 on a day he sent none by hand.)
  */
-function newLineCardLeads(lineCardMails: Array<Record<string, unknown>>, emails: Array<Record<string, unknown>>, me: string): Set<string> {
-  const firstOut = new Map<string, number>();
-  for (const e of emails) {
-    if (e.user_id !== me || e.status !== "sent" || e.direction === "incoming") continue;
-    const t = Date.parse(String(e.date_sent ?? e.date_updated ?? ""));
-    const lead = String(e.lead_id ?? "");
-    if (!lead || !Number.isFinite(t)) continue;
-    if (!firstOut.has(lead) || t < firstOut.get(lead)!) firstOut.set(lead, t);
-  }
-  const out = new Set<string>();
-  for (const e of lineCardMails) {
-    if (/^\s*re:/i.test(String(e.subject ?? ""))) continue; // a follow-up in the thread, not a first line card
-    const lead = String(e.lead_id ?? "");
-    const t = Date.parse(String(e.date_sent ?? e.date_updated ?? ""));
-    if (lead && firstOut.get(lead) === t) out.add(lead);
-  }
-  return out;
+async function handLineCardLeads(lineCardMails: Array<Record<string, unknown>>, me: string, since: Date): Promise<Set<string>> {
+  const rows = await store.listAutomations(me, new Date(since.getTime() - 21 * DAY_MS).toISOString()).catch(() => []);
+  const automatic = new Set(rows.map((r) => r.id));
+  return new Set(lineCardMails.filter((e) => !automatic.has(String(e.id))).map((e) => String(e.lead_id)));
 }
 
 export type DayStats = {
@@ -49,7 +36,7 @@ export type DayStats = {
   voicemails: number;
   emailsSent: number;
   lineCards: number;
-  /** Line cards that were the first email of ours to that company: the ones a person sends, not the sequence's follow-ups (West Game, 10/26). */
+  /** Line cards a person sent, by company: not the automatic sequence's (West Game, 10/26). */
   newLineCards: number;
   rfqs: number; // leads that promised an RFQ today
   rfqAsked: number; // leads we asked for a benchmark RFQ/PO today
@@ -190,7 +177,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     voicemails: calls.filter((c) => isVoicemail(c, tapped)).length,
     emailsSent: sent.length,
     lineCards: lineCards.length,
-    newLineCards: newLineCardLeads(lineCards, emails, me).size,
+    newLineCards: (await handLineCardLeads(lineCards, me, since)).size,
     rfqs: rfqLeads.size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: received.size,
@@ -317,7 +304,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     emailsSent: sent.length,
     // Accounts, not emails: a resend to a fixed address doesn't count twice.
     lineCards: new Set(lineCardMails.map((e) => e.lead_id)).size,
-    newLineCards: newLineCardLeads(lineCardMails, emails, me).size,
+    newLineCards: (await handLineCardLeads(lineCardMails, me, since)).size,
     replied: new Set(replyMails.map((e) => e.lead_id)).size,
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
@@ -453,7 +440,7 @@ export type RfqTimeline = {
   /** New companies (their first RFQ ever) by calendar week (Mon–Sun) and month (Walt 10/12: "how many new companies
    *  have I brought in this week, this month"). */
   newThisWeek: number; newLastWeek: number; newThisMonth: number; newLastMonth: number;
-  days: Array<{ day: string; count: number; total: number; newCompanies: number; companiesTotal: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean }> }>;
+  days: Array<{ day: string; count: number; total: number; newCompanies: number; companiesTotal: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean; marked?: boolean }> }>;
   /** When this was worked out (the page shows a saved copy at once and refreshes it behind). */
   at?: string;
 };
@@ -535,7 +522,12 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     if (files.length) add(leadId, String(e.date_created), "file");
     else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email");
   }
-  for (const n of notes) if (String(n.note ?? "").includes(RFQ_IN_TAG) && String(n.date_created) >= start) add(String(n.lead_id), String(n.date_created), "marked");
+  // This rep tapped "RFQ came in" (kept apart from how it was found: the file can land first, 10/26 Haley Contracting).
+  const markedKeys = new Set<string>();
+  for (const n of notes) if (String(n.note ?? "").includes(RFQ_IN_TAG) && String(n.date_created) >= start) {
+    add(String(n.lead_id), String(n.date_created), "marked");
+    markedKeys.add(`${n.lead_id}|${localDay(tz, new Date(String(n.date_created))).day}`);
+  }
   // Or you set the lead to "RFQ Received" in Close yourself (BCS 9/29), or straight to Quoted. Only for leads with
   // no other sign of an RFQ: the app's own status moves (and the 9/29 catch-up) follow RFQs already counted above.
   const counted = new Set([...found.values()].map((f) => f.leadId));
@@ -566,7 +558,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     // A new company, not an established one (Walt 10/26): their first RFQ here, and in Close only since this window
     // began. A long-standing customer quiet for four months isn't a new account.
     const newToUs = (addedOf.get(f.leadId) ?? "") >= window;
-    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day && newToUs }]);
+    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day && newToUs, marked: markedKeys.has(`${f.leadId}|${day}`) }]);
   }
   // Every day from the first line card to today, so the line shows the quiet days too.
   const days: RfqTimeline["days"] = [];
