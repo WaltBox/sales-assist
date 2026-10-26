@@ -435,15 +435,18 @@ async function checkMilestone() {
 }
 
 function celebrate(n) {
-  document.querySelector(".party")?.remove();
   const lines = MILESTONES[n];
-  const msg = lines[Math.floor(Math.random() * lines.length)];
+  party({ big: String(n), label: "dials today", msg: lines[Math.floor(Math.random() * lines.length)], button: "Keep going" });
+}
+
+function party({ big, label, msg, button, cls = "" }) {
+  document.querySelector(".party")?.remove();
   const canvas = el("canvas", { class: "confetti", "aria-hidden": "true" });
-  const card = el("div", { class: "partycard", role: "status" }, [
-    el("p", { class: "partynum mono", text: String(n) }),
-    el("p", { class: "partylabel", text: "dials today" }),
+  const card = el("div", { class: `partycard ${cls}`.trim(), role: "status" }, [
+    el("p", { class: "partynum mono", text: big }),
+    el("p", { class: "partylabel", text: label }),
     el("p", { class: "partymsg", text: msg }),
-    el("button", { class: "btn primary", text: "Keep going", onclick: () => wrap.remove() }),
+    el("button", { class: "btn primary", text: button, onclick: () => wrap.remove() }),
   ]);
   const wrap = el("div", { class: "party", onclick: (e) => { if (e.target === wrap) wrap.remove(); } }, [canvas, card]);
   document.body.append(wrap);
@@ -474,6 +477,156 @@ function celebrate(n) {
   };
   requestAnimationFrame(frame);
 }
+// ---------- the race (Walt 10/25) ----------
+// Every rep is a lane: the car moves with each dial, points decide who's winning (dial 1, conversation 5, line card 10,
+// RFQ 50, first-ever RFQ from an account +25). When anyone lands an RFQ, every panel celebrates it.
+
+let race = null; // /api/race
+let raceOpen = true; // lanes, or one shared track
+let raceLane = null; // email of the lane opened for stats
+let raceRoster = false; // the owner's "Who's racing" list
+let raceSeen = null; // { day, ids } RFQ events already celebrated
+const RACE_GOAL = 100; // the finish line, until someone passes it
+
+const raceStore = PREVIEW
+  ? { get: async (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } }
+  : { get: async (k) => (await chrome.storage.local.get(k))[k] ?? null, set: (k, v) => chrome.storage.local.set({ [k]: v }) };
+
+async function loadRace() {
+  if (!settings.token) return;
+  try { race = await api("/api/race"); } catch { return; }
+  if (raceSeen === null) {
+    const saved = await raceStore.get("raceSeen");
+    // First look today: what already happened isn't news.
+    raceSeen = saved && saved.day === race.day ? saved : { day: race.day, ids: race.events.map((e) => e.id) };
+    raceStore.set("raceSeen", raceSeen);
+  }
+  if (raceSeen.day !== race.day) raceSeen = { day: race.day, ids: [] };
+  const fresh = race.events.filter((e) => !raceSeen.ids.includes(e.id));
+  if (fresh.length) {
+    raceSeen.ids.push(...fresh.map((e) => e.id));
+    raceStore.set("raceSeen", raceSeen);
+    celebrateRfq(fresh[fresh.length - 1], fresh.length);
+  }
+  render();
+}
+
+function celebrateRfq(e, n) {
+  const you = e.email === race.you;
+  const first = (e.name || "").split(/\s+/)[0] || "Someone";
+  const pts = race.points.rfq + (e.first ? race.points.firstRfq : 0);
+  party({
+    cls: "rfqparty",
+    big: `+${pts}`,
+    label: n > 1 ? `${n} RFQs just came in` : e.first ? "first RFQ from a new account" : "RFQ landed",
+    msg: `${you ? "You" : first} brought in an RFQ${e.company ? ` from ${e.company}` : ""}.${you ? " Nice." : " Your move."}`,
+    button: you ? "Let's go" : "Back to dialing",
+  });
+}
+
+/** The lanes, with your own dials counted live (the panel knows before Close does). */
+function raceLanes() {
+  if (!race) return [];
+  const lanes = race.lanes.map((l) => {
+    if (l.email !== race.you || !statsFresh() || stats.dials <= l.dials) return l;
+    const extra = stats.dials - l.dials;
+    return { ...l, dials: stats.dials, points: l.points + extra * race.points.dial };
+  });
+  return lanes.sort((a, b) => b.points - a.points || b.dials - a.dials);
+}
+
+const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
+const firstName = (l) => l.first || (l.name || l.email).split(/[\s@]/)[0];
+
+function raceCar(l, place, max) {
+  const pct = l.error ? 0 : Math.min(1, l.dials / max) * 100;
+  return el("span", {
+    class: `car${l.email === race.you ? " me" : ""}${place === 1 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}`,
+    style: `left: calc(${pct}% - ${pct / 100} * var(--car))`,
+    title: `${l.name}: ${l.dials} dials, ${l.points} points`,
+    text: firstName(l).slice(0, 1).toUpperCase(),
+  });
+}
+
+function raceStrip() {
+  if (!race || !settings.token) return null;
+  const lanes = raceLanes();
+  if (!lanes.length) return null;
+  const max = Math.max(RACE_GOAL, ...lanes.map((l) => l.dials));
+  const meAt = lanes.findIndex((l) => l.email === race.you);
+  const leader = lanes[0];
+  const toggle = el("button", { class: "racetoggle", title: raceOpen ? "Shrink the race" : "Show every lane", text: raceOpen ? "–" : "+", onclick: () => { raceOpen = !raceOpen; raceStore.set("raceOpen", raceOpen); render(); } });
+  const title = el("div", { class: "racehead" }, [
+    el("span", { class: "racetitle", text: "Race" }),
+    el("span", { class: "racesum" }, meAt >= 0
+      ? [el("b", { text: ordinal(meAt + 1) }), ` of ${lanes.length}`, meAt > 0 ? ` · ${lanes[meAt - 1].points - lanes[meAt].points + 1} pts to pass ${firstName(lanes[meAt - 1])}` : lanes.length > 1 ? ` · up ${lanes[0].points - lanes[1].points}` : ""]
+      : [`${firstName(leader)} leads with `, el("b", { text: String(leader.points) })]),
+    race.owner ? el("button", { class: "racelink", text: raceRoster ? "Done" : "Who's racing", onclick: () => { raceRoster = !raceRoster; raceLane = null; render(); } }) : null,
+    toggle,
+  ]);
+  const body = [];
+  if (raceRoster && race.owner) body.push(rosterList());
+  else if (raceOpen) {
+    for (const [i, l] of lanes.entries()) {
+      body.push(el("button", {
+        class: `lane${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
+        onclick: () => { raceLane = raceLane === l.email ? null : l.email; render(); },
+      }, [
+        el("span", { class: "lanename", text: firstName(l) }),
+        el("span", { class: "track" }, [raceCar(l, i + 1, max), el("span", { class: "finish", "aria-hidden": "true" })]),
+        el("span", { class: "lanepts mono", text: l.error ? "!" : String(l.points) }),
+      ]));
+      if (raceLane === l.email) body.push(laneStats(l, i + 1));
+    }
+  } else {
+    body.push(el("div", { class: "track shared" }, [...lanes.map((l, i) => raceCar(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]));
+  }
+  return el("section", { class: `race${raceOpen ? "" : " mini"}` }, [title, ...body]);
+}
+
+function laneStats(l, place) {
+  if (l.error) return el("div", { class: "lanestats" }, [el("p", { class: "small", text: `${l.error}. Their numbers will show once that's sorted.` })]);
+  const row = (label, today, week, each) => el("tr", {}, [
+    el("td", { text: label }), el("td", { class: "mono", text: String(today) }), el("td", { class: "mono", text: week == null ? "–" : String(week) }), el("td", { class: "mono muted", text: each }),
+  ]);
+  const w = l.week;
+  return el("div", { class: "lanestats" }, [
+    el("p", { class: "lanestatshead" }, [el("b", { text: l.name }), ` · ${ordinal(place)} today`]),
+    el("table", {}, [
+      el("tr", {}, [el("th", {}), el("th", { text: "Today" }), el("th", { text: "Week" }), el("th", { text: "Pts" })]),
+      row("Dials", l.dials, w && w.dials, `×${race.points.dial}`),
+      row("Conversations", l.reached, w && w.reached, `×${race.points.reached}`),
+      row("Line cards", l.lineCards, w && w.lineCards, `×${race.points.lineCard}`),
+      row("RFQs", l.rfqs, w && w.rfqs, `×${race.points.rfq}`),
+      l.firstRfqs ? row("First RFQs", l.firstRfqs, null, `+${race.points.firstRfq}`) : null,
+      el("tr", { class: "total" }, [el("td", { text: "Points" }), el("td", { class: "mono", text: String(l.points) }), el("td", { class: "mono", text: w ? String(w.points) : "–" }), el("td")]),
+    ]),
+  ]);
+}
+
+function rosterList() {
+  const out = new Set(race.roster.excluded);
+  return el("div", { class: "roster" }, [
+    el("p", { class: "small muted", text: "Only you can change this. People left out don't show and their RFQs don't set off the party." }),
+    ...(race.everyone || []).map((p) => el("label", { class: "rosterrow" }, [
+      el("input", {
+        type: "checkbox", checked: !out.has(p.email),
+        onchange: async (e) => {
+          const racing = e.currentTarget.checked;
+          e.currentTarget.disabled = true;
+          try {
+            race.roster = await api("/api/race/roster", { email: p.email, racing });
+            race = await api("/api/race?fresh=1");
+          } catch (err) { alert(err.message); }
+          render();
+        },
+      }),
+      el("span", { text: p.name || p.email }),
+      el("span", { class: "muted small", text: p.email }),
+    ])),
+  ]);
+}
+
 function countReached(callId) {
   if (!stats || !callId || stats.reachedIds.includes(callId)) return;
   stats.reachedIds.push(callId);
@@ -708,6 +861,9 @@ function render() {
   else if (S.phase === "on") app.replaceChildren(renderOnCall());
   else if (S.phase === "ended") app.replaceChildren(...renderEnded());
   else app.replaceChildren(...renderPre());
+
+  const strip = raceStrip();
+  if (strip) { const h = app.querySelector(":scope > header, :scope > .oncall > .bar"); if (h) h.after(strip); else app.prepend(strip); }
 
   if (key) {
     const n = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -2546,7 +2702,7 @@ async function init() {
       if (!changes.server && !changes.token) return;
       if (changes.server) settings.server = changes.server.newValue;
       if (changes.token) settings.token = changes.token.newValue;
-      leads.clear(); S = null; stats = null; chrome.storage.local.remove("stats"); syncLead(); refreshQueue(); syncStats(true); loadMe();
+      leads.clear(); S = null; stats = null; race = null; raceSeen = null; chrome.storage.local.remove(["stats", "raceSeen"]); loadRace(); syncLead(); refreshQueue(); syncStats(true); loadMe();
     });
     chrome.tabs.onActivated.addListener(syncLead);
     chrome.tabs.onUpdated.addListener((_id, info, tab) => { if (info.url && tab.active) syncLead(); });
@@ -2561,6 +2717,9 @@ async function init() {
   loadMe();
   setInterval(poll, POLL_MS);
   setInterval(refreshQueue, 15_000);
+  raceOpen = (await raceStore.get("raceOpen")) ?? true;
+  loadRace();
+  setInterval(loadRace, 45_000);
 }
 
 init();

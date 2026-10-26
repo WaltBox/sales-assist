@@ -33,6 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
+import { setRaceRoster, teamRace } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -444,6 +445,27 @@ export function createApp(appDeps: AppDeps) {
       }
     }));
     return { period, reps: rows };
+  }));
+  // The BDR race (10/25): every rep on the roster, today's dials and points, the week, and today's RFQs to celebrate.
+  // Everyone sees it; only the owner picks who's in it.
+  const raceTeam = async (d: Deps) => {
+    const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+    if (!team.some((t) => t.rep.closeUserId === d.rep.closeUserId)) team.unshift(d);
+    const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? d;
+    return { team, ownerId: owner.rep.closeUserId };
+  };
+  app.get("/api/race", authed, route(async (req, d) => {
+    const { team, ownerId } = await raceTeam(d);
+    const race = await teamRace(team, ownerId, { fresh: req.query.fresh === "1" });
+    const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
+    return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
+  }));
+  app.post("/api/race/roster", authed, route(async (req, d) => {
+    ownerOnly(d);
+    const email = normalizeEmail(z.string().max(200).parse(req.body?.email));
+    const racing = z.boolean().parse(req.body?.racing);
+    const { ownerId } = await raceTeam(d);
+    return setRaceRoster(ownerId, email, racing);
   }));
   app.post("/api/team/reset-password", authed, route(async (req, d) => {
     ownerOnly(d);

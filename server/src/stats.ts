@@ -433,13 +433,14 @@ export type RfqTimeline = {
  * store, so a page load (even on a cold hosted server) gets it at once; if it's over 5 minutes old a fresh one is
  * built behind it for the next load.
  */
-export async function rfqTimeline(d: Deps, opts: { fresh?: boolean; savedOk?: boolean } = {}): Promise<RfqTimeline | null> {
+export async function rfqTimeline(d: Deps, opts: { fresh?: boolean; savedOk?: boolean; refreshAfterMs?: number } = {}): Promise<RfqTimeline | null> {
   const key = d.rep.closeUserId;
   // A teammate's line on the team's RFQs page (10/19): whatever's saved, rebuilt behind it, never waited on.
+  // The race (10/25) asks for a rebuild sooner, so an RFQ is celebrated within minutes.
   if (opts.savedOk) {
     const saved = timelineCache.get(key)?.value ?? (await store.cacheGet<RfqTimeline>(`rfqline:${key}`).catch(() => null));
     const age = saved?.at ? Date.now() - Date.parse(saved.at) : Infinity;
-    if (age > 10 * 60_000 && !rebuilding.has(key)) {
+    if (age > (opts.refreshAfterMs ?? 10 * 60_000) && !rebuilding.has(key)) {
       rebuilding.add(key);
       background(buildRfqTimeline(d).finally(() => rebuilding.delete(key)), "teammate rfq line");
     }
