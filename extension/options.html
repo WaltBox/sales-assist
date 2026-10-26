@@ -24,6 +24,12 @@
 
   <div id="signed-in" hidden>
     <p>Signed in as <strong id="who"></strong>. <button id="signout" class="linkbtn">Sign out</button></p>
+    <label class="label" for="closekey">New Close API key</label>
+    <input id="closekey" type="password" autocomplete="off" placeholder="Only if Close stopped working: Close → Settings → API Keys">
+    <div class="row" style="margin-top:10px">
+      <button id="savekey" class="btn">Update Close key</button>
+      <span id="keystatus" class="muted" role="status"></span>
+    </div>
   </div>
   <div id="signin">
     <label class="label" for="email">Email</label>

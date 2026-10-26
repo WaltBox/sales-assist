@@ -475,6 +475,20 @@ export function createApp(appDeps: AppDeps) {
     await store.deleteUser(email);
     return { email, reset: true };
   }));
+  // A new Close API key (Walt 10/25): when the old one stops working, paste a new one from Close without a new account.
+  app.post("/api/me/close-key", authed, route(async (req, d) => {
+    const key = z.string().min(10).max(200).parse(String(req.body?.close_api_key ?? "").trim());
+    const email = normalizeEmail(d.rep.email);
+    const me = await appDeps.closeFor({ token: "rekey", name: "", email, close_api_key: key, timezone: "America/Los_Angeles" }).me().catch(() => null);
+    if (!me) throw new BadRequest("Close didn't accept that API key. Copy it from Close, Settings, API Keys.");
+    if (normalizeEmail(me.email) !== email) throw new BadRequest(`That API key belongs to ${me.email}, not ${email}.`);
+    if ([...appDeps.reps.values()].some((r) => normalizeEmail(r.email) === email)) throw new BadRequest("Your Close key is set in the server's reps file. Ask Walt to change it there.");
+    const stored = await store.getRep(email);
+    await store.putRep({ ...(stored ?? { email, name: `${me.first_name} ${me.last_name}`.trim() || email, timezone: me.last_used_timezone ?? null }), close_api_key: key });
+    for (const k of [...repInfoCache.keys()]) if (k === `email:${email}`) repInfoCache.delete(k);
+    for (const [k, v] of tokenReps) if (v.rep && normalizeEmail(v.rep.email) === email) tokenReps.delete(k);
+    return { ok: true, name: `${me.first_name} ${me.last_name}`.trim() };
+  }));
   // The rep's own settings (10/19): the phone number that goes in their emails.
   app.post("/api/me/profile", authed, route(async (req, d) => {
     const raw = z.string().max(40).nullable().parse(req.body?.phone ?? null);

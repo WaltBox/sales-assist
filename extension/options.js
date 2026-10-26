@@ -81,3 +81,22 @@ async function save() {
 }
 $("save").addEventListener("click", save);
 $("password").addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+
+// A new Close API key (10/25): when Close stops accepting the old one, swap it without a new account.
+$("savekey").addEventListener("click", async () => {
+  const key = $("closekey").value.trim();
+  const status = $("keystatus");
+  if (!key) { status.textContent = "Paste the key first."; return; }
+  status.textContent = "Checking with Close…";
+  try {
+    const res = await fetch(`${current.server}/api/me/close-key`, {
+      method: "POST", headers: { authorization: `Bearer ${current.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ close_api_key: key }),
+    });
+    const body = await res.json().catch(() => ({}));
+    status.textContent = res.ok ? "Updated. Close is connected again." : body.error || "That didn't work.";
+    if (res.ok) $("closekey").value = "";
+  } catch {
+    status.textContent = "The server didn't answer. Check the address.";
+  }
+});

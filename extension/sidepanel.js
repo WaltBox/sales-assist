@@ -33,12 +33,20 @@ const drafts = {}; // text typed into inputs, kept across re-renders
 
 // ---------- server ----------
 
+const HOSTED = "https://sales-assist-fawn.vercel.app";
+
 async function api(path, body) {
-  const res = await fetch(`${settings.server}${path}`, {
-    method: body ? "POST" : "GET",
-    headers: { authorization: `Bearer ${settings.token}`, ...(body ? { "content-type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${settings.server}${path}`, {
+      method: body ? "POST" : "GET",
+      headers: { authorization: `Bearer ${settings.token}`, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // Nothing answered (Walt 10/25 "Failed to fetch"): usually a panel still pointed at a local server that's off.
+    throw new Error(`OFFLINE: Can't reach the assistant at ${settings.server.replace(/^https?:\/\//, "")}.`);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
   return data;
@@ -477,12 +485,61 @@ function party({ big, label, msg, button, cls = "" }) {
   };
   requestAnimationFrame(frame);
 }
+// ---------- when something's off with the connection (Walt 10/25) ----------
+// A plain reason and the fix, right on the card: switch to the hosted server, sign in again, or paste a new Close key.
+let fixing = null; // { busy, msg }
+function problemCard(message, retry) {
+  const offline = message.startsWith("OFFLINE: ");
+  const text = offline ? message.slice(9) : message;
+  const closeKey = /Close .*failed \((401|403)\)|API key/i.test(text);
+  const signIn = /sign in|session|unauthori[sz]ed|\b401\b/i.test(text) && !closeKey;
+  const f = fixing || {};
+  const kids = [el("p", { class: "fixmsg", text: closeKey ? "Close isn't accepting your API key anymore." : text })];
+  if (offline) {
+    kids.push(el("p", { class: "small muted", text: settings.server === HOSTED ? "Check your internet, then try again." : "The panel is pointed at a server on a computer, and it's not running. The hosted one is always on." }));
+    kids.push(el("div", { class: "fixrow" }, [
+      settings.server !== HOSTED ? el("button", { class: "btn primary", text: f.busy ? "Switching…" : "Use the hosted server", disabled: f.busy, onclick: () => useHosted(retry) }) : null,
+      el("button", { class: "btn", text: "Try again", onclick: retry }),
+    ]));
+  } else if (closeKey) {
+    kids.push(el("p", { class: "small muted", text: "In Close: Settings, then API Keys. Make a new key, copy it, and paste it here. Nothing else changes." }));
+    const input = draftInput("fix:closekey", { type: "password", placeholder: "Paste your new Close API key", autocomplete: "off" });
+    kids.push(el("form", { class: "fixrow", onsubmit: (e) => { e.preventDefault(); saveCloseKey(input.value.trim(), retry); } }, [
+      input, el("button", { class: "btn primary", type: "submit", text: f.busy ? "Checking…" : "Save key", disabled: f.busy }),
+    ]));
+  } else if (signIn) {
+    kids.push(el("div", { class: "fixrow" }, [el("button", { class: "btn primary", text: "Sign in again", onclick: () => chrome.runtime.openOptionsPage() })]));
+  } else {
+    kids.push(el("div", { class: "fixrow" }, [el("button", { class: "btn", text: "Try again", onclick: retry })]));
+  }
+  if (f.msg) kids.push(el("p", { class: "small fixnote", text: f.msg }));
+  return el("div", { class: "flag fix" }, kids);
+}
+
+async function useHosted(retry) {
+  fixing = { busy: true }; render();
+  settings.server = HOSTED;
+  if (!PREVIEW) await chrome.storage.local.set({ server: HOSTED });
+  try { await api("/api/me"); fixing = null; retry(); }
+  catch {
+    // A login from the old server doesn't carry over: sign in once on the hosted one.
+    fixing = { msg: "Switched. Sign in once with your Westgate email and password." }; render();
+    if (!PREVIEW) chrome.runtime.openOptionsPage();
+  }
+}
+
+async function saveCloseKey(key, retry) {
+  if (!key) return;
+  fixing = { busy: true }; render();
+  try { await api("/api/me/close-key", { close_api_key: key }); fixing = null; drafts["fix:closekey"] = ""; retry(); }
+  catch (e) { fixing = { msg: e.message.replace(/^OFFLINE: /, "") }; render(); }
+}
+
 // ---------- the race (Walt 10/25) ----------
 // Every rep is a lane: the car moves with each dial, points decide who's winning (dial 1, conversation 5, line card 10,
 // RFQ 50, first-ever RFQ from an account +25). When anyone lands an RFQ, every panel celebrates it.
 
 let race = null; // /api/race
-let raceOpen = true; // lanes, or one shared track
 let raceLane = null; // email of the lane opened for stats
 let raceRoster = false; // the owner's "Who's racing" list
 let raceSeen = null; // { day, ids } RFQ events already celebrated
@@ -548,40 +605,84 @@ function raceCar(l, place, max) {
   });
 }
 
-function raceStrip() {
+/** Where you stand, in a few words: "2nd of 4 · 8 pts to pass Chase". */
+function raceSummary(lanes) {
+  const meAt = lanes.findIndex((l) => l.email === race.you);
+  if (meAt < 0) return [`${firstName(lanes[0])} leads with `, el("b", { text: String(lanes[0].points) })];
+  return [el("b", { text: ordinal(meAt + 1) }), ` of ${lanes.length}`,
+    meAt > 0 ? ` · ${lanes[meAt - 1].points - lanes[meAt].points + 1} pts to pass ${firstName(lanes[meAt - 1])}` : lanes.length > 1 ? ` · up ${lanes[0].points - lanes[1].points}` : ""];
+}
+
+// The bottom bar on every screen (Walt 10/25: "make this bottom bar the game"): every car on one track. Tap it for the race.
+function raceBar() {
   if (!race || !settings.token) return null;
   const lanes = raceLanes();
   if (!lanes.length) return null;
   const max = Math.max(RACE_GOAL, ...lanes.map((l) => l.dials));
-  const meAt = lanes.findIndex((l) => l.email === race.you);
-  const leader = lanes[0];
-  const toggle = el("button", { class: "racetoggle", title: raceOpen ? "Shrink the race" : "Show every lane", text: raceOpen ? "–" : "+", onclick: () => { raceOpen = !raceOpen; raceStore.set("raceOpen", raceOpen); render(); } });
-  const title = el("div", { class: "racehead" }, [
-    el("span", { class: "racetitle", text: "Race" }),
-    el("span", { class: "racesum" }, meAt >= 0
-      ? [el("b", { text: ordinal(meAt + 1) }), ` of ${lanes.length}`, meAt > 0 ? ` · ${lanes[meAt - 1].points - lanes[meAt].points + 1} pts to pass ${firstName(lanes[meAt - 1])}` : lanes.length > 1 ? ` · up ${lanes[0].points - lanes[1].points}` : ""]
-      : [`${firstName(leader)} leads with `, el("b", { text: String(leader.points) })]),
-    race.owner ? el("button", { class: "racelink", text: raceRoster ? "Done" : "Who's racing", onclick: () => { raceRoster = !raceRoster; raceLane = null; render(); } }) : null,
-    toggle,
+  return el("button", { class: "racebar", title: "Open the race", onclick: openRace }, [
+    el("span", { class: "racehead" }, [
+      el("span", { class: "racetitle", text: "Race" }),
+      el("span", { class: "racesum" }, raceSummary(lanes)),
+      el("span", { class: "racego", text: "Open ›" }),
+    ]),
+    el("span", { class: "track shared" }, [...lanes.map((l, i) => raceCar(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]),
   ]);
-  const body = [];
-  if (raceRoster && race.owner) body.push(rosterList());
-  else if (raceOpen) {
+}
+
+let raceBack = "lead";
+let raceWeek = false;
+function openRace() {
+  if (view === "race") return;
+  raceBack = view;
+  view = "race";
+  raceLane = race && race.you;
+  render();
+  api("/api/race?fresh=1").then((r) => { race = r; render(); }).catch(() => {});
+}
+
+function renderRace() {
+  const back = el("button", { class: "link", style: "align-self:flex-start", text: S && S.header && raceBack === "lead" ? `← Back to ${S.header.company}` : "← Back", onclick: () => { view = raceBack; raceRoster = false; render(); } });
+  if (!race) return [header(null), el("main", { class: "page" }, [back, el("p", { class: "empty", text: "Loading the race…" })])];
+  let lanes = raceLanes();
+  if (raceWeek) lanes = lanes.filter((l) => l.week).map((l) => ({ ...l, ...l.week })).sort((a, b) => b.points - a.points || b.dials - a.dials);
+  const max = Math.max(raceWeek ? RACE_GOAL * 5 : RACE_GOAL, ...lanes.map((l) => l.dials));
+  const tab = (on, text, week) => el("button", { class: `pill ${on ? "ready" : "recent"}`, text, onclick: () => { raceWeek = week; render(); } });
+  const page = el("main", { class: "page racepage" }, [
+    back,
+    el("div", { class: "racetop" }, [
+      el("h2", { class: "racebig", text: raceWeek ? "This week" : "Today's race" }),
+      el("div", { class: "racetabs" }, [tab(!raceWeek, "Today", false), tab(raceWeek, "Week", true)]),
+    ]),
+    el("p", { class: "racesum big" }, raceSummary(lanes)),
+  ]);
+  if (raceRoster && race.owner) page.append(rosterList());
+  else {
+    const field = el("div", { class: "racefield" });
     for (const [i, l] of lanes.entries()) {
-      body.push(el("button", {
-        class: `lane${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
+      field.append(el("button", {
+        class: `lane big${l.email === race.you ? " me" : ""}${raceLane === l.email ? " on" : ""}`,
         onclick: () => { raceLane = raceLane === l.email ? null : l.email; render(); },
       }, [
+        el("span", { class: "laneplace mono", text: String(i + 1) }),
         el("span", { class: "lanename", text: firstName(l) }),
         el("span", { class: "track" }, [raceCar(l, i + 1, max), el("span", { class: "finish", "aria-hidden": "true" })]),
         el("span", { class: "lanepts mono", text: l.error ? "!" : String(l.points) }),
       ]));
-      if (raceLane === l.email) body.push(laneStats(l, i + 1));
+      if (raceLane === l.email) field.append(laneStats(race.lanes.find((x) => x.email === l.email) || l, i + 1));
     }
-  } else {
-    body.push(el("div", { class: "track shared" }, [...lanes.map((l, i) => raceCar(l, i + 1, max)), el("span", { class: "finish", "aria-hidden": "true" })]));
+    page.append(field);
   }
-  return el("section", { class: `race${raceOpen ? "" : " mini"}` }, [title, ...body]);
+  const today = race.events.filter((e) => e.day === race.day);
+  page.append(
+    el("section", { class: "plain" }, [
+      el("p", { class: "label", text: today.length ? `RFQs today · ${today.length}` : "RFQs today" }),
+      today.length ? el("ul", { class: "rfqfeed" }, today.slice().reverse().map((e) => el("li", {}, [el("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? el("span", { class: "chip3 good", text: "first RFQ" }) : null])))
+        : el("p", { class: "muted small", text: "None yet. First one sets off the confetti on every panel." }),
+    ]),
+    el("p", { class: "muted small", text: `Points: dial ${race.points.dial} · conversation ${race.points.reached} · line card ${race.points.lineCard} · RFQ ${race.points.rfq} · first RFQ from an account +${race.points.firstRfq}. Resets every morning.` }),
+    race.owner ? el("button", { class: "link", style: "align-self:flex-start", text: raceRoster ? "Done picking" : "Who's racing", onclick: () => { raceRoster = !raceRoster; render(); } }) : null,
+  );
+  return [header(null), page];
 }
 
 function laneStats(l, place) {
@@ -853,6 +954,7 @@ function render() {
   else if (view === "item") app.replaceChildren(...renderItem());
   else if (view === "stats") app.replaceChildren(...renderStats());
   else if (view === "week") app.replaceChildren(...renderWeek());
+  else if (view === "race") app.replaceChildren(...renderRace());
   else if (view === "draft" && S && S.draft) app.replaceChildren(...renderDraft());
   else if (view === "site" && S) app.replaceChildren(...renderSite());
   else if (!S) app.replaceChildren(header(null), el("main", { class: "page" }, [
@@ -862,8 +964,14 @@ function render() {
   else if (S.phase === "ended") app.replaceChildren(...renderEnded());
   else app.replaceChildren(...renderPre());
 
-  const strip = raceStrip();
-  if (strip) { const h = app.querySelector(":scope > header, :scope > .oncall > .bar"); if (h) h.after(strip); else app.prepend(strip); }
+  // The race rides along the bottom of every screen; where there's a chat box it sits under it.
+  const bar = view !== "race" && raceBar();
+  if (bar) {
+    // A screen with its own bottom bar (chat, Save, I just hung up) gets the race tucked under it, so nothing is covered.
+    const foots = app.querySelectorAll(":scope > footer.chatbar, :scope > .footer, :scope > .oncall > .foot");
+    const foot = foots[foots.length - 1];
+    if (foot) { bar.classList.add("inset"); foot.append(bar); } else app.append(el("footer", { class: "racefoot" }, [bar]));
+  }
 
   if (key) {
     const n = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -1675,10 +1783,9 @@ function renderPre() {
   const out = [header({ text: "Pre-call" })];
   const page = el("main", { class: "page" });
   out.push(page);
-  if (st.error) page.append(el("div", { class: "flag", text: st.error }));
+  if (st.error) page.append(problemCard(st.error, () => loadBrief(st, false)));
   if (!h || !b) {
     page.append(leadLoader());
-    out.push(chatBar(st.chat, true, "Ask or tell me anything about this lead…"));
     return out;
   }
   const clock = theirClock(h);
@@ -1757,7 +1864,6 @@ function renderPre() {
     listInfo && listInfo.position ? el("span", { class: "muted", text: `Lead ${listInfo.position} of ${listInfo.size >= 200 ? "200+" : listInfo.size}` }) : el("span"),
     el("button", { class: "link", text: "Rewrite card", onclick: () => loadBrief(st, true) }),
   ]));
-  out.push(chatBar(st.chat, st.chatBusy, "Ask or tell me anything about this lead…"));
   return out;
 }
 
@@ -2692,7 +2798,7 @@ async function init() {
     // The local server moved from 8787 to 3001 (Walt 9/26).
     if (/^http:\/\/localhost:8787\/?$/.test(settings.server || "")) { settings.server = "http://localhost:3001"; chrome.storage.local.set({ server: settings.server }); }
     // A new install talks to the hosted app (10/19); a server already saved stays.
-    if (!settings.server) settings.server = "https://sales-assist-fawn.vercel.app";
+    if (!settings.server) settings.server = HOSTED;
     listView = (await chrome.storage.local.get("listView")).listView || null;
     myLine = (await chrome.storage.local.get("myLine")).myLine || null; // shown at once; /api/me refreshes it
     siteAccess = await chrome.permissions.contains({ origins: ["https://*/*", "http://*/*"] });
@@ -2717,7 +2823,6 @@ async function init() {
   loadMe();
   setInterval(poll, POLL_MS);
   setInterval(refreshQueue, 15_000);
-  raceOpen = (await raceStore.get("raceOpen")) ?? true;
   loadRace();
   setInterval(loadRace, 45_000);
 }
