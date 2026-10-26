@@ -65,96 +65,94 @@
   ];
   /** "Rodda Electric, Inc." → "Rodda Electric", for shouting. */
   const shortCo = (co) => co.replace(/,?\s+(inc|llc|l\.l\.c|co|corp|corporation|company|ltd|incorporated)\.?$/i, "").trim();
-  // How each scene looks: two colors for the light rays, an accent for the name's shadow, and what flies out on impact.
-  const LOOK = {
-    news: { rays: ["#0a2a5c", "#001939"], accent: "#dc0025", fx: "confetti", colors: ["#dc0025", "#ffffff", "#2f6bff", "#ffcc00"] },
-    jackpot: { rays: ["#4a1670", "#26093d"], accent: "#a02cd6", fx: "coins", colors: ["#ffcc00", "#ffe680", "#d99a00"] },
-    fire: { rays: ["#8a1200", "#3d0500"], accent: "#ff5a00", fx: "embers", colors: ["#ffcc00", "#ff8a00", "#ff3d00", "#fff2b3"] },
-    rocket: { rays: ["#101a4a", "#060a24"], accent: "#2f6bff", fx: "stars", colors: ["#ffffff", "#bcd2ff", "#ffcc00"] },
-    money: { rays: ["#0e5a2a", "#06331a"], accent: "#0b6b2f", fx: "bills", colors: ["#7be39b", "#3fbf6a", "#ffcc00"] },
-    mic: { rays: ["#2a2a33", "#121216"], accent: "#dc0025", fx: "sparks", colors: ["#ffffff", "#ffcc00", "#ff8a00"] },
-    siren: { rays: ["#7a0015", "#06155c"], accent: "#2f6bff", fx: "sparks", colors: ["#ff3b52", "#4d7cff", "#ffffff"], strobe: true },
-    disco: { rays: ["#5c0f6b", "#0f3f6b"], accent: "#ff3cac", fx: "confetti", colors: ["#ff3cac", "#2bd2ff", "#ffcc00", "#7cff6b", "#ffffff"] },
-    paparazzi: { rays: ["#3a0a14", "#121216"], accent: "#ffcc00", fx: "flashes", colors: ["#ffffff", "#ffe9a8"] },
-    forecast: { rays: ["#2b3a4f", "#18222f"], accent: "#2f6bff", fx: "paper", colors: ["#ffffff", "#eef3ff", "#ffe680"] },
-  };
-
   /**
    * The particles: a small physics loop on a canvas (gravity, drag, spin), so a burst looks like a burst and not a row
-   * of emoji. One big burst on impact, then a trickle until the party ends.
+   * of emoji. Each scene asks for its own kind, where it comes from, how big the burst is, and how much keeps coming.
+   * opts: { kind, colors, burst, ox, oy (0..1 of the stage), rate (per frame), spread (0..1 of the width, for trickles) }
    */
-  function particles(canvas, look) {
+  function particles(canvas, opts) {
     const ctx = canvas.getContext("2d");
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     let W = 0, H = 0;
     const size = () => { const r = canvas.getBoundingClientRect(); W = r.width; H = r.height; canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
     size();
     const rnd = (a, b) => a + Math.random() * (b - a);
-    const col = () => look.colors[Math.floor(Math.random() * look.colors.length)];
+    const colors = opts.colors || ["#ffffff"];
+    const col = () => colors[Math.floor(Math.random() * colors.length)];
+    const kind = opts.kind;
     const ps = [];
-    const kind = look.fx;
     function spawn(burst) {
-      const cx = W / 2, cy = H * 0.45;
-      if (kind === "embers") return { x: rnd(0, W), y: H + 6, vx: rnd(-0.4, 0.4), vy: rnd(-3.2, -1.4), g: -0.01, life: rnd(50, 90), r: rnd(1.5, 3.5), c: col(), add: true };
-      if (kind === "paper") return { x: rnd(0, W), y: -12, vx: rnd(-0.6, 0.6), vy: rnd(1, 2.2), g: 0.01, life: 200, w: rnd(7, 11), hgt: rnd(9, 13), rot: rnd(0, 6), vr: rnd(-0.08, 0.08), c: col(), sway: rnd(0, 6) };
-      if (kind === "stars" && !burst) return { x: W + 10, y: rnd(0, H), vx: rnd(-9, -5), vy: 0, g: 0, life: 60, len: rnd(10, 26), c: col(), streak: true };
-      if (kind === "flashes" && !burst) return { x: rnd(0, W), y: rnd(0, H), vx: 0, vy: 0, g: 0, life: 14, flash: rnd(30, 60) };
-      const a = rnd(0, Math.PI * 2), sp = burst ? rnd(2.5, 9) : rnd(1, 3);
-      const base = { x: cx + rnd(-30, 30), y: cy, vx: Math.cos(a) * sp * 1.4, vy: Math.sin(a) * sp - (burst ? 2 : 0), g: 0.16, life: rnd(60, 120), c: col(), rot: rnd(0, 6), vr: rnd(-0.3, 0.3) };
+      const ox = (opts.ox ?? 0.5) * W, oy = (opts.oy ?? 0.5) * H;
+      const spread = (opts.spread ?? 0.7) * W;
+      if (kind === "flame") return { x: ox + rnd(-spread / 2, spread / 2), y: oy + rnd(-2, 4), vx: rnd(-0.3, 0.3), vy: rnd(-2.6, -1.2), g: -0.02, life: rnd(22, 42), max: 42, r: rnd(3, 7), flame: true };
+      if (kind === "embers") return { x: ox + rnd(-spread / 2, spread / 2), y: oy, vx: rnd(-0.5, 0.5), vy: rnd(-3, -1.2), g: -0.01, life: rnd(40, 80), r: rnd(1, 2.4), c: col(), add: true };
+      if (kind === "smoke") return { x: ox + rnd(-10, 10), y: oy, vx: rnd(-1.6, 1.6), vy: rnd(-0.6, 0.8), g: -0.005, life: rnd(50, 90), max: 90, r: rnd(6, 12), grow: rnd(0.25, 0.5), smoke: true };
+      if (kind === "paper") return { x: rnd(0, W), y: -12, vx: rnd(-0.6, 0.6), vy: rnd(1, 2.2), g: 0.01, life: 220, w: rnd(7, 10), hgt: rnd(9, 12), rot: rnd(0, 6), vr: rnd(-0.08, 0.08), c: col(), sway: rnd(0, 6), paper: true };
+      if (kind === "flashes") return { x: rnd(0, W), y: rnd(0, H * 0.8), vx: 0, vy: 0, g: 0, life: 12, max: 12, flash: rnd(26, 54) };
+      if (kind === "stars") return { x: rnd(0, W), y: rnd(0, H), vx: 0, vy: rnd(0.6, 2.2), g: 0, life: 120, len: rnd(2, 8), c: col(), streakDown: true };
+      const a = burst ? rnd(Math.PI * 1.05, Math.PI * 1.95) : rnd(Math.PI * 1.2, Math.PI * 1.8), sp = burst ? rnd(3, 9) : rnd(2, 5);
+      const base = { x: ox + rnd(-12, 12), y: oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, g: 0.18, life: rnd(70, 130), c: col(), rot: rnd(0, 6), vr: rnd(-0.3, 0.3) };
       if (kind === "coins") return { ...base, r: rnd(5, 8), coin: true, flip: rnd(0, 6), vf: rnd(0.15, 0.35) };
-      if (kind === "bills") return { ...base, w: rnd(14, 18), hgt: rnd(7, 9), bill: true, vr: rnd(-0.15, 0.15) };
-      if (kind === "sparks" || kind === "stars") return { ...base, g: 0.06, life: rnd(30, 60), len: rnd(6, 14), spark: true, add: true };
-      return { ...base, w: rnd(5, 9), hgt: rnd(8, 13), flip: rnd(0, 6), vf: rnd(0.1, 0.3) };
+      if (kind === "bills") return { ...base, w: rnd(15, 19), hgt: rnd(7, 9), bill: true, vr: rnd(-0.15, 0.15), g: 0.09 };
+      if (kind === "sparks") return { ...base, g: 0.12, life: rnd(20, 40), len: rnd(5, 12), spark: true, add: true, vx: Math.cos(a) * sp * 1.3 };
+      return { ...base, w: rnd(5, 8), hgt: rnd(8, 12), flip: rnd(0, 6), vf: rnd(0.1, 0.3) }; // confetti
     }
-    for (let i = 0; i < 140; i++) ps.push(spawn(true));
+    for (let i = 0; i < (opts.burst ?? 0); i++) ps.push(spawn(true));
     const t0 = performance.now();
-    let last = t0;
+    let last = t0, carry = 0;
     function frame(t) {
       if (!canvas.isConnected) return;
       const dt = Math.min(2.5, (t - last) / 16.7); last = t;
       if (canvas.width !== Math.round(canvas.getBoundingClientRect().width * dpr)) size();
       ctx.clearRect(0, 0, W, H);
-      // keep a trickle going after the burst
-      const rate = kind === "embers" ? 2 : kind === "paper" ? 0.5 : kind === "stars" ? 0.6 : kind === "flashes" ? 0.12 : 0.5;
-      if (Math.random() < rate % 1 || rate >= 1) for (let i = 0; i < Math.max(1, Math.floor(rate)); i++) ps.push(spawn(false));
+      carry += (opts.rate || 0) * dt;
+      while (carry >= 1) { ps.push(spawn(false)); carry -= 1; }
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         p.vy += p.g * dt; p.vx *= Math.pow(0.985, dt); p.vy *= Math.pow(0.985, dt);
         p.x += p.vx * dt + (p.sway ? Math.sin((t - t0) / 300 + p.sway) * 0.6 : 0); p.y += p.vy * dt;
         if (p.rot != null) p.rot += p.vr * dt;
         if (p.flip != null) p.flip += (p.vf || 0) * dt;
+        if (p.grow) p.r += p.grow * dt;
         p.life -= dt;
-        if (p.life <= 0 || p.y > H + 30 || p.y < -40 || p.x < -40 || p.x > W + 40) { ps.splice(i, 1); continue; }
-        const fade = Math.min(1, p.life / 20);
+        if (p.life <= 0 || p.y > H + 30 || p.y < -60 || p.x < -60 || p.x > W + 60) { ps.splice(i, 1); continue; }
+        const k = p.max ? p.life / p.max : Math.min(1, p.life / 20);
         ctx.save();
-        ctx.globalAlpha = fade;
-        ctx.globalCompositeOperation = p.add || p.flash ? "lighter" : "source-over";
+        ctx.globalAlpha = p.smoke ? k * 0.55 : Math.min(1, k * (p.max ? 1.4 : 1));
+        ctx.globalCompositeOperation = p.add || p.flash || p.flame ? "lighter" : "source-over";
         ctx.translate(p.x, p.y);
-        if (p.flash) {
+        if (p.flame) {
+          // hot and yellow when it's born, red as it dies
+          const c = k > 0.66 ? "255,214,90" : k > 0.33 ? "255,120,20" : "200,30,10";
+          const g2 = ctx.createRadialGradient(0, 0, 0, 0, 0, p.r * (0.6 + k));
+          g2.addColorStop(0, `rgba(${c},.9)`); g2.addColorStop(1, `rgba(${c},0)`);
+          ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(0, 0, p.r * (0.6 + k), 0, Math.PI * 2); ctx.fill();
+        } else if (p.smoke) {
+          ctx.fillStyle = "rgb(210,210,220)"; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
+        } else if (p.flash) {
           const g2 = ctx.createRadialGradient(0, 0, 0, 0, 0, p.flash);
-          g2.addColorStop(0, "rgba(255,255,255,.95)"); g2.addColorStop(0.25, "rgba(255,240,200,.5)"); g2.addColorStop(1, "rgba(255,255,255,0)");
+          g2.addColorStop(0, "rgba(255,255,255,.95)"); g2.addColorStop(0.2, "rgba(255,245,215,.55)"); g2.addColorStop(1, "rgba(255,255,255,0)");
           ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(0, 0, p.flash, 0, Math.PI * 2); ctx.fill();
-        } else if (p.streak) {
-          ctx.strokeStyle = p.c; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(p.len, 0); ctx.stroke();
+        } else if (p.streakDown) {
+          ctx.strokeStyle = p.c; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, p.len * (1 + p.vy)); ctx.stroke();
         } else if (p.spark) {
-          const ang = Math.atan2(p.vy, p.vx);
-          ctx.rotate(ang); ctx.strokeStyle = p.c; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(-p.len, 0); ctx.lineTo(0, 0); ctx.stroke();
+          ctx.rotate(Math.atan2(p.vy, p.vx)); ctx.strokeStyle = p.c; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(-p.len, 0); ctx.lineTo(0, 0); ctx.stroke();
         } else if (p.coin) {
-          const sx = Math.abs(Math.cos(p.flip));
-          ctx.scale(Math.max(0.12, sx), 1);
-          ctx.fillStyle = "#b07a00"; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
+          ctx.scale(Math.max(0.12, Math.abs(Math.cos(p.flip))), 1);
+          ctx.fillStyle = "#a86f00"; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(0, 0, p.r * 0.78, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fillRect(-p.r * 0.2, -p.r * 0.55, p.r * 0.25, p.r * 0.5);
+          ctx.fillStyle = "rgba(255,255,255,.75)"; ctx.fillRect(-p.r * 0.2, -p.r * 0.55, p.r * 0.25, p.r * 0.5);
         } else if (p.bill) {
-          ctx.rotate(p.rot);
+          ctx.rotate(p.rot); ctx.scale(1, Math.cos(p.rot * 1.7));
           ctx.fillStyle = "#2f9a52"; ctx.fillRect(-p.w / 2, -p.hgt / 2, p.w, p.hgt);
-          ctx.fillStyle = "#bff0cd"; ctx.fillRect(-p.w / 2 + 2, -p.hgt / 2 + 2, p.w - 4, p.hgt - 4);
-          ctx.fillStyle = "#2f9a52"; ctx.beginPath(); ctx.arc(0, 0, p.hgt * 0.28, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#c8f2d4"; ctx.fillRect(-p.w / 2 + 2, -p.hgt / 2 + 1.5, p.w - 4, p.hgt - 3);
+          ctx.fillStyle = "#2f9a52"; ctx.beginPath(); ctx.arc(0, 0, p.hgt * 0.26, 0, Math.PI * 2); ctx.fill();
         } else if (p.r) {
           ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
         } else {
           ctx.rotate(p.rot); ctx.scale(1, Math.cos(p.flip || 0));
           ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.hgt / 2, p.w, p.hgt);
+          if (p.paper) { ctx.fillStyle = "rgba(0,0,0,.25)"; for (let y = -p.hgt / 2 + 3; y < p.hgt / 2 - 1; y += 2.5) ctx.fillRect(-p.w / 2 + 1.5, y, p.w - 3, 0.7); }
         }
         ctx.restore();
       }
@@ -162,6 +160,128 @@
     }
     requestAnimationFrame(frame);
   }
+
+  // ---------- the scenes: each one its own little set piece (Walt 10/25: "each one should be completely different") ----------
+  // A scene gets { shout (the name, in caps), co, you, pts } and returns its pieces, when the big moment lands (the
+  // points count up then), and what particles to run. Everything is CSS under .wg-x-<key>, drawn, no emoji.
+  const L = (cls, props = {}, kids = []) => h("span", { ...props, class: cls }, kids);
+  const letters = (text, cls = "wg-let", step = 0.045, start = 0) =>
+    [...text].map((c, i) => L(`${cls}${c === " " ? " sp" : ""}`, { style: `--i:${i}; --d:${(start + i * step).toFixed(3)}s` }, [c === " " ? " " : c]));
+  const repeat = (n, fn) => Array.from({ length: n }, (_, i) => fn(i));
+
+  const BUILD = {
+    news: ({ shout, co, you }) => ({
+      at: 1.15,
+      kids: [
+        L("wg-studio"), L("wg-globe"),
+        L("wg-live", {}, [L("wg-livedot"), "LIVE"]),
+        L("wg-l3", {}, [
+          L("wg-l3tag", {}, ["BREAKING NEWS"]),
+          L("wg-l3name", {}, [L("wg-l3text", {}, [shout])]),
+          L("wg-l3sub", {}, [`${you ? "YOU" : "LOCAL BDR"} GETS RFQ FROM ${co.toUpperCase()} · LFGGG!!!`]),
+        ]),
+        L("wg-ticker", {}, [L("wg-tickin", {}, [`★ ${shout} GOT AN RFQ FROM ${co.toUpperCase()} ★ PHONES REPORTEDLY STILL HOT ★ REST OF TEAM "STILL DIALING" ★ MORE AT 11 ★ ${shout} GOT AN RFQ FROM ${co.toUpperCase()} `])]),
+        L("wg-crt"),
+      ],
+    }),
+    jackpot: ({ shout, co }) => ({
+      at: 2.05,
+      fx: { kind: "coins", colors: ["#ffcc00", "#ffe680", "#f0b400"], burst: 90, ox: 0.5, oy: 0.95, rate: 0.6 },
+      kids: [
+        L("wg-casino"),
+        L("wg-marquee", {}, [L("wg-bulbs"), L("wg-mqname", {}, [shout])]),
+        L("wg-machine", {}, repeat(3, (i) => L("wg-reel", { style: `--i:${i}` }, [L("wg-strip", {}, ["🍒", "BAR", "♦", "★", "🍒", "BAR", "♦", "7"].map((x) => L(x === "7" ? "seven" : x === "BAR" ? "bar" : "sym", {}, [x])))]))),
+        L("wg-payout", {}, [`RFQ FROM ${co.toUpperCase()} · PAID OUT`]),
+      ],
+    }),
+    fire: ({ shout, co }) => ({
+      at: 0.75,
+      fx: { kind: "flame", ox: 0.5, oy: 0.5, spread: 0.78, rate: 9 },
+      kids: [
+        L("wg-heat"),
+        L("wg-firename", {}, letters(shout, "wg-flet", 0.03, 0.75)),
+        L("wg-onfire", {}, ["IS ON FIRE"]),
+        L("wg-fireco", {}, [`RFQ FROM ${co.toUpperCase()} · SOMEBODY GET A BUCKET`]),
+      ],
+    }),
+    rocket: ({ shout, co }) => ({
+      at: 2.25,
+      fx: { kind: "smoke", ox: 0.5, oy: 1.02, rate: 2.2, delay: 1.55, stopAfter: 1.6 },
+      fx2: { kind: "stars", colors: ["#ffffff", "#bcd2ff"], rate: 0.5, delay: 1.9 },
+      kids: [
+        L("wg-sky"),
+        ...["3", "2", "1"].map((n, i) => L("wg-cd", { style: `--i:${i}` }, [n])),
+        L("wg-rkt", {}, [L("wg-rkfin l"), L("wg-rkfin r"), L("wg-rkbody", {}, [L("wg-rkwin")]), L("wg-rkflame")]),
+        L("wg-moonname", {}, [L("wg-tothe", {}, ["NEXT STOP, THE MOON"]), L("wg-mname", {}, [shout]), L("wg-msub", {}, [`GOT AN RFQ FROM ${co.toUpperCase()} · LFGGG!!!`])]),
+      ],
+    }),
+    money: ({ shout, co, pts }) => ({
+      at: 1.85,
+      fx: { kind: "bills", burst: 40, ox: 0.5, oy: 0.9, rate: 0.35 },
+      kids: [
+        L("wg-counter"),
+        L("wg-receipt", {}, [
+          L("wg-rline head", { style: "--d:.25s" }, ["WESTGATE SUPPLY"]),
+          L("wg-rline", { style: "--d:.55s" }, [L("k", {}, ["RFQ"]), L("dots"), L("v", {}, [co.toUpperCase()])]),
+          L("wg-rline", { style: "--d:.85s" }, [L("k", {}, ["CLOSED BY"]), L("dots"), L("v", {}, [shout])]),
+          L("wg-rline", { style: "--d:1.15s" }, [L("k", {}, ["TOTAL"]), L("dots"), L("v", {}, [`+${pts} PTS`])]),
+          L("wg-rline foot", { style: "--d:1.45s" }, ["*** THANK YOU, COME AGAIN ***"]),
+          L("wg-zig"),
+        ]),
+        L("wg-stamp", {}, [L("wg-stampname", {}, [shout]), L("wg-stampsub", {}, ["CHA-CHING!"])]),
+      ],
+    }),
+    mic: ({ shout, co }) => ({
+      at: 1.6,
+      fx: { kind: "sparks", colors: ["#ffffff", "#ffcc00", "#ff8a00"], burst: 70, ox: 0.78, oy: 0.83 },
+      kids: [
+        L("wg-stagebg"), L("wg-spot"),
+        L("wg-stagename", {}, [L("wg-presenting", {}, ["PLEASE WELCOME"]), L("wg-sname", {}, [shout]), L("wg-ssub", {}, [`WITH AN RFQ FROM ${co.toUpperCase()}`])]),
+        L("wg-crowd", {}, repeat(14, (i) => L("wg-head", { style: `--i:${i}` }))),
+        L("wg-mike", {}, [L("wg-mgrille"), L("wg-mhandle")]),
+        L("wg-boom", {}, ["BOOM"]),
+      ],
+    }),
+    siren: ({ shout, co }) => ({
+      at: 0.6,
+      kids: [
+        L("wg-redroom"), L("wg-beacon"), L("wg-hazard top"), L("wg-hazard bot"),
+        L("wg-drill", {}, ["⚠ THIS IS NOT A DRILL ⚠"]),
+        L("wg-warn", {}, [L("wg-warnname", {}, [shout]), L("wg-warnsub", {}, [`HAS AN RFQ FROM ${co.toUpperCase()}`])]),
+      ],
+    }),
+    disco: ({ shout, co }) => ({
+      at: 0.9,
+      fx: { kind: "confetti", colors: ["#ff3cac", "#2bd2ff", "#ffcc00", "#7cff6b", "#ffffff"], burst: 80, ox: 0.5, oy: 0.25, rate: 0.6 },
+      kids: [
+        L("wg-club"), L("wg-floor", {}, repeat(24, (i) => L("wg-tile", { style: `--i:${i}; --d:${((i * 7) % 5) * 0.18}s` }))),
+        L("wg-dball"), L("wg-dlights"),
+        L("wg-eq l", {}, repeat(5, (i) => L("wg-bar", { style: `--i:${i}` }))), L("wg-eq r", {}, repeat(5, (i) => L("wg-bar", { style: `--i:${i}` }))),
+        L("wg-dname", {}, letters(shout, "wg-dlet", 0.07, 0.2)),
+        L("wg-dsub", {}, [`GOT AN RFQ FROM ${co.toUpperCase()} · EVERYBODY DANCE`]),
+      ],
+    }),
+    paparazzi: ({ shout, co }) => ({
+      at: 0.95,
+      fx: { kind: "flashes", rate: 0.22, delay: 0.3 },
+      kids: [
+        L("wg-carpet"), L("wg-rope l"), L("wg-rope r"),
+        L("wg-wofstar", {}, [L("wg-wofname", {}, [shout]), L("wg-wofsub", {}, ["RFQ HALL OF FAME"])]),
+        L("wg-papsub", {}, [`SPOTTED LEAVING ${co.toUpperCase()} WITH AN RFQ`]),
+        L("wg-freeze"),
+      ],
+    }),
+    forecast: ({ shout, co }) => ({
+      at: 1.1,
+      fx: { kind: "paper", colors: ["#ffffff", "#eef3ff", "#fff6cc"], rate: 0.5, delay: 0.6 },
+      kids: [
+        L("wg-map"), L("wg-radar"), L("wg-blip"),
+        L("wg-storm", {}, [L("wg-hurr", {}, ["HURRICANE"]), L("wg-hname", {}, [shout]), L("wg-hsub", {}, [`MAKING LANDFALL AT ${co.toUpperCase()}`])]),
+        L("wg-wcard", {}, [L("wg-cloud", {}, [L("wg-bolt")]), L("wg-pct", {}, ["100%"]), L("wg-pctsub", {}, ["CHANCE OF RFQs"])]),
+      ],
+    }),
+  };
+
 
   /**
    * opts: load() → the race; liveDials() → your calls today as this screen counts them (it knows before Close does);
@@ -220,12 +340,26 @@
     }
 
     const pctOf = (l, max) => (l.error ? 0 : Math.min(1, l.dials / max) * 100);
-    const dot = (l, i, max, big) => h("span", {
+    // shift: how many dots over to nudge this one, so people sitting on the same spot fan out instead of hiding.
+    const dot = (l, i, max, big, shift = 0) => h("span", {
       class: `wg-dot${l.email === g.race.you ? " me" : ""}${i === 0 && l.points > 0 ? " lead" : ""}${l.error ? " broken" : ""}${l.guest ? " guest" : ""}`,
-      style: `left: calc(${pctOf(l, max)}% - ${pctOf(l, max) / 100} * var(--wg-dot))`,
+      style: `left: calc(${pctOf(l, max)}% - ${pctOf(l, max) / 100} * var(--wg-dot) + ${shift} * var(--wg-dot) * .72)`,
       title: `${l.name}: ${plural(l.dials, "call", "calls")}, ${l.points} points`,
       text: big ? firstName(l).slice(0, 1).toUpperCase() : null,
     });
+
+    /** The dots on the one-track bar, left to right; anyone too close to the one before moves over a little. */
+    function fanned(ls, max) {
+      const order = ls.map((l, i) => ({ l, i, p: pctOf(l, max) })).sort((a, b) => a.p - b.p);
+      let prevP = -99, prevShift = 0;
+      for (const d of order) {
+        d.shift = d.p - prevP < 4 ? prevShift + 1 : 0;
+        if (d.shift === 0) prevShift = 0; else prevShift = d.shift;
+        prevP = d.p;
+      }
+      // you're drawn last, on top
+      return order.sort((a, b) => (a.l.email === g.race.you) - (b.l.email === g.race.you));
+    }
 
     // One lane: place, name and points on top; the track with a trail behind the dot; what they did underneath.
     function lane(l, i, max) {
@@ -323,7 +457,7 @@
             h("span", { class: "wg-mini" }, [
               h("i", { class: "wg-trail", style: `width: calc(${pctOf(mine, max)}% - ${pctOf(mine, max) / 100} * var(--wg-dot) + var(--wg-dot) / 2)` }),
               h("span", { class: "wg-flag", "aria-hidden": "true" }),
-              ...ls.map((l, i) => dot(l, i, max, true)),
+              ...fanned(ls, max).map(({ l, i, shift }) => dot(l, i, max, true, shift)),
             ]),
           ]),
           h("span", { class: "wg-score" }, [h("b", { text: String(mine.points) }), h("small", { text: g.open ? "▾ pts" : "▴ pts" })]),
@@ -379,9 +513,7 @@
       if (g.open) load(true);
     }
 
-    // An RFQ anywhere on the team: the bar turns into a little victory screen for a few seconds, then slides back.
-    // The beats: the title tag and light rays come in, the name slams in letter by letter with a flash and a shake,
-    // particles burst, the ribbon wipes in under it, the points count up. Then it holds with a shine until it leaves.
+    // An RFQ anywhere on the team: the bar turns into one of the scenes for a few seconds, then slides back.
     function celebrate(e, n, key) {
       const r = g.race;
       if (!r) return;
@@ -390,44 +522,33 @@
       const co = shortCo(e.company || "a new account");
       const pts = r.points.rfq + (e.first ? r.points.firstRfq : 0);
       const sc = SCENES.find((x) => x.key === key) || pick(SCENES);
-      const look = LOOK[sc.key];
       let line = n > 1 ? `${n} RFQs just landed at once. Somebody check the phones, they're melting.`
         : you ? `You got an RFQ from ${co}. ${pick(sc.you)()}` : `${name} got an RFQ from ${co}. ${pick(sc.them)(name)}`;
       if (e.first && n === 1) line += " First one ever from them.";
       const full = (e.name || "Someone").trim();
       const shout = (you ? "YOU!!" : full.length <= 14 ? full : name).toUpperCase();
-      const LET = 0.045, START = 0.32;
-      const impact = START + shout.length * LET + 0.12; // seconds, when the last letter lands
-      const letters = [...shout].map((c, i) => h("span", { class: `wg-let${c === " " ? " sp" : ""}`, style: `--d:${(START + i * LET).toFixed(3)}s`, text: c === " " ? " " : c }));
+      const scene = BUILD[sc.key]({ shout, co, you, pts });
       const count = h("b", { class: "wg-count", text: "+0" });
-      const canvas = h("canvas", { class: "wg-fx" });
+      const canvases = [scene.fx, scene.fx2].filter(Boolean).map(() => h("canvas", { class: "wg-fx" }));
       const done = () => { if (g.party !== party) return; clearTimeout(party.timer); g.party = null; g.back = true; render(); };
-      const el = h("div", {
-        class: `wg-party wg-s-${sc.key}${look.strobe ? " strobe" : ""}`, role: "status", onclick: done,
-        style: `--ray1:${look.rays[0]}; --ray2:${look.rays[1]}; --accent:${look.accent}; --impact:${impact.toFixed(2)}s`,
-      }, [
-        h("div", { class: "wg-stage", "aria-hidden": "true" }, [
-          h("span", { class: "wg-rays" }),
-          h("span", { class: "wg-vignette" }),
-          canvas,
-          h("span", { class: "wg-kicker", text: sc.title }),
-          h("span", { class: "wg-hero" }, [
-            h("span", { class: "wg-heroname" }, letters),
-            h("span", { class: "wg-ribbon" }, [h("span", { text: `${you ? "You got" : "Got"} an RFQ from ${co} · LFGGG!!!`.toUpperCase() })]),
-          ]),
-          h("span", { class: "wg-shine" }),
-          h("span", { class: "wg-flashframe" }),
-        ]),
+      const el = h("div", { class: `wg-party wg-x-${sc.key}`, role: "status", onclick: done, style: `--at:${scene.at}s` }, [
+        h("div", { class: "wg-stage", "aria-hidden": "true" }, [...scene.kids.slice(0, 1), ...canvases, ...scene.kids.slice(1)]),
         h("div", { class: "wg-btext" }, [h("p", { class: "wg-bline", text: line }), count]),
       ]);
       if (g.party) clearTimeout(g.party.timer);
-      const party = { el, timer: setTimeout(() => done(), 9000) };
+      const party = { el, timer: setTimeout(() => done(), 9500) };
       g.party = party;
       render();
       const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (calm) { count.textContent = `+${pts}`; return; }
-      setTimeout(() => { if (canvas.isConnected) particles(canvas, look); }, impact * 1000);
-      // the points tick up after the impact, then pop
+      [scene.fx, scene.fx2].filter(Boolean).forEach((fx, i) => {
+        setTimeout(() => {
+          if (!canvases[i].isConnected) return;
+          particles(canvases[i], fx);
+          if (fx.stopAfter) setTimeout(() => { fx.rate = 0; }, fx.stopAfter * 1000);
+        }, (fx.delay ?? scene.at) * 1000);
+      });
+      // the points tick up when the big moment lands, then pop
       setTimeout(() => {
         const t0 = performance.now();
         const tick = (t) => {
@@ -436,7 +557,7 @@
           if (k < 1) requestAnimationFrame(tick); else count.classList.add("pop");
         };
         requestAnimationFrame(tick);
-      }, (impact + 0.25) * 1000);
+      }, (scene.at + 0.2) * 1000);
     }
 
     load(false);

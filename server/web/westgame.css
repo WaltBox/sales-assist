@@ -98,53 +98,222 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 .wg-links a, .wg-links button { font: inherit; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-ink);
   background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
-/* the RFQ victory screen. Timeline: 0s slide in, tag and rays; .32s+ letters slam in one by one; --impact flash,
-   shake, particles; then the ribbon wipes in and the points count up; a shine sweeps across every 2.4s. */
+/* ---------- the RFQ scenes: each one its own set piece. --at is when its big moment lands. ---------- */
+.wg-sheet.partying { background: #0c0c10; }
 .wg-sheet.partying:not(.open) { transition: height .35s cubic-bezier(.2, 1.3, .4, 1); }
 .wg-party { flex: none; height: 180px; display: flex; flex-direction: column; position: relative; overflow: hidden; cursor: pointer; color: #f4f0e5; background: #0c0c10;
-  border-bottom: 2px solid #000; animation: wgslidein .38s cubic-bezier(.16, 1, .3, 1) both, wgshake .42s cubic-bezier(.36, .07, .19, .97) var(--impact); }
-.wg-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: var(--ray2); }
-.wg-rays { position: absolute; left: 50%; top: 45%; width: 900px; height: 900px; margin: -450px 0 0 -450px; z-index: 0;
-  background: repeating-conic-gradient(var(--ray1) 0deg 9deg, var(--ray2) 9deg 18deg);
-  animation: wgraysin .7s cubic-bezier(.16, 1, .3, 1) both, wgspin 14s linear infinite; }
-.strobe .wg-rays { animation: wgraysin .7s cubic-bezier(.16, 1, .3, 1) both, wgspin 14s linear infinite, wgstrobe .5s steps(2) infinite; }
-.wg-vignette { position: absolute; inset: 0; z-index: 1; background: radial-gradient(ellipse 70% 80% at 50% 45%, transparent 30%, rgba(0, 0, 0, .65) 100%); }
-.wg-fx { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
-.wg-kicker { position: absolute; left: -6px; top: 10px; z-index: 6; padding: 4px 12px 4px 16px; transform: skewX(-14deg); background: var(--accent); color: #fff; box-shadow: 3px 3px 0 #000;
-  font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; animation: wgkick .45s cubic-bezier(.16, 1, .3, 1) .08s both; }
-.wg-hero { position: absolute; left: 0; right: 0; top: 54%; z-index: 4; display: flex; flex-direction: column; align-items: center; transform: translateY(-50%); pointer-events: none;
-  animation: wgfloat 2.6s ease-in-out calc(var(--impact) + .6s) infinite alternate; }
-.wg-heroname { display: flex; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(32px, 12vw, 56px); line-height: .86; letter-spacing: .01em; white-space: nowrap; }
-.wg-let { display: inline-block; color: #fff; -webkit-text-stroke: 1.5px #000; paint-order: stroke fill;
-  text-shadow: 0 1px 0 #ddd, 3px 3px 0 var(--accent), 6px 6px 0 #000, 0 0 24px rgba(255, 255, 255, .25);
-  animation: wglet .42s cubic-bezier(.2, 1.6, .35, 1) var(--d) both; }
-.wg-let.sp { width: .28em; }
-.wg-ribbon { margin-top: 8px; max-width: 94%; transform: skewX(-12deg); background: #ffcc00; color: #111114; box-shadow: 3px 3px 0 #000; overflow: hidden;
-  clip-path: inset(0 100% 0 0); animation: wgwipe .38s cubic-bezier(.65, 0, .35, 1) calc(var(--impact) + .1s) forwards; }
-.wg-ribbon span { display: block; transform: skewX(12deg); padding: 4px 12px; font-family: var(--label, Arial, sans-serif); font-size: 11.5px; letter-spacing: .12em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wg-shine { position: absolute; top: -20%; bottom: -20%; left: -40%; width: 30%; z-index: 5; pointer-events: none; transform: skewX(-20deg);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .28), transparent); animation: wgshine 2.4s ease-in-out calc(var(--impact) + .5s) infinite; }
-.wg-flashframe { position: absolute; inset: 0; z-index: 7; background: #fff; opacity: 0; pointer-events: none; animation: wgflash .32s ease-out var(--impact) both; }
+  border-bottom: 2px solid #000; animation: wgslidein .38s cubic-bezier(.16, 1, .3, 1) both; }
+.wg-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; background: #0c0c10; }
+.wg-stage > * { position: absolute; }
+.wg-fx { inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
 .wg-btext { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 12px 9px; background: #0c0c10; border-top: 1px solid rgba(255, 255, 255, .08); }
-.wg-bline { flex: 1; margin: 0; font-size: 13.5px; line-height: 1.3; color: #e9e4d6; animation: wgfade .35s ease-out calc(var(--impact) + .35s) both; }
+.wg-bline { flex: 1; margin: 0; font-size: 13.5px; line-height: 1.3; color: #e9e4d6; animation: wgfade .35s ease-out calc(var(--at) + .3s) both; }
 .wg-count { flex: none; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 26px; line-height: 1; color: #7be39b; font-variant-numeric: tabular-nums; text-shadow: 2px 2px 0 #000; }
 .wg-count.pop { animation: wgpop .35s cubic-bezier(.2, 1.8, .4, 1); }
 .wg-grab.back { animation: wgslideback .4s cubic-bezier(.16, 1, .3, 1) both; }
+.wg-party .wg-let.sp, .wg-party .sp { width: .28em; display: inline-block; }
+.wg-big { font-family: var(--display, Arial, sans-serif); font-weight: 800; }
+
+/* 1. BREAKING NEWS: the set switches on, a lower third carries the name, a ticker crawls */
+.wg-x-news .wg-studio { inset: 0; background: radial-gradient(ellipse at 70% 30%, #1e4fa8, #071a40 70%); }
+.wg-x-news .wg-globe { right: -30px; top: -40px; width: 170px; height: 170px; border-radius: 50%; opacity: .35;
+  background: repeating-linear-gradient(0deg, transparent 0 14px, rgba(255, 255, 255, .5) 14px 15px), repeating-linear-gradient(90deg, transparent 0 14px, rgba(255, 255, 255, .5) 14px 15px);
+  -webkit-mask: radial-gradient(circle, #000 64%, transparent 66%); mask: radial-gradient(circle, #000 64%, transparent 66%); animation: wgspin 30s linear infinite; }
+.wg-x-news .wg-live { right: 10px; top: 9px; z-index: 5; display: flex; align-items: center; gap: 5px; padding: 3px 8px; background: rgba(0, 0, 0, .55); font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .16em; color: #fff; }
+.wg-x-news .wg-livedot { position: static; width: 7px; height: 7px; border-radius: 50%; background: #ff2d3d; animation: wgblink 1s steps(2) infinite; }
+.wg-x-news .wg-l3 { left: 0; right: 0; bottom: 22px; z-index: 4; display: flex; flex-direction: column; align-items: flex-start; }
+.wg-x-news .wg-l3tag { padding: 3px 12px; background: #dc0025; color: #fff; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .18em; clip-path: inset(0 100% 0 0); animation: wgwipe .35s cubic-bezier(.65, 0, .35, 1) .55s forwards; }
+.wg-x-news .wg-l3name { align-self: stretch; padding: 2px 12px 1px; background: linear-gradient(90deg, #fff 70%, rgba(255, 255, 255, .85)); clip-path: inset(0 100% 0 0); animation: wgwipe .45s cubic-bezier(.65, 0, .35, 1) .8s forwards; }
+.wg-x-news .wg-l3text { display: block; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 34px; line-height: 1.05; color: #071a40; letter-spacing: .01em; animation: wgfade .3s ease-out 1.1s both; }
+.wg-x-news .wg-l3sub { padding: 3px 12px; background: #071a40; color: #ffcc00; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .12em; clip-path: inset(0 100% 0 0); animation: wgwipe .4s cubic-bezier(.65, 0, .35, 1) 1.15s forwards; max-width: 96%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-x-news .wg-ticker { left: 0; right: 0; bottom: 0; height: 22px; z-index: 4; background: #ffcc00; overflow: hidden; display: flex; align-items: center; }
+.wg-x-news .wg-tickin { position: static; white-space: nowrap; padding-left: 100%; font-family: var(--label, Arial, sans-serif); font-size: 11.5px; letter-spacing: .08em; color: #111114; animation: wgtick 7s linear 1.2s infinite; }
+.wg-x-news .wg-crt { inset: 0; z-index: 9; pointer-events: none; background: #000; animation: wgcrt .55s ease-out forwards; }
+.wg-x-news .wg-crt::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; background: #fff; box-shadow: 0 0 12px #fff; animation: wgcrtline .55s ease-out forwards; }
+
+/* 2. JACKPOT: a slot machine, a marquee with chasing bulbs */
+.wg-x-jackpot .wg-casino { inset: 0; background: radial-gradient(ellipse at 50% 110%, #7a1fa8, #1d0630 70%); }
+.wg-x-jackpot .wg-marquee { left: 50%; top: 8px; transform: translateX(-50%); z-index: 4; padding: 6px 18px; background: #2a0a3d; border: 2px solid #ffcc00; border-radius: 6px; box-shadow: 0 0 18px rgba(255, 204, 0, .35); }
+.wg-x-jackpot .wg-bulbs { position: absolute; inset: -6px; border-radius: 9px; background: radial-gradient(circle, #fff6b0 0 2.2px, transparent 2.8px) 0 0 / 11px 11px; -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; padding: 4px; animation: wgbulbs .3s steps(2) infinite; }
+.wg-x-jackpot .wg-mqname { position: relative; display: block; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 26px; line-height: 1; color: #ffcc00; letter-spacing: .04em; white-space: nowrap; text-shadow: 0 0 10px rgba(255, 204, 0, .7), 2px 2px 0 #7a1fa8;
+  opacity: .25; animation: wglightup .5s steps(4) var(--at) forwards; }
+.wg-x-jackpot .wg-machine { left: 50%; top: 50px; transform: translateX(-50%); z-index: 4; display: flex; gap: 5px; padding: 5px; background: linear-gradient(#c0c0c8, #7a7a86); border: 2px solid #111; border-radius: 6px; box-shadow: 0 4px 0 #000; }
+.wg-x-jackpot .wg-reel { position: relative; width: 44px; height: 40px; overflow: hidden; background: #fff; border-radius: 3px; box-shadow: inset 0 6px 8px rgba(0, 0, 0, .35), inset 0 -6px 8px rgba(0, 0, 0, .35); }
+.wg-x-jackpot .wg-strip { position: absolute; left: 0; right: 0; top: 0; display: flex; flex-direction: column; animation: wgreel calc(1s + var(--i) * .45s) cubic-bezier(.25, .1, .2, 1.12) .15s both; }
+.wg-x-jackpot .wg-strip > span { position: static; height: 40px; display: grid; place-items: center; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 22px; color: #111; }
+.wg-x-jackpot .seven { color: #dc0025 !important; font-size: 30px !important; text-shadow: 1px 1px 0 #000; }
+.wg-x-jackpot .bar { font-size: 13px !important; background: #111; color: #fff !important; margin: 11px 4px; height: 18px !important; }
+.wg-x-jackpot .wg-payout { left: 0; right: 0; bottom: 6px; z-index: 4; text-align: center; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .14em; color: #ffcc00; opacity: 0; animation: wgfade .3s ease-out var(--at) forwards, wgblink .5s steps(2) calc(var(--at) + .3s) 6; }
+
+/* 3. ON FIRE: the name flies in and catches fire */
+.wg-x-fire .wg-heat { inset: 0; background: radial-gradient(ellipse at 50% 100%, #6a0d00, #120202 70%); }
+.wg-x-fire .wg-firename { left: 0; right: 0; top: 18px; z-index: 4; display: flex; justify-content: center; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(34px, 12vw, 56px); line-height: .9; font-style: italic; white-space: nowrap;
+  animation: wgflyin .55s cubic-bezier(.16, 1, .3, 1) .05s both; }
+.wg-x-fire .wg-flet { position: relative; display: inline-block; color: #fff; -webkit-text-stroke: 1.5px #000; paint-order: stroke fill; text-shadow: 3px 3px 0 #000;
+  animation: wgignite .5s ease-out var(--d) forwards, wgflicker 1.4s ease-in-out calc(var(--d) + .5s) infinite; }
+.wg-x-fire .wg-onfire { left: 0; right: 0; top: 72px; z-index: 4; text-align: center; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-style: italic; font-size: 20px; letter-spacing: .12em; color: #ffcc00;
+  text-shadow: 0 0 12px #ff5a00, 2px 2px 0 #000; animation: wgstamp .35s cubic-bezier(.2, 1.6, .4, 1) calc(var(--at) + .35s) both; }
+.wg-x-fire .wg-fireco { left: 0; right: 0; bottom: 8px; z-index: 4; text-align: center; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .14em; color: rgba(255, 230, 200, .85); animation: wgfade .4s ease-out calc(var(--at) + .6s) both; }
+
+/* 4. LIFTOFF: 3, 2, 1, a rocket launches in smoke, the name comes out in the stars */
+.wg-x-rocket .wg-sky { inset: 0; background: linear-gradient(#0a0f33, #26376e 80%, #3c4e8a); animation: wgnight 1.2s ease-in 1.6s forwards; }
+.wg-x-rocket .wg-cd { left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%) scale(.3); opacity: 0; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 64px; color: #fff; text-shadow: 3px 3px 0 #dc0025, 6px 6px 0 #000;
+  animation: wgcount .5s cubic-bezier(.2, 1.4, .4, 1) calc(var(--i) * .5s) forwards; }
+.wg-x-rocket .wg-rkt { left: 50%; bottom: -6px; z-index: 4; width: 26px; height: 64px; margin-left: -13px; animation: wgrumble .08s linear 1.2s 5, wglaunch 1.1s cubic-bezier(.55, 0, .8, .4) 1.55s forwards; }
+.wg-x-rocket .wg-rkt > *, .wg-x-rocket .wg-rkbody > *, .wg-x-mic .wg-mike > * { position: absolute; display: block; }
+.wg-x-rocket .wg-rkbody { left: 0; top: 0; width: 26px; height: 52px; border-radius: 50% 50% 20% 20% / 70% 70% 15% 15%; background: linear-gradient(90deg, #cfd3dc, #fff 40%, #b9bec9); border: 2px solid #111;
+  box-shadow: inset 0 9px 0 -2px #dc0025; }
+.wg-x-rocket .wg-rkwin { left: 6px; top: 16px; width: 10px; height: 10px; border-radius: 50%; background: #5db8ff; border: 2px solid #111; }
+.wg-x-rocket .wg-rkfin { top: 34px; width: 12px; height: 20px; background: #dc0025; border: 2px solid #111; }
+.wg-x-rocket .wg-rkfin.l { left: -9px; border-radius: 80% 0 0 20%; } .wg-x-rocket .wg-rkfin.r { right: -9px; border-radius: 0 80% 20% 0; }
+.wg-x-rocket .wg-rkflame { left: 4px; top: 50px; width: 18px; height: 26px; border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%; background: radial-gradient(ellipse at 50% 20%, #fff7c2, #ffb000 40%, #ff4a00 70%, transparent 72%); opacity: 0; animation: wgfade .1s linear 1.2s forwards, wgflick2 .09s steps(2) 1.2s infinite; }
+.wg-x-rocket .wg-moonname { left: 0; right: 0; top: 50%; z-index: 5; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; }
+.wg-x-rocket .wg-tothe { position: static; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .3em; color: #bcd2ff; opacity: 0; animation: wgfade .4s ease-out 2.1s forwards; }
+.wg-x-rocket .wg-mname { position: static; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(32px, 11vw, 54px); line-height: .95; color: #fff; white-space: nowrap; letter-spacing: .03em;
+  text-shadow: 0 0 18px rgba(140, 180, 255, .9), 3px 3px 0 #000; opacity: 0; animation: wgwarp .6s cubic-bezier(.16, 1, .3, 1) var(--at) forwards; }
+.wg-x-rocket .wg-msub { position: static; margin-top: 6px; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .14em; color: #ffcc00; opacity: 0; animation: wgfade .4s ease-out calc(var(--at) + .4s) forwards; white-space: nowrap; }
+
+/* 5. CHA-CHING: a receipt prints, then a big red stamp with the name */
+.wg-x-money .wg-counter { inset: 0; background: repeating-linear-gradient(90deg, #0b3d1f 0 22px, #0d4523 22px 44px); }
+.wg-x-money .wg-receipt { left: 50%; top: 0; z-index: 4; width: min(250px, 72%); margin-left: max(-125px, -36%); padding: 8px 12px 14px; background: #fbf8ef; color: #222; box-shadow: 0 6px 14px rgba(0, 0, 0, .5);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 10.5px; line-height: 1.55; transform: translateY(-100%); animation: wgprint 1.5s steps(14) .1s forwards; }
+.wg-x-money .wg-receipt > * { position: static; }
+.wg-x-money .wg-rline { display: flex; gap: 4px; opacity: 0; animation: wgfade .05s linear var(--d) forwards; }
+.wg-x-money .wg-rline .dots { flex: 1; border-bottom: 1px dotted #999; margin-bottom: 4px; }
+.wg-x-money .wg-rline .v { font-weight: 700; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wg-x-money .wg-rline.head { justify-content: center; font-weight: 700; letter-spacing: .1em; border-bottom: 1px dashed #999; margin-bottom: 2px; }
+.wg-x-money .wg-rline.foot { justify-content: center; color: #777; margin-top: 2px; }
+.wg-x-money .wg-zig { position: absolute; left: 0; right: 0; bottom: -6px; height: 7px; background: linear-gradient(-45deg, transparent 4px, #fbf8ef 0) 0 0 / 8px 7px, linear-gradient(45deg, transparent 4px, #fbf8ef 0) 0 0 / 8px 7px; }
+.wg-x-money .wg-stamp { left: 50%; top: 50%; z-index: 6; transform: translate(-50%, -50%) rotate(-12deg); padding: 4px 14px 5px; border: 4px solid #d1001f; border-radius: 6px; color: #d1001f; text-align: center; background: rgba(251, 248, 239, .92); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
+  opacity: 0; animation: wgstampin .3s cubic-bezier(.2, 1.4, .4, 1) var(--at) forwards; }
+.wg-x-money .wg-stampname { position: static; display: block; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(28px, 10vw, 46px); line-height: .95; letter-spacing: .03em; white-space: nowrap; }
+.wg-x-money .wg-stampsub { position: static; display: block; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .3em; }
+
+/* 6. MIC DROP: a spotlight finds the name, the crowd goes up, the mic drops */
+.wg-x-mic .wg-stagebg { inset: 0; background: linear-gradient(#0a0a0d, #1a1214 60%, #2a1a10); }
+.wg-x-mic .wg-spot { left: 50%; top: -40px; z-index: 2; width: 240px; height: 210px; margin-left: -120px; background: radial-gradient(ellipse 50% 60% at 50% 100%, rgba(255, 248, 220, .55), transparent 70%);
+  clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%); transform-origin: 50% 0; animation: wgsearch 1s ease-in-out .1s both; }
+.wg-x-mic .wg-stagename { left: 0; right: 0; top: 16px; z-index: 4; display: flex; flex-direction: column; align-items: center; }
+.wg-x-mic .wg-presenting { position: static; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .3em; color: rgba(255, 240, 210, .8); opacity: 0; animation: wgfade .4s ease-out .7s forwards; }
+.wg-x-mic .wg-sname { position: static; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(32px, 11vw, 54px); line-height: .95; letter-spacing: .03em; white-space: nowrap; color: #fff3d6;
+  text-shadow: 0 0 22px rgba(255, 220, 150, .7), 3px 3px 0 #000; opacity: 0; filter: brightness(.2); animation: wglit .5s ease-out .95s forwards; }
+.wg-x-mic .wg-ssub { position: static; margin-top: 4px; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .14em; color: #ffcc00; opacity: 0; animation: wgfade .4s ease-out 1.25s forwards; white-space: nowrap; }
+.wg-x-mic .wg-crowd { left: -10px; right: -10px; bottom: -10px; z-index: 5; height: 34px; display: flex; justify-content: space-between; }
+.wg-x-mic .wg-head { position: relative; width: 26px; height: 34px; border-radius: 50% 50% 0 0 / 40% 40% 0 0; background: #050507; animation: wgcheer .5s ease-in-out calc(var(--i) * .07s + var(--at)) infinite alternate; }
+.wg-x-mic .wg-head::before { content: ""; position: absolute; left: 6px; top: -12px; width: 14px; height: 14px; border-radius: 50%; background: #050507; }
+.wg-x-mic .wg-mike { right: 18%; top: -60px; z-index: 6; width: 16px; height: 46px; animation: wgmicdrop .6s cubic-bezier(.55, 0, .9, .45) 1s forwards; }
+.wg-x-mic .wg-mgrille { left: 0; top: 0; width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #eee, #888 60%, #444); border: 1px solid #000; }
+.wg-x-mic .wg-mhandle { left: 4px; top: 14px; width: 8px; height: 30px; border-radius: 2px 2px 4px 4px; background: linear-gradient(90deg, #222, #555, #222); }
+.wg-x-mic .wg-boom { right: 6%; bottom: 26px; z-index: 7; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 26px; color: #ffcc00; text-shadow: 2px 2px 0 #dc0025, 4px 4px 0 #000; transform: scale(0) rotate(-10deg); animation: wgstampin2 .4s cubic-bezier(.2, 1.8, .4, 1) var(--at) forwards; }
+.wg-party.wg-x-mic { animation: wgslidein .38s cubic-bezier(.16, 1, .3, 1) both, wgshake .4s ease var(--at); }
+
+/* 7. CODE RED: a spinning beacon, hazard tape, a warning sign */
+.wg-x-siren .wg-redroom { inset: 0; background: #1a0004; animation: wgredpulse .6s ease-in-out infinite alternate; }
+.wg-x-siren .wg-beacon { left: 50%; top: 50%; z-index: 1; width: 700px; height: 700px; margin: -350px 0 0 -350px; background: conic-gradient(rgba(255, 40, 60, .55) 0deg 28deg, transparent 40deg 180deg, rgba(255, 40, 60, .55) 180deg 208deg, transparent 220deg); animation: wgspin 1.1s linear infinite; }
+.wg-x-siren .wg-hazard { left: 0; right: 0; height: 12px; z-index: 5; background: repeating-linear-gradient(-45deg, #ffcc00 0 10px, #111 10px 20px); background-size: 28px 28px; animation: wghazard .6s linear infinite; }
+.wg-x-siren .wg-hazard.top { top: 0; } .wg-x-siren .wg-hazard.bot { bottom: 0; }
+.wg-x-siren .wg-drill { left: 0; right: 0; top: 17px; z-index: 5; text-align: center; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .22em; color: #fff; animation: wgblink .5s steps(2) infinite; }
+.wg-x-siren .wg-warn { left: 50%; top: 58%; z-index: 4; transform: translate(-50%, -50%); padding: 5px 18px 6px; background: #ffcc00; border: 3px solid #111; border-radius: 8px; box-shadow: 0 0 0 3px #ffcc00, 4px 6px 0 3px #000; text-align: center;
+  animation: wgsign .45s cubic-bezier(.2, 1.6, .4, 1) .3s both, wgwobble 1.6s ease-in-out 1s infinite; }
+.wg-x-siren .wg-warnname { position: static; display: block; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(28px, 10vw, 46px); line-height: .95; color: #111; letter-spacing: .04em; white-space: nowrap; }
+.wg-x-siren .wg-warnsub { position: static; display: block; font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .14em; color: #111; white-space: nowrap; }
+
+/* 8. DANCE BREAK: a light-up floor, a disco ball, letters bouncing to the beat */
+.wg-x-disco .wg-club { inset: 0; background: #0d0217; }
+.wg-x-disco .wg-floor { left: -20%; right: -20%; bottom: -30px; height: 90px; z-index: 1; display: grid; grid-template-columns: repeat(8, 1fr); transform: perspective(160px) rotateX(48deg); transform-origin: 50% 100%; }
+.wg-x-disco .wg-tile { position: static; border: 1px solid #0d0217; animation: wgtile 1.2s steps(1) var(--d) infinite; }
+.wg-x-disco .wg-dball { left: 50%; top: -18px; z-index: 2; width: 38px; height: 38px; margin-left: -19px; border-radius: 50%; background: repeating-conic-gradient(#ddd 0 10deg, #777 10deg 20deg), #aaa;
+  -webkit-mask: radial-gradient(circle, #000 69%, transparent 70%); box-shadow: 0 0 20px rgba(255, 255, 255, .4); animation: wgspin 3s linear infinite; }
+.wg-x-disco .wg-dlights { inset: 0; z-index: 2; background: radial-gradient(circle at 20% 30%, rgba(255, 60, 172, .5) 0 6px, transparent 7px), radial-gradient(circle at 75% 40%, rgba(43, 210, 255, .5) 0 5px, transparent 6px), radial-gradient(circle at 40% 70%, rgba(255, 204, 0, .5) 0 5px, transparent 6px), radial-gradient(circle at 85% 75%, rgba(124, 255, 107, .5) 0 6px, transparent 7px);
+  animation: wgspin 6s linear infinite; transform-origin: 50% 0%; }
+.wg-x-disco .wg-eq { top: 20px; bottom: 30px; z-index: 3; display: flex; gap: 3px; align-items: flex-end; }
+.wg-x-disco .wg-eq.l { left: 8px; } .wg-x-disco .wg-eq.r { right: 8px; }
+.wg-x-disco .wg-bar { position: static; width: 5px; height: 100%; background: linear-gradient(#ff3cac, #ffcc00, #2bd2ff); transform-origin: 50% 100%; animation: wgeq calc(.35s + var(--i) * .07s) ease-in-out infinite alternate; }
+.wg-x-disco .wg-dname { left: 0; right: 0; top: 26px; z-index: 4; display: flex; justify-content: center; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(32px, 11vw, 54px); line-height: .9; white-space: nowrap; }
+.wg-x-disco .wg-dlet { position: relative; display: inline-block; color: #fff; -webkit-text-stroke: 1.5px #000; paint-order: stroke fill; text-shadow: 3px 3px 0 #ff3cac, 6px 6px 0 #2bd2ff;
+  animation: wgdrop .4s cubic-bezier(.2, 1.6, .4, 1) var(--d) both, wgbeat .45s ease-in-out calc(1s + var(--i) * .08s) infinite alternate; }
+.wg-x-disco .wg-dsub { left: 0; right: 0; top: 84px; z-index: 4; text-align: center; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .14em; color: #fff; text-shadow: 0 0 8px #ff3cac; opacity: 0; animation: wgfade .4s ease-out var(--at) forwards; white-space: nowrap; }
+
+/* 9. PAPARAZZI: a red carpet, cameras going off, the name on a Walk of Fame star */
+.wg-x-paparazzi .wg-carpet { inset: 0; background: linear-gradient(180deg, #111 0 30%, #2a0008 30%), linear-gradient(#7a0010, #b3001b); background-blend-mode: normal; }
+.wg-x-paparazzi .wg-carpet::after { content: ""; position: absolute; left: 30%; right: 30%; top: 30%; bottom: 0; background: linear-gradient(#a50018, #d40022); transform: perspective(120px) rotateX(30deg); transform-origin: 50% 0; }
+.wg-x-paparazzi .wg-rope { top: 52%; z-index: 2; width: 26%; height: 18px; border-bottom: 4px solid #8a0018; border-radius: 0 0 50% 50%; }
+.wg-x-paparazzi .wg-rope::before, .wg-x-paparazzi .wg-rope::after { content: ""; position: absolute; top: -10px; width: 6px; height: 40px; background: linear-gradient(90deg, #a07a20, #ffe08a, #a07a20); border-radius: 3px; }
+.wg-x-paparazzi .wg-rope::before { left: -3px; } .wg-x-paparazzi .wg-rope::after { right: -3px; }
+.wg-x-paparazzi .wg-rope.l { left: 2%; } .wg-x-paparazzi .wg-rope.r { right: 2%; }
+.wg-x-paparazzi .wg-wofstar { left: 50%; top: 52%; z-index: 4; width: 220px; height: 92px; margin: -46px 0 0 -110px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  animation: wgstarin .55s cubic-bezier(.2, 1.4, .4, 1) .55s both; }
+.wg-x-paparazzi .wg-wofstar::before { content: ""; position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; z-index: -1; background: radial-gradient(circle at 40% 35%, #ff9fb4, #e8577a 60%, #b8304f);
+  clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); filter: drop-shadow(0 0 1px #000); }
+.wg-x-paparazzi .wg-wofname { position: static; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(28px, 10vw, 46px); line-height: .95; white-space: nowrap; letter-spacing: .03em;
+  background: linear-gradient(180deg, #fff6c8, #ffcc00 45%, #b8860b 55%, #ffe680); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-stroke: 1px #5a3c00; filter: drop-shadow(2px 2px 0 #000); }
+.wg-x-paparazzi .wg-wofsub { position: static; margin-top: 2px; font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .24em; color: #fff; text-shadow: 1px 1px 0 #000; }
+.wg-x-paparazzi .wg-papsub { left: 0; right: 0; top: 8px; z-index: 5; text-align: center; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .14em; color: #ffcc00; opacity: 0; animation: wgfade .4s ease-out var(--at) forwards; white-space: nowrap; }
+.wg-x-paparazzi .wg-freeze { inset: 0; z-index: 8; background: #fff; opacity: 0; pointer-events: none; animation: wgsnap .45s ease-out var(--at) forwards; }
+
+/* 10. FORECAST: a weather map, radar sweep, Hurricane <name> */
+.wg-x-forecast .wg-map { inset: 0; background: radial-gradient(ellipse 40% 30% at 25% 60%, #3d7a4a, transparent 70%), radial-gradient(ellipse 35% 40% at 70% 40%, #4a8a55, transparent 70%), radial-gradient(ellipse 30% 25% at 55% 85%, #3d7a4a, transparent 70%), linear-gradient(#1b4f7a, #12395a); }
+.wg-x-forecast .wg-map::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent 0 19px, rgba(255, 255, 255, .08) 19px 20px), repeating-linear-gradient(90deg, transparent 0 19px, rgba(255, 255, 255, .08) 19px 20px); }
+.wg-x-forecast .wg-radar { left: 34%; top: 50%; z-index: 1; width: 260px; height: 260px; margin: -130px 0 0 -130px; border-radius: 50%; background: conic-gradient(rgba(124, 255, 107, .45), transparent 70deg); animation: wgspin 2.4s linear infinite;
+  box-shadow: inset 0 0 0 1px rgba(124, 255, 107, .3); }
+.wg-x-forecast .wg-blip { left: 34%; top: 50%; z-index: 2; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #ff3b52; box-shadow: 0 0 0 0 rgba(255, 59, 82, .7); animation: wgping 1.2s ease-out infinite; }
+.wg-x-forecast .wg-storm { left: 12px; top: 50%; z-index: 4; transform: translateY(-50%); display: flex; flex-direction: column; align-items: flex-start; max-width: 64%; }
+.wg-x-forecast .wg-hurr { position: static; padding: 2px 8px; background: #dc0025; color: #fff; font-family: var(--label, Arial, sans-serif); font-size: 10.5px; letter-spacing: .22em; animation: wgkick .4s cubic-bezier(.16, 1, .3, 1) .3s both; }
+.wg-x-forecast .wg-hname { position: static; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: clamp(30px, 10vw, 50px); line-height: .95; color: #fff; white-space: nowrap; letter-spacing: .02em; text-shadow: 3px 3px 0 #000;
+  animation: wgwhirl .7s cubic-bezier(.16, 1, .3, 1) .5s both; }
+.wg-x-forecast .wg-hsub { position: static; margin-top: 3px; font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .14em; color: #ffcc00; text-shadow: 1px 1px 0 #000; opacity: 0; animation: wgfade .4s ease-out var(--at) forwards; white-space: nowrap; }
+.wg-x-forecast .wg-wcard { right: 10px; top: 14px; z-index: 4; width: 92px; padding: 8px 6px; background: rgba(8, 20, 40, .82); border: 1px solid rgba(255, 255, 255, .25); border-radius: 6px; text-align: center;
+  animation: wgslidein .45s cubic-bezier(.16, 1, .3, 1) .7s both; }
+.wg-x-forecast .wg-wcard > * { position: relative; }
+.wg-x-forecast .wg-cloud { display: block; margin: 0 auto 4px; width: 46px; height: 20px; border-radius: 12px; background: #dfe6f0; box-shadow: 10px -8px 0 -2px #dfe6f0, -8px -5px 0 -4px #dfe6f0; }
+.wg-x-forecast .wg-bolt { position: absolute; left: 18px; top: 16px; width: 10px; height: 16px; background: #ffcc00; clip-path: polygon(40% 0, 100% 0, 60% 45%, 100% 45%, 20% 100%, 40% 55%, 0 55%); animation: wgblink .7s steps(2) infinite; }
+.wg-x-forecast .wg-pct { display: block; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 26px; line-height: 1; color: #fff; }
+.wg-x-forecast .wg-pctsub { display: block; font-family: var(--label, Arial, sans-serif); font-size: 8.5px; letter-spacing: .12em; color: #bcd2ff; }
 
 @keyframes wgslidein { from { transform: translateX(105%); } to { transform: none; } }
 @keyframes wgslideback { from { transform: translateX(-30%); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes wgshake { 0%, 100% { transform: none; } 15% { transform: translate(-6px, 2px) rotate(-.6deg); } 30% { transform: translate(5px, -2px) rotate(.5deg); } 45% { transform: translate(-4px, 1px); } 60% { transform: translate(3px, -1px); } 80% { transform: translate(-1px, 0); } }
-@keyframes wgraysin { from { transform: scale(.2) rotate(-40deg); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes wgspin { to { rotate: 360deg; } }
-@keyframes wgstrobe { 50% { filter: hue-rotate(180deg) brightness(1.3); } }
-@keyframes wgkick { from { transform: translateX(-110%) skewX(-14deg); } to { transform: skewX(-14deg); } }
-@keyframes wglet { 0% { transform: translateY(-140%) scale(2.4) rotate(-12deg); opacity: 0; filter: blur(4px); } 55% { transform: translateY(6%) scale(.92) rotate(3deg); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes wgwipe { to { clip-path: inset(0 0 0 0); } }
-@keyframes wgshine { 0% { left: -40%; } 45%, 100% { left: 130%; } }
-@keyframes wgflash { 0% { opacity: .9; } 100% { opacity: 0; } }
-@keyframes wgfloat { from { transform: translateY(-50%); } to { transform: translateY(calc(-50% - 3px)) rotate(-.6deg); } }
+@keyframes wgfade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes wgpop { 0% { transform: scale(1); } 40% { transform: scale(1.35); color: #fff; } 100% { transform: scale(1); } }
-@keyframes wgfade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes wgwipe { to { clip-path: inset(0 0 0 0); } }
+@keyframes wgblink { 50% { opacity: .3; } }
+@keyframes wgtick { to { transform: translateX(-100%); } }
+@keyframes wgcrt { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes wgcrtline { 0% { transform: scaleX(0); } 40% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1) scaleY(40); opacity: 0; } }
+@keyframes wgbulbs { 50% { background-position: 5.5px 5.5px; } }
+@keyframes wglightup { 0% { opacity: .25; } 100% { opacity: 1; } }
+@keyframes wgreel { 0% { transform: translateY(0); } 100% { transform: translateY(-280px); } }
+@keyframes wgflyin { from { transform: translateX(-120%) skewX(-20deg); filter: blur(6px); } to { transform: none; filter: none; } }
+@keyframes wgignite { 0% { color: #fff; } 40% { color: #fff3a0; text-shadow: 0 0 20px #ffb000, 3px 3px 0 #000; } 100% { color: #ffe18a; text-shadow: 0 0 18px #ff6a00, 0 0 34px #ff3d00, 3px 3px 0 #000; } }
+@keyframes wgflicker { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px) skewX(-2deg); } }
+@keyframes wgstamp { from { transform: scale(2.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes wgnight { to { filter: brightness(.45) saturate(.7); } }
+@keyframes wgcount { 0% { transform: translate(-50%, -50%) scale(.3); opacity: 0; } 30% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; } 75% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; } }
+@keyframes wgrumble { 50% { transform: translateX(1.5px); } }
+@keyframes wglaunch { to { transform: translateY(-260px); } }
+@keyframes wgflick2 { 50% { transform: scaleY(.75); } }
+@keyframes wgwarp { from { opacity: 0; transform: scale(.2); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes wgprint { to { transform: translateY(0); } }
+@keyframes wgstampin { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-12deg) scale(2.6); } 70% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(.95); } 100% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(1); } }
+@keyframes wgsearch { 0% { transform: rotate(-38deg); } 45% { transform: rotate(30deg); } 100% { transform: rotate(0); } }
+@keyframes wglit { to { opacity: 1; filter: brightness(1); } }
+@keyframes wgcheer { from { transform: translateY(0); } to { transform: translateY(-7px); } }
+@keyframes wgmicdrop { 0% { top: -60px; } 80% { top: 64px; transform: rotate(0); } 100% { top: 70px; transform: rotate(78deg); } }
+@keyframes wgstampin2 { to { transform: scale(1) rotate(-10deg); } }
+@keyframes wgredpulse { to { background: #4a000c; } }
+@keyframes wghazard { to { background-position: 28px 0; } }
+@keyframes wgsign { from { transform: translate(-50%, -50%) scale(0) rotate(-20deg); } to { transform: translate(-50%, -50%) scale(1); } }
+@keyframes wgwobble { 0%, 100% { transform: translate(-50%, -50%) rotate(-2deg); } 50% { transform: translate(-50%, -50%) rotate(2deg); } }
+@keyframes wgtile { 0% { background: #ff3cac; } 25% { background: #2bd2ff; } 50% { background: #ffcc00; } 75% { background: #7cff6b; } }
+@keyframes wgeq { from { transform: scaleY(.2); } to { transform: scaleY(1); } }
+@keyframes wgdrop { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wgbeat { from { transform: translateY(0); } to { transform: translateY(-6px) rotate(-3deg); } }
+@keyframes wgstarin { from { transform: translateY(-140%) rotate(-25deg) scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wgsnap { 0% { opacity: .95; } 100% { opacity: 0; } }
+@keyframes wgping { to { box-shadow: 0 0 0 22px rgba(255, 59, 82, 0); } }
+@keyframes wgkick { from { transform: translateX(-120%); } to { transform: none; } }
+@keyframes wgwhirl { from { transform: rotate(-30deg) scale(.3); opacity: 0; filter: blur(5px); } to { transform: none; opacity: 1; filter: none; } }
 @media (prefers-reduced-motion: reduce) {
   .wg-dot, .wg-trail, .wg-sheet { transition: none; }
   .wg-party, .wg-party *, .wg-grab.back { animation: none !important; }
