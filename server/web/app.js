@@ -122,23 +122,50 @@ const kv = (() => {
   const run = async (mode, fn) => { const d = await db(); return new Promise((res) => { const q = fn(d.transaction("kv", mode).objectStore("kv")); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); };
   return { get: (k) => run("readonly", (st) => st.get(k)).catch(() => null), set: (k, v) => run("readwrite", (st) => st.put(v, k)).catch(() => null) };
 })();
+/** The extension's folder at or under the one picked, up to two levels down (Downloads → westgate-assistant-extension → westgate-assistant). */
+async function findExtFolder(dir, depth = 2) {
+  if (await isExtFolder(dir)) return dir;
+  if (depth === 0) return null;
+  const kids = [];
+  try { for await (const [name, h] of dir.entries()) if (h.kind === "directory" && !name.startsWith(".")) kids.push([name, h]); } catch { return null; }
+  // Likely names first, so a big Downloads folder is quick.
+  kids.sort(([a], [b]) => (/westgate/i.test(b) ? 1 : 0) - (/westgate/i.test(a) ? 1 : 0));
+  for (const [, h] of kids.slice(0, 200)) { const hit = await findExtFolder(h, depth - 1); if (hit) return hit; }
+  return null;
+}
 const isExtFolder = async (dir) => {
   try { const m = JSON.parse(await (await (await dir.getFileHandle("manifest.json")).getFile()).text()); return m.name === "Westgate Sales Assistant"; } catch { return false; }
 };
+// Tell the server how an update went, so a failure on a teammate's computer can be read without a screenshot.
+function reportUpdate(outcome, detail) {
+  api("/api/extension/update-report", { outcome, detail: String(detail || ""), picker: !!window.showDirectoryPicker, secure: !!window.isSecureContext,
+    framed: window.top !== window, installed: installedExt(), ua: navigator.userAgent, url: location.href }).catch(() => {});
+}
 async function updateExtension() {
   if (state.upd && state.upd.busy) return;
-  if (!window.showDirectoryPicker) { state.upd = { error: "This works in Google Chrome on a computer. Use the download below instead." }; render(); return; }
+  reportUpdate("clicked", "");
+  // Say exactly why it can't, per browser (10/26: it worked on Walt's computer and sent a teammate to the download).
+  if (!window.showDirectoryPicker) {
+    const ua = navigator.userAgent;
+    const why = navigator.brave ? "Brave has this turned off. Go to brave://flags, search \"File System Access API\", set it to Enabled, relaunch Brave, and click Update again."
+      : /Firefox\//.test(ua) ? "Firefox can't update the extension from a page. Open this page in Google Chrome (where the extension is) and click Update there."
+      : /Safari\//.test(ua) && !/Chrome\//.test(ua) ? "Safari can't update the extension from a page. Open this page in Google Chrome (where the extension is) and click Update there."
+      : !window.isSecureContext ? "This page has to be opened at https://sales-assist-fawn.vercel.app to update the extension."
+      : "This browser can't update the extension from a page. Open this page in Google Chrome on a computer and click Update there.";
+    state.upd = { error: why }; render(); reportUpdate("no-folder-access", why); return;
+  }
   state.upd = { busy: true, text: "Getting your extension folder…" }; render();
   try {
     let dir = await kv.get("extDir");
     if (dir && dir.requestPermission && (await dir.requestPermission({ mode: "readwrite" })) !== "granted") dir = null;
     if (!dir) {
-      state.upd = { busy: true, text: "Pick your westgate-assistant folder (the one Chrome loads the extension from)." }; render();
-      dir = await window.showDirectoryPicker({ id: "westgate-ext", mode: "readwrite" });
-      // Picked the folder it's in (like Westgate)? Use the extension inside it.
-      if (!(await isExtFolder(dir))) { const inner = await dir.getDirectoryHandle("westgate-assistant").catch(() => null); if (inner && (await isExtFolder(inner))) dir = inner; }
+      state.upd = { busy: true, text: "Chrome is asking which folder: pick Downloads (or wherever you unzipped the extension). The app finds it inside." }; render();
+      const picked = await window.showDirectoryPicker({ id: "westgate-ext", mode: "readwrite", startIn: "downloads" });
+      state.upd = { busy: true, text: `Looking for the extension in "${picked.name}"…` }; render();
+      dir = await findExtFolder(picked);
+      if (!dir) throw new Error(`Couldn't find the extension in "${picked.name}". Click Update again and pick the folder you unzipped it into (usually Downloads).`);
     }
-    if (!(await isExtFolder(dir))) throw new Error(`"${dir.name}" isn't the extension's folder. Pick the westgate-assistant folder you loaded in chrome://extensions.`);
+    if (!(await isExtFolder(dir))) throw new Error(`"${dir.name}" isn't the extension's folder anymore. Click Update again and pick Downloads.`);
     await kv.set("extDir", dir);
     state.upd = { busy: true, text: "Writing the newest files…" }; render();
     const { version, files } = await api("/api/extension/files");
@@ -152,13 +179,18 @@ async function updateExtension() {
     }
     const couldReload = !!installedExt(); // 2.84 and later reload when asked; older ones need the button in chrome://extensions once
     if (couldReload) window.dispatchEvent(new CustomEvent("westgate:reload-ext"));
+    reportUpdate("updated", `${version}, reload ${couldReload ? "automatic" : "by hand"}, folder ${dir.name}`);
     state.upd = { done: true, text: couldReload
       ? `Updated to ${version}. The extension restarted: close and reopen the side panel.`
       : `The files are updated to ${version}. One last time, go to chrome://extensions and click the reload arrow on Westgate Sales Assistant. After that, this button does it all.` };
     render();
     if (couldReload) setTimeout(() => { delete document.documentElement.dataset.westgateExt; location.reload(); }, 2500);
   } catch (e) {
-    state.upd = e && e.name === "AbortError" ? null : { error: e.message || String(e) };
+    const name = e && e.name;
+    reportUpdate(name === "AbortError" ? "cancelled" : "failed", `${name || "error"}: ${(e && e.message) || e}`);
+    state.upd = name === "AbortError" ? null
+      : name === "SecurityError" || name === "NotAllowedError" ? { error: `Chrome didn't allow it (${name}). Click Update again and choose "Allow" or "Edit files" when Chrome asks. If Chrome says it can't open that folder because it has system files, move the westgate-assistant folder into Documents, load it again in chrome://extensions, and try once more.` }
+      : { error: `Couldn't update: ${e.message || String(e)} (${name || "error"}). Send Walt a screenshot of this.` };
     render();
   }
 }
@@ -1816,7 +1848,7 @@ function extensionPage() {
     ? el("div", { class: "extupdate" }, [el("p", { class: "extok", text: `✓ You're on the newest version (${have}).` }), el("div", { class: "extrow" }, [updateButton("btn small"), el("span", { class: "muted small3", text: "Puts the newest files in your extension folder again." })])])
     : el("div", { class: "extupdate behind" }, [
       el("h2", { class: "rfqh", text: have ? `Update from ${have} to ${x.version || "the newest"}` : `Update to ${x.version || "the newest version"}` }),
-      el("p", { class: "muted small3", text: "One click: the app writes the newest files into your extension folder and restarts it. The first time, Chrome asks you to pick the westgate-assistant folder and to allow edits." }),
+      el("p", { class: "muted small3", text: "No reinstalling: the app puts the newest files into the extension you already have. The first time only, Chrome asks which folder: pick Downloads (or wherever you unzipped it) and click Allow. After that it's one click." }),
       el("div", { class: "extrow" }, [updateButton(), updateStatus()]),
       byHand,
     ]);

@@ -2,6 +2,7 @@ import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
 import { dayStats, localDay, periodStats, rfqTimeline } from "./stats.js";
 import { getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
+import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
 
 /**
@@ -100,6 +101,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       };
     }
   }));
+  await oneOwnerPerRfq(results);
   const guestLanes = await guestRacers(team, roster, results, now);
   const race: Race = {
     day: localDay(team[0]?.rep.timeZone ?? "America/Chicago", now).day, at: now.toISOString(),
@@ -175,4 +177,56 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
     }
   }
   return out;
+}
+
+/**
+ * Each RFQ goes to one person (Walt 10/26: Haley Contracting counted for Chase, who tapped "RFQ came in", and for Walt,
+ * whose account got the reply). Per company per day: whoever marked it came in; if nobody did, the company's Lead owner
+ * in Close; if that's nobody racing, whoever's account it showed up in first. Everyone else's copy comes off their lane.
+ */
+async function oneOwnerPerRfq(results: RepResult[]) {
+  type Entry = { r: RepResult; leadId: string; day: string; how: string; first: boolean; company: string };
+  const live = results.filter((r) => r.line && r.today);
+  const byKey = new Map<string, Entry[]>();
+  for (const r of live) {
+    const monday = weekStart(r.today);
+    for (const d of r.line!.days) if (d.day >= monday) for (const a of d.accounts) {
+      const k = `${a.leadId}|${d.day}`;
+      byKey.set(k, [...(byKey.get(k) ?? []), { r, leadId: a.leadId, day: d.day, how: a.how, first: a.first, company: a.company }]);
+    }
+  }
+  const shared = [...byKey.values()].filter((es) => new Set(es.map((e) => e.r)).size > 1);
+  if (!shared.length) return;
+  // Lead owners, read once with any login that can see the leads.
+  const reader = live[0].t;
+  const field = await ownerFieldId(reader).catch(() => null);
+  const ownerOf = new Map<string, string | null>();
+  if (field) await Promise.all([...new Set(shared.map((es) => es[0].leadId))].map(async (id) => {
+    const lead = await reader.close.lead(id).catch(() => null) as Record<string, unknown> | null;
+    const v = lead ? lead[`custom.${field}`] : null;
+    ownerOf.set(id, typeof v === "string" ? v : null);
+  }));
+  const lose = new Map<RepResult, Set<string>>(); // rep → lead|day keys they don't get
+  for (const es of shared) {
+    const owner = ownerOf.get(es[0].leadId);
+    const keep = es.find((e) => e.how === "marked") ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0];
+    for (const e of es) if (e.r !== keep.r) lose.set(e.r, new Set([...(lose.get(e.r) ?? []), `${e.leadId}|${e.day}`]));
+  }
+  for (const [r, keys] of lose) {
+    const l = r.lane;
+    const today = [...keys].filter((k) => k.endsWith(`|${r.today}`));
+    const gone = r.line!.days.flatMap((d) => d.accounts.filter((a) => keys.has(`${a.leadId}|${d.day}`)).map((a) => ({ ...a, day: d.day })));
+    const goneToday = gone.filter((a) => a.day === r.today);
+    l.rfqs = Math.max(0, l.rfqs - goneToday.length);
+    l.firstRfqs = Math.max(0, l.firstRfqs - goneToday.filter((a) => a.first).length);
+    l.points = scoreOf(l);
+    if (l.week) {
+      const w = l.week as typeof l.week & { firstRfqs?: number };
+      w.rfqs = Math.max(0, w.rfqs - gone.length);
+      w.firstRfqs = Math.max(0, (w.firstRfqs ?? 0) - gone.filter((a) => a.first).length);
+      w.points = scoreOf(w);
+    }
+    const drop = new Set(today.map((k) => k.split("|")[0]));
+    r.events = r.events.filter((e) => !(e.leadId && drop.has(e.leadId)));
+  }
 }

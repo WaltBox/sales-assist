@@ -60,3 +60,23 @@ test("West Game: a guest plays while their link is on; their calls are the marks
   const off = await teamRace(team, ownerId, { fresh: true });
   assert.ok(!off.lanes.some((l) => l.guest), "a switched-off link doesn't play");
 });
+
+test("West Game: an RFQ two people both have goes to the one who marked it came in, once (10/26: Haley Contracting)", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const walt = "user_wg_walt2", chase = "user_wg_chase2";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
+  ] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (how: string) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+    days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_haley", company: "Haley Contracting", how, first: true }] }] });
+  await store.cacheSet(`rfqline:${walt}`, line("file"), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line("marked"), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, walt, { fresh: true });
+  const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!;
+  assert.deepEqual([c.rfqs, c.firstRfqs, w.rfqs, w.firstRfqs], [1, 1, 0, 0]);
+  assert.equal(race.events.filter((e) => e.company === "Haley Contracting").length, 1, "celebrated once");
+  assert.equal(race.events.find((e) => e.company === "Haley Contracting")!.email, "chase@westgatesupply.com");
+});

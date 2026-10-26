@@ -28,7 +28,7 @@ export type MyLead = {
 };
 export type MyLeads = { at: string; field: boolean; leads: MyLead[] };
 
-async function ownerFieldId(d: Deps): Promise<string | null> {
+export async function ownerFieldId(d: Deps): Promise<string | null> {
   const cached = await store.getSetting<string>("team", "leadOwnerFieldId").catch(() => null);
   if (cached) return cached;
   const f = (await d.close.leadCustomFields()).find((x) => x.name.trim().toLowerCase() === OWNER_FIELD.toLowerCase());

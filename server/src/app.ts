@@ -398,6 +398,13 @@ export function createApp(appDeps: AppDeps) {
 
   // The Chrome extension (10/19): the packed zip for signed-in reps, with its version for the setup page.
   app.get("/api/extension", authed, route(async () => ({ version: packedVersion(), server: config.publicUrl ?? null })));
+  // What happened when someone clicked Update extension (10/26): logged so Walt doesn't have to relay screenshots.
+  app.post("/api/extension/update-report", authed, route(async (req, d) => {
+    const b = req.body ?? {};
+    const clip = (v: unknown, n = 300) => String(v ?? "").slice(0, n);
+    console.log(`extension update [${d.rep.email}]: ${clip(b.outcome, 40)} | ${clip(b.detail)} | picker=${!!b.picker} secure=${!!b.secure} framed=${!!b.framed} installed=${clip(b.installed, 20)} | ${clip(b.ua, 200)} | ${clip(b.url, 120)}`);
+    return { ok: true };
+  }));
   app.get("/api/extension/files", authed, route(async () => {
     const out = packedFiles();
     if (!out) throw new GuestError(404, "The extension hasn't been packed yet. Run npm run pack-extension.");
