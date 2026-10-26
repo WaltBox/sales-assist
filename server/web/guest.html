@@ -485,6 +485,8 @@
     function startGame() {
       if (!window.WestGame || S.game) return;
       const today = () => new Date().toDateString();
+      // From the console, like the side panel: celebrateRfq({ name: "Chase", company: "Rodda Electric" }, 1, "rocket")
+      window.celebrateRfq = (e, n = 1, scene) => S.game && S.game.celebrate({ id: "test", email: "", day: "", ...e }, n, scene);
       S.game = WestGame.create({
         load: (fresh) => call(`/race${fresh ? "?fresh=1" : ""}`),
         liveDials: () => (S.list ? S.list.leads.filter((l) => l.outcome && l.outcomeAt && new Date(l.outcomeAt).toDateString() === today()).length : null),

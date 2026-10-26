@@ -549,8 +549,9 @@ function startGame() {
     webApp: `${settings.server}/#team`,
   });
 }
-// From the console: celebrateRfq({ name: "Chase", company: "Rodda Electric", first: true }, 1)
-window.celebrateRfq = (e, n = 1) => game && game.celebrate({ id: "test", email: "", day: "", ...e }, n);
+// From the console: celebrateRfq({ name: "Chase", company: "Rodda Electric", first: true }); a scene by name as the third
+// argument (news, jackpot, fire, rocket, money, mic).
+window.celebrateRfq = (e, n = 1, scene) => game && game.celebrate({ id: "test", email: "", day: "", ...e }, n, scene);
 
 function countReached(callId) {
   if (!stats || !callId || stats.reachedIds.includes(callId)) return;

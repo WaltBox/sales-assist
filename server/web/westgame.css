@@ -1,28 +1,43 @@
 /* West Game (10/25): the bottom sheet, the lanes, and the bowling banner. Shared by the side panel and the guest page
    (copied to server/web/ by npm run pack-extension). Uses the page's own tokens, with fallbacks. */
-body.has-race { --rb: 62px; padding-bottom: var(--rb); }
+body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 .wg-sheet {
   --wg-ink: var(--ink, #111114); --wg-red: var(--red, #dc0025); --wg-navy: var(--navy, #001939); --wg-paper: var(--paper-light, #f4f0e5);
   --wg-line: var(--ink-line, rgba(17, 17, 20, .25)); --wg-muted: var(--muted, #53524f); --wg-gold: #f5b400;
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 62px; color: var(--wg-ink);
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; height: 78px; color: var(--wg-ink);
   background: var(--wg-paper); border-top: 2px solid var(--wg-ink); box-shadow: 0 -4px 0 rgba(17, 17, 20, .12); transition: height .28s cubic-bezier(.2, .9, .3, 1);
 }
 .wg-sheet.dragging { transition: none; }
 .wg-sheet.open { box-shadow: 0 -10px 30px rgba(17, 17, 20, .25); }
-.wg-grab { --wg-dot: 12px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 5px 14px 9px; cursor: grab; touch-action: none; user-select: none; }
+.wg-grab { --wg-dot: 20px; flex: none; display: flex; flex-direction: column; gap: 4px; padding: 5px 12px 10px; cursor: grab; touch-action: none; user-select: none;
+  color: #f4f0e5; background: linear-gradient(180deg, #1d1d22, #111114 60%), #111114; border-bottom: 2px solid #111114; position: relative; overflow: hidden; }
+/* a thin red racing stripe along the top */
+.wg-grab::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: linear-gradient(90deg, var(--wg-red) 0 60%, #fff 60% 64%, var(--wg-red) 64%); }
 .wg-sheet.dragging .wg-grab { cursor: grabbing; }
-.wg-handle { align-self: center; width: 36px; height: 4px; border-radius: 2px; background: var(--wg-line); }
-.wg-grab:hover .wg-handle { background: var(--wg-ink); }
-.wg-bar { display: flex; align-items: center; gap: 8px; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); }
-.wg-brand { color: var(--wg-ink); white-space: nowrap; }
+.wg-handle { align-self: center; width: 40px; height: 4px; border-radius: 2px; background: rgba(244, 240, 229, .35); margin-top: 1px; }
+.wg-grab:hover .wg-handle { background: #f4f0e5; }
+.wg-board { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.wg-placebox { flex: none; width: 50px; height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: var(--wg-red); color: #fff; border: 2px solid #f4f0e5; box-shadow: 3px 3px 0 #000; }
+.wg-placebox.first { background: var(--wg-gold); color: #111114; }
+.wg-placebox b { font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 20px; line-height: .9; text-transform: uppercase; }
+.wg-placebox small { font-family: var(--label, Arial, sans-serif); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+.wg-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.wg-bar { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: rgba(244, 240, 229, .7); }
+.wg-brand { color: #fff; white-space: nowrap; }
 .wg-brand::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px;
-  background: conic-gradient(var(--wg-ink) 25%, #fff 0 50%, var(--wg-ink) 0 75%, #fff 0) 0 0 / 4.5px 4.5px; outline: 1px solid var(--wg-ink); }
-.wg-sum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wg-sum b { color: var(--wg-red); font-weight: 400; }
-.wg-chev { color: var(--wg-ink); font-size: 12px; }
-.wg-mini { position: relative; height: var(--wg-dot); }
-.wg-mini::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--wg-line); }
-.wg-mini .wg-flag { top: -2px; bottom: -2px; }
+  background: conic-gradient(#fff 25%, #111114 0 50%, #fff 0 75%, #111114 0) 0 0 / 4.5px 4.5px; outline: 1px solid #fff; }
+.wg-sum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: .02em; font-family: var(--sans, system-ui, sans-serif); font-size: 12.5px; }
+.wg-mini { --wg-trail: var(--wg-red); position: relative; height: var(--wg-dot); border-radius: calc(var(--wg-dot) / 2); background: repeating-linear-gradient(90deg, #2a2a31 0 16px, #24242a 16px 17px); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6); }
+.wg-mini .wg-flag { border-radius: 0 calc(var(--wg-dot) / 2) calc(var(--wg-dot) / 2) 0; width: 10px; }
+.wg-mini .wg-trail { opacity: 1; background: linear-gradient(90deg, rgba(220, 0, 37, 0), rgba(220, 0, 37, .75)); }
+.wg-mini .wg-dot { border-color: #111114; box-shadow: 0 0 0 1px rgba(244, 240, 229, .55); font-size: 10px; }
+.wg-mini .wg-dot.me { box-shadow: 0 0 0 1px #fff, 0 0 10px 2px rgba(220, 0, 37, .8); }
+.wg-mini .wg-dot.lead { box-shadow: 0 0 0 1px #111114, 0 0 0 3px var(--wg-gold); }
+.wg-mini .wg-dot.guest { background: #5d7188; }
+.wg-score { flex: none; display: flex; flex-direction: column; align-items: flex-end; min-width: 52px; }
+.wg-score b { font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 30px; line-height: .9; color: #ffcc00; font-variant-numeric: tabular-nums; text-shadow: 2px 2px 0 #000; }
+.wg-score small { font-family: var(--label, Arial, sans-serif); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: rgba(244, 240, 229, .7); margin-top: 3px; }
 .wg-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px 20px; display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 720px; margin: 0 auto; box-sizing: border-box; }
 
 /* the dots */
@@ -83,31 +98,66 @@ body.has-race { --rb: 62px; padding-bottom: var(--rb); }
 .wg-links a, .wg-links button { font: inherit; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-ink);
   background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
-/* the bowling banner: a ball rolls down a lane above the bar and takes out the pins */
-.wg-bowl { position: fixed; left: 8px; right: 8px; bottom: calc(var(--rb, 0px) + 8px); z-index: 60; max-width: 560px; margin: 0 auto; background: #111114; color: #e5e0d1; border: 2px solid #111114;
-  box-shadow: 4px 4px 0 #dc0025; cursor: pointer; overflow: hidden; animation: wgin .3s cubic-bezier(.2, 1.3, .4, 1), wgout .4s ease-in 8.6s forwards; }
-.wg-sheet.open ~ .wg-bowl { bottom: auto; top: 8px; }
-.wg-alley { position: relative; height: 46px; background: repeating-linear-gradient(90deg, #c8955a 0 14px, #b9844b 14px 15px); border-bottom: 2px solid #111114; }
-.wg-alley::before, .wg-alley::after { content: ""; position: absolute; left: 0; right: 0; height: 5px; background: #3b2a1a; }
-.wg-alley::before { top: 0; } .wg-alley::after { bottom: 0; }
-.wg-ball { position: absolute; top: 10px; left: -30px; width: 26px; height: 26px; border-radius: 50%; z-index: 2;
-  background: radial-gradient(circle at 35% 32%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 52% 26%, #111 0 2px, transparent 2.5px), radial-gradient(circle at 46% 46%, #111 0 2.2px, transparent 2.7px), radial-gradient(circle at 30% 30%, #ff4d6a, #dc0025 55%, #7a0015);
-  animation: wgroll 1.25s cubic-bezier(.4, .1, .9, .6) .25s forwards; }
-.wg-pins { position: absolute; right: 14px; top: 6px; width: 70px; height: 34px; }
-.wg-pin { position: absolute; width: 11px; height: 28px; left: calc(var(--i) * 10px); top: var(--t); animation: wghit .9s cubic-bezier(.2, .7, .4, 1) 1.38s forwards; }
-.wg-pin svg { width: 100%; height: 100%; display: block; }
+/* the RFQ banner: a random little scene, a title, the points, a line */
+.wg-sheet.partying:not(.open) { transition: height .35s cubic-bezier(.2, 1.3, .4, 1); }
+.wg-party { flex: none; position: relative; overflow: hidden; cursor: pointer; color: #e5e0d1; background: #111114; border-bottom: 2px solid #111114;
+  animation: wgslidein .45s cubic-bezier(.2, 1.2, .4, 1) both; }
+.wg-party::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; z-index: 3; background: linear-gradient(90deg, #ffcc00, #dc0025, #ffcc00); background-size: 200% 100%; animation: wgstripe 1s linear infinite; }
+.wg-grab.back { animation: wgslideback .4s cubic-bezier(.2, 1.2, .4, 1) both; }
+.wg-stage { position: relative; height: 58px; overflow: hidden; border-bottom: 2px solid #111114; background: #1b1b22; }
 .wg-btext { padding: 8px 12px 10px; }
-.wg-strike { margin: 0; font-family: var(--display, Arial, sans-serif); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .02em; opacity: 0; animation: wgpop .35s cubic-bezier(.2, 1.6, .4, 1) 1.45s forwards; }
-.wg-strike b { color: #ffcc00; font-weight: 700; }
+.wg-strike { margin: 0; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 22px; line-height: 1; letter-spacing: .02em; animation: wgpop .4s cubic-bezier(.2, 1.7, .4, 1) .15s both; }
+.wg-strike b { color: #ffcc00; font-weight: 800; }
 .wg-strike span { color: #7be39b; font-size: 16px; font-variant-numeric: tabular-nums; }
-.wg-bline { margin: 4px 0 0; font-size: 14px; line-height: 1.35; opacity: 0; animation: wgfade .4s ease-out 1.7s forwards; }
-@keyframes wgroll { to { left: calc(100% - 70px); transform: rotate(720deg); } }
-@keyframes wghit { to { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; } }
+.wg-bline { margin: 4px 0 0; font-size: 14px; line-height: 1.35; animation: wgfade .4s ease-out .45s both; }
+
+/* breaking news */
+.wg-s-news .wg-stage { background: #001939; }
+.wg-s-news .wg-strike b { color: #fff; background: #dc0025; padding: 1px 6px; }
+.wg-live { position: absolute; left: 10px; top: 10px; z-index: 2; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .14em; color: #fff; background: #dc0025; padding: 3px 7px; animation: wgblink 1s steps(2) infinite; }
+.wg-ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: #ffcc00; color: #111114; overflow: hidden; white-space: nowrap; display: flex; align-items: center; }
+.wg-ticker span { display: inline-block; padding-left: 100%; font-family: var(--label, Arial, sans-serif); font-size: 12px; letter-spacing: .08em; animation: wgtick 9s linear forwards; }
+/* jackpot */
+.wg-s-jackpot .wg-stage { background: radial-gradient(circle at 50% 50%, #3a1b52, #1b0f26); display: flex; justify-content: center; align-items: center; }
+.wg-reels { display: flex; gap: 6px; padding: 4px 8px; background: #111114; border: 2px solid #ffcc00; box-shadow: 0 0 14px rgba(255, 204, 0, .5); }
+.wg-reel { width: 38px; height: 40px; overflow: hidden; background: #fff; border-radius: 3px; }
+.wg-strip { display: flex; flex-direction: column; font-size: 26px; line-height: 40px; text-align: center; animation: wgspin calc(.9s + var(--i) * .45s) cubic-bezier(.3, .1, .3, 1) both; }
+.wg-s-jackpot .wg-strike b { animation: wgflash .35s steps(2) 1.9s 6; }
+/* on fire and cha-ching: things raining or rising */
+.wg-s-fire .wg-stage { background: linear-gradient(0deg, #ff4d00, #7a0015 70%, #1b1b22); }
+.wg-s-money .wg-stage { background: linear-gradient(180deg, #0b3d1f, #0b6b2f); }
+.wg-bit { position: absolute; left: var(--x); font-size: calc(24px * var(--s)); line-height: 1; }
+.wg-s-money .wg-bit { top: -34px; animation: wgfall 1.6s ease-in var(--d) 3 both; }
+.wg-s-fire .wg-bit { bottom: -30px; animation: wgrise 1.1s ease-out var(--d) 5 both; }
+.wg-s-fire .wg-strike b { color: #ff7a1a; text-shadow: 0 0 10px rgba(255, 122, 26, .8); }
+/* liftoff */
+.wg-s-rocket .wg-stage { background: radial-gradient(1px 1px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 60% 20%, #fff, transparent), radial-gradient(1px 1px at 80% 70%, #fff, transparent), radial-gradient(1px 1px at 35% 75%, #fff, transparent), #0a0a24; }
+.wg-rocket { position: absolute; left: -40px; bottom: -30px; font-size: 32px; animation: wgfly 1.6s cubic-bezier(.5, 0, .7, .4) .2s forwards; z-index: 2; }
+.wg-puff { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: rgba(255, 255, 255, .7); left: calc(var(--i) * 18% + 4%); bottom: calc(var(--i) * 9px - 6px); opacity: 0; animation: wgpuff .9s ease-out calc(.3s + var(--i) * .22s) forwards; }
+/* mic drop */
+.wg-s-mic .wg-stage { background: radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, .35), transparent 60%), #1b1b22; }
+.wg-mic { position: absolute; left: 50%; top: -40px; font-size: 30px; transform: translateX(-50%); animation: wgdrop .7s cubic-bezier(.5, 0, .9, .5) .2s forwards; }
+.wg-boom { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0); font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 30px; color: #ffcc00; text-shadow: 3px 3px 0 #dc0025; animation: wgboom .5s cubic-bezier(.2, 1.8, .4, 1) .85s forwards; }
+.wg-party.wg-s-mic { animation: wgslidein .45s cubic-bezier(.2, 1.2, .4, 1) both, wgshake .4s ease .85s; }
+
+@keyframes wgtick { to { transform: translateX(-100%); } }
+@keyframes wgblink { 50% { opacity: .35; } }
+@keyframes wgspin { from { transform: translateY(0); } to { transform: translateY(-280px); } }
+@keyframes wgflash { 50% { color: #fff; } }
+@keyframes wgfall { to { transform: translateY(100px) rotate(40deg); } }
+@keyframes wgrise { from { transform: translateY(0) scale(.6); opacity: 1; } to { transform: translateY(-70px) scale(1.2); opacity: 0; } }
+@keyframes wgfly { to { transform: translate(560px, -90px) rotate(10deg); } }
+@keyframes wgpuff { 0% { opacity: .8; transform: scale(.4); } 100% { opacity: 0; transform: scale(2.2); } }
+@keyframes wgdrop { 0% { top: -40px; } 70% { top: 22px; } 85% { top: 14px; } 100% { top: 20px; transform: translateX(-50%) rotate(80deg); } }
+@keyframes wgboom { 0% { transform: translate(-50%, -50%) scale(0); } 100% { transform: translate(-130%, -50%) scale(1); } }
+@keyframes wgshake { 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
 @keyframes wgpop { from { transform: scale(.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes wgfade { to { opacity: 1; } }
-@keyframes wgin { from { transform: translateY(120%); } to { transform: none; } }
-@keyframes wgout { to { transform: translateY(140%); opacity: 0; } }
+@keyframes wgfade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wgslidein { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes wgslideback { from { transform: translateX(-100%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wgstripe { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .wg-dot, .wg-trail, .wg-sheet { transition: none; }
-  .wg-ball { display: none; } .wg-pin { animation: none; opacity: .4; } .wg-strike, .wg-bline { animation: none; opacity: 1; }
+  .wg-stage * { animation: none !important; }
+  .wg-party, .wg-grab.back, .wg-strike, .wg-bline { animation: none; }
 }
