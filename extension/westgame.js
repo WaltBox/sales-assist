@@ -348,17 +348,9 @@
       text: big ? firstName(l).slice(0, 1).toUpperCase() : null,
     });
 
-    /** The dots on the one-track bar, left to right; anyone too close to the one before moves over a little. */
-    function fanned(ls, max) {
-      const order = ls.map((l, i) => ({ l, i, p: pctOf(l, max) })).sort((a, b) => a.p - b.p);
-      let prevP = -99, prevShift = 0;
-      for (const d of order) {
-        d.shift = d.p - prevP < 4 ? prevShift + 1 : 0;
-        if (d.shift === 0) prevShift = 0; else prevShift = d.shift;
-        prevP = d.p;
-      }
-      // you're drawn last, on top
-      return order.sort((a, b) => (a.l.email === g.race.you) - (b.l.email === g.race.you));
+    /** The dots on the one-track bar. People on the same spot stack, with you drawn last, on top (Walt 10/26). */
+    function fanned(ls) {
+      return ls.map((l, i) => ({ l, i, shift: 0 })).sort((a, b) => (a.l.email === g.race.you) - (b.l.email === g.race.you));
     }
 
     // One lane: place, name and points on top; the track with a trail behind the dot; what they did underneath.
@@ -457,7 +449,7 @@
             h("span", { class: "wg-mini" }, [
               h("i", { class: "wg-trail", style: `width: calc(${pctOf(mine, max)}% - ${pctOf(mine, max) / 100} * var(--wg-dot) + var(--wg-dot) / 2)` }),
               h("span", { class: "wg-flag", "aria-hidden": "true" }),
-              ...fanned(ls, max).map(({ l, i, shift }) => dot(l, i, max, true, shift)),
+              ...fanned(ls).map(({ l, i, shift }) => dot(l, i, max, true, shift)),
             ]),
           ]),
           h("span", { class: "wg-score" }, [h("b", { text: String(mine.points) }), h("small", { text: g.open ? "▾ pts" : "▴ pts" })]),
