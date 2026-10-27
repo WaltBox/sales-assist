@@ -9,11 +9,14 @@ import { store } from "../src/store.js";
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
 test("points: 180 calls and 20 line cards finish, an RFQ is worth 15; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(GOAL, 360);
-  assert.equal(POINTS.rfq, 60);
-  // 240 calls with a line card every fourth one finishes with no RFQs; two RFQs finish at 160 calls.
-  assert.equal(240 * POINTS.dial + 60 * POINTS.lineCard, GOAL);
-  assert.equal(160 * POINTS.dial + 40 * POINTS.lineCard + 2 * POINTS.rfq, GOAL);
+  assert.equal(GOAL, 370);
+  assert.equal(POINTS.rfq, 30);
+  // Walt's finishing days: 200 calls and 85 line cards; 160 calls, 70 line cards and 3 RFQs; 8 RFQs, 100 calls, 15 cards.
+  assert.equal(200 * POINTS.dial + 85 * POINTS.lineCard, GOAL);
+  assert.ok(160 * POINTS.dial + 70 * POINTS.lineCard + 3 * POINTS.rfq >= GOAL);
+  assert.equal(100 * POINTS.dial + 15 * POINTS.lineCard + 8 * POINTS.rfq, GOAL);
+  assert.equal(Math.round(100 * (119 + 47 * POINTS.lineCard + 4 * POINTS.rfq) / GOAL), 90, "Chase 10/27: 90%");
+  assert.ok(349 * POINTS.dial < GOAL, "never on calls alone");
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
   const ok = new FakeClose();

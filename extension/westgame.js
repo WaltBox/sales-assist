@@ -19,8 +19,8 @@
     for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c);
     return n;
   };
-  // The finish line (Walt 10/27: 360). The server says where it is; this is for an older server.
-  const GOAL = 360;
+  // The finish line (Walt 10/27: 370). The server says where it is; this is for an older server.
+  const GOAL = 370;
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -466,7 +466,7 @@
           h("span", { class: "wg-place", text: String(i + 1) }),
           h("span", { class: "wg-name", text: me ? `${firstName(l)} (you)` : l.name }),
           l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null,
-          i === 0 && l.points > 0 ? h("span", { class: "wg-tag gold", text: "Lead" }) : null,
+          i === 0 && l.points > 0 ? h("span", { class: "wg-tag gold", text: "👑 Lead" }) : null,
           h("span", { class: "wg-pts" }, [l.error ? "–" : String(l.points), h("small", { text: "pts" })]),
         ]),
         h("span", { class: "wg-track" }, [

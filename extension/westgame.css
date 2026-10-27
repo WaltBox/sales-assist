@@ -363,3 +363,5 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 /* A crown above whoever's in first (Walt 10/27). Just the emoji, above the dot. */
 .wg-dot.lead::before { content: "👑"; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
   font-size: calc(var(--wg-dot) * .62); line-height: 1; pointer-events: none; z-index: 4; }
+/* In the big lanes the crown goes on the Lead tag instead: at the finish it ran into the points (10/27). */
+.wg-track .wg-dot.lead::before { content: none; }
