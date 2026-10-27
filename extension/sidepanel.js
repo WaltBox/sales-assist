@@ -1041,7 +1041,9 @@ function fixLineCardEmail(st) {
 function rfqButton(st) {
   const r = st.rfqIn || {};
   if (r.saved) return el("div", { class: "rfqin saved" }, [el("i", { class: "dot" }), el("span", { text: `RFQ marked received${r.completed ? ` · ${r.completed} callback${r.completed === 1 ? "" : "s"} cleared` : ""}. It's on the RFQs page.` })]);
-  if (!r.open) return el("button", { class: "btn small rfqbtn", text: "RFQ came in", onclick: () => { st.rfqIn = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("rfq-note"); if (i) i.focus(); }, 0); } });
+  // Big and near the top on every screen (Walt 10/27: "they need to be clicking RFQ came in"): it's what scores in West Game.
+  const pts = game && game.race && game.race.points ? game.race.points.rfq : null;
+  if (!r.open) return el("button", { class: "btn rfqbtn big", text: pts ? `RFQ came in · +${pts} pts` : "RFQ came in", onclick: () => { st.rfqIn = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("rfq-note"); if (i) i.focus(); }, 0); } });
   const save = async () => {
     st.rfqIn = { ...r, busy: true, error: null }; render();
     try {
@@ -1677,6 +1679,7 @@ function renderPre() {
     b.ask_for.role ? el("span", { class: "muted", text: ` · ${b.ask_for.role}` }) : null,
   ]));
   const stage = callStage(st);
+  page.append(rfqButton(st));
   // A repeat call gets its own line (10/12); the first-call opener is for first calls, or if they ask what we do.
   page.append(el("section", { class: "hero" }, stage.say ? [
     el("p", { class: "label", text: "Say" }),
@@ -1693,7 +1696,6 @@ function renderPre() {
   if (b.objection) page.append(objectionTap(b));
 
   page.append(lineCardRow(st));
-  page.append(rfqButton(st));
 
   // Everything else, one tap away.
   const purch = st.purch ? purchasingCard(st) : null;
@@ -1867,8 +1869,8 @@ function renderOnCall() {
     ]),
     el("div", { class: "body" }, [
       el("div", { class: `stagegoal oncallgoal k-${stage.kind}` }, [el("span", { class: "label", text: stage.banner }), el("strong", { text: stage.goal })]),
-      st.rescue ? rescueBlock(st) : lineCardAsk(st),
       rfqButton(st),
+      st.rescue ? rescueBlock(st) : lineCardAsk(st),
       glanceBlock(st),
       fu ? el("div", {}, [
         el("p", { class: "label", text: "Say" }), el("p", { class: "say" }, fu.say),
@@ -1927,13 +1929,14 @@ function renderEnded() {
       el("span", { class: "muted", text: o.changing ? "Pick the right one. It replaces the callback and status the first tap saved." : o.changedFrom ? `Changed from ${OUTCOMES.find(([k]) => k === o.changedFrom)[1]}.` : "Tapped the wrong one?" }),
       el("button", { class: "link", text: o.changing ? "Cancel" : "Change", onclick: () => { o.changing = !o.changing; render(); } }),
     ]) : null,
+    el("div", { class: "rfqtop" }, [rfqButton(st)]),
     el("div", { class: "outcomes" }, OUTCOMES.map(([k, label, sub]) => el("button", {
       class: `outcome${o && o.picked === k ? " picked" : !o && st.ended && st.ended.suggested === k ? " suggested" : ""}`,
       disabled: down || (!!o && !(o.changing && !o.busy && o.picked !== k)),
       onclick: () => pickOutcome(k),
     }, [el("strong", { text: label }), el("span", { text: sub })]))),
     !down && o && (o.picked === "reached_buyer" || o.picked === "got_name" || o.picked === "pms_buy") ? nextEmailPicker(st) : null,
-    el("div", { class: "aftertaps" }, [rfqButton(st), shotDownButton(st)]),
+    el("div", { class: "aftertaps" }, [shotDownButton(st)]),
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
     // Send the line card from here once you've hung up, instead of staying on the call (Walt 9/29).

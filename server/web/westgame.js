@@ -19,8 +19,8 @@
     for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c);
     return n;
   };
-  // The finish line (Walt 10/27: 180 calls). The server says where it is; this is for an older server.
-  const GOAL = 180;
+  // The finish line (Walt 10/27: 220, 180 calls and 20 line cards). The server says where it is; this is for an older server.
+  const GOAL = 220;
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;

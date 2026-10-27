@@ -33,7 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
-import { postChat, raceLive, raceRoster, recordRfqTap, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
+import { postChat, raceLive, raceRoster, recordRfqTap, rfqScanDue, scanForRfqs, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -484,8 +484,22 @@ export function createApp(appDeps: AppDeps) {
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
   }));
+  // Every live check, from anyone, can be the one that looks at new email (once every 30s for the whole team).
+  const scanSoon = () => {
+    void rfqScanDue().then((due) => {
+      if (!due) return;
+      background((async () => {
+        const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+        const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
+        if (!owner) return;
+        const found = await scanForRfqs(team, owner.rep.closeUserId);
+        if (found.length) await teamRace(team, owner.rep.closeUserId, { force: true });
+      })(), "rfq email scan");
+    }).catch(() => undefined);
+  };
   app.get("/api/guest/:token/race/live", guestRoute(async () => {
     const o = await liveOwnerInfo();
+    scanSoon();
     return raceLive(o.id, o.tz);
   }));
   // West Game on a guest's page (10/25): guests play while their link is on. Same shared copy the panels read.
@@ -499,6 +513,7 @@ export function createApp(appDeps: AppDeps) {
   // The day's RFQs with the moment each one plays, read every few seconds by every screen so they celebrate together.
   app.get("/api/race/live", authed, route(async (_req, d) => {
     const o = await liveOwnerInfo();
+    scanSoon();
     return raceLive(o.id, d.rep.timeZone);
   }));
   // The West Game chat: anyone playing can post; everyone sees it on their next live check.

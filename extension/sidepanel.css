@@ -516,6 +516,10 @@ textarea { resize: vertical; min-height: 70px; }
 :is(.oncall, .afterlc) .lclinks { display: flex; gap: 16px; flex-wrap: wrap; }
 /* "RFQ came in" (9/29) */
 .rfqbtn { align-self: flex-start; border-color: var(--green); color: var(--green); }
+/* 10/27: full width and filled, near the top of each screen; it's what scores in West Game */
+.rfqbtn.big { align-self: stretch; width: 100%; padding: 11px 14px; background: var(--green); border-color: var(--green); color: #fff; font-size: 13px; letter-spacing: .06em; }
+.rfqbtn.big:hover { filter: brightness(1.08); }
+.rfqtop { margin: 4px 8px 10px; }
 /* Shot down (10/5): beside "RFQ came in" under the outcome taps; either one's form takes the full row when open. */
 .aftertaps { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 .aftertaps > .rfqin { flex: 1 1 100%; }

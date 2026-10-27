@@ -8,9 +8,9 @@ import { store } from "../src/store.js";
 // The BDR race (10/25): a lane per rep, the car moves with dials, points decide the winner, RFQs are celebrated.
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
-test("points: 180 calls finishes, an RFQ moves you 12 calls; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(GOAL, 180 * POINTS.dial);
-  assert.equal(POINTS.rfq, 12 * POINTS.dial);
+test("points: 180 calls and 20 line cards finish, an RFQ is worth 15; the roster leaves people out; a broken Close login is a flagged lane", async () => {
+  assert.equal(GOAL, 180 * POINTS.dial + 20 * POINTS.lineCard);
+  assert.equal(POINTS.rfq, 15);
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
   const ok = new FakeClose();
@@ -97,9 +97,9 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   await store.cacheSet(`rfqline:${owner}`, { since: today, total: 0, thisWeek: 0, lastWeek: 0, firstToday: 0, firstThisWeek: 0, companies: 0, newThisWeek: 0, newLastWeek: 0, newThisMonth: 0, newLastMonth: 0, at: new Date().toISOString(), days: [] }, 3600_000);
   await store.cacheSet("race:team", null, 1);
 
-  const tap = await recordRfqTap(team, owner, team[0], "lead_new");
+  const tap = (await recordRfqTap(team, owner, team[0], "lead_new"))!;
   assert.equal(tap.first, true, "added to Close 5 days ago, no RFQ before: new");
-  const oldTap = await recordRfqTap(team, owner, team[0], "lead_old");
+  const oldTap = (await recordRfqTap(team, owner, team[0], "lead_old"))!;
   assert.equal(oldTap.first, false, "in Close for over a year: established");
 
   const live = await raceLive(owner, "America/Chicago");

@@ -1,6 +1,6 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
-import { dayStats, localDay, periodStats, rfqTimeline } from "./stats.js";
+import { ADMIN_DOC, dayStats, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles } from "./stats.js";
 import { getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
@@ -14,10 +14,11 @@ import { store } from "./store.js";
  * Worked out once a minute for the whole team and shared: every panel reads the same copy, so Close isn't asked once
  * per panel. A rep whose numbers can't be read (a Close login that's been turned off) still has a lane, flagged.
  */
-// Walt 10/27: the finish is 180 calls; a new-company RFQ moves you as far as 12 calls, a line card 3. The screens read
+// Walt 10/27: the finish is 220, a full day of 180 calls plus the 20 line cards that should come with them (2 each); a
+// new company's RFQ is worth 15. The screens read
 // the finish and the points from here, so changing them doesn't need an extension update.
-export const POINTS = { dial: 1, reached: 0, lineCard: 3, rfq: 12, firstRfq: 0 } as const;
-export const GOAL = 180;
+export const POINTS = { dial: 1, reached: 0, lineCard: 2, rfq: 15, firstRfq: 0 } as const;
+export const GOAL = 220;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
   email: string; name: string; first: string; guest?: boolean;
@@ -274,7 +275,8 @@ async function oneOwnerPerRfq(results: RepResult[]) {
 export const SHOW_DELAY_MS = 7_000;
 const showTime = (at: string) => new Date(Date.parse(at) + SHOW_DELAY_MS).toISOString();
 const TAPS_KEY = "raceTaps";
-export type RaceTap = { id: string; email: string; name: string; leadId: string; company: string; at: string; day: string; first: boolean };
+/** how: seen in an email (a file, or an RFQ in the words) rather than tapped. Only a tap counts as "marked it came in". */
+export type RaceTap = { id: string; email: string; name: string; leadId: string; company: string; at: string; day: string; first: boolean; how?: "file" | "email" };
 
 async function todaysTaps(ownerId: string, tz: string, now: Date): Promise<RaceTap[]> {
   const today = localDay(tz, now).day;
@@ -285,10 +287,12 @@ async function todaysTaps(ownerId: string, tz: string, now: Date): Promise<RaceT
  * Someone tapped "RFQ came in": it counts now, not when Close is next read. It's a new company (the only kind that
  * scores, 10/26) when the lead was added to Close in the last 120 days and nobody on the team has had an RFQ from it before.
  */
-export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadId: string): Promise<RaceTap> {
-  const now = new Date();
+export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadId: string, seen?: { how: "file" | "email"; at: string }): Promise<RaceTap | null> {
+  const now = seen ? new Date(seen.at) : new Date();
   const today = localDay(d.rep.timeZone, now).day;
-  const lead = (await d.close.lead(leadId).catch(() => null)) as { display_name?: string; date_created?: string } | null;
+  const lead = (await d.close.lead(leadId).catch(() => null)) as { display_name?: string; date_created?: string; status_label?: string } | null;
+  // Same as the RFQ count: not a supplier quoting us, not a test lead.
+  if (seen && (/vendor/i.test(lead?.status_label ?? "") || /^test lead\b/i.test(lead?.display_name ?? ""))) return null;
   const added = Date.parse(String(lead?.date_created ?? ""));
   const newToUs = Number.isFinite(added) && now.getTime() - added < 120 * 86_400_000;
   let before = false;
@@ -296,7 +300,7 @@ export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadI
     const line = await rfqTimeline(t, { savedOk: true }).catch(() => null);
     if (line?.days.some((x) => x.day < today && x.accounts.some((a) => a.leadId === leadId))) { before = true; break; }
   }
-  const tap: RaceTap = { id: `${leadId}:${today}`, email: d.rep.email.toLowerCase(), name: d.rep.name, leadId, company: lead?.display_name ?? "An account", at: now.toISOString(), day: today, first: newToUs && !before };
+  const tap: RaceTap = { id: `${leadId}:${today}`, email: d.rep.email.toLowerCase(), name: d.rep.name, leadId, company: lead?.display_name ?? "An account", at: now.toISOString(), day: today, first: newToUs && !before, ...(seen ? { how: seen.how } : {}) };
   const taps = (await todaysTaps(ownerId, d.rep.timeZone, now)).filter((x) => x.id !== tap.id);
   await store.putSetting(ownerId, TAPS_KEY, [...taps, tap]);
   return tap;
@@ -311,8 +315,8 @@ function withTaps(line: RfqLine, taps: RaceTap[], today: string): RfqLine {
   if (!day && taps.length) { day = { day: today, count: 0, total: 0, newCompanies: 0, companiesTotal: 0, accounts: [] }; days.push(day); }
   for (const tap of taps) {
     const have = day!.accounts.find((a) => a.leadId === tap.leadId);
-    if (have) { have.marked = true; have.first = have.first || tap.first; }
-    else day!.accounts.push({ leadId: tap.leadId, company: tap.company, how: "marked", first: tap.first, marked: true });
+    if (have) { have.marked = have.marked || !tap.how; have.first = have.first || tap.first; }
+    else day!.accounts.push({ leadId: tap.leadId, company: tap.company, how: tap.how ?? "marked", first: tap.first, marked: !tap.how });
   }
   return { ...base, days };
 }
@@ -394,4 +398,53 @@ export async function postChat(ownerId: string, tz: string, who: { email: string
   const kept = (await raceChat(ownerId, tz)).slice(-79);
   await store.putSetting(ownerId, CHAT_KEY, [...kept, msg]);
   return [...kept, msg];
+}
+
+// ---------- RFQs by email within seconds (Walt 10/27: "it takes like 15 minutes ... for the animation to come in") ----------
+
+const SCAN_KEY = "race:emailScan";
+const SCAN_MS = 30_000;
+
+/** Time for another look at new emails? Read by every live check, so it's one store read. */
+export async function rfqScanDue(): Promise<boolean> {
+  const last = await store.cacheGet<string>(SCAN_KEY).catch(() => null);
+  return !last || Date.now() - Date.parse(last) >= SCAN_MS;
+}
+
+/**
+ * Emails that came in since the last look (one Close read every 30 seconds for the whole team): a buyer's real file,
+ * or an RFQ in the words, from a company we've emailed and not a file we sent them, is an RFQ now, the same as a tap,
+ * so every screen celebrates it within seconds. The full read later finds the same email and agrees.
+ */
+export async function scanForRfqs(team: Deps[], ownerId: string): Promise<RaceTap[]> {
+  const now = new Date();
+  const last = await store.cacheGet<string>(SCAN_KEY).catch(() => null);
+  if (last && now.getTime() - Date.parse(last) < SCAN_MS) return [];
+  await store.cacheSet(SCAN_KEY, now.toISOString(), 3600_000).catch(() => undefined);
+  const reader = team.find((t) => t.rep.closeUserId === ownerId) ?? team[0];
+  if (!reader) return [];
+  const since = new Date(Math.max(Date.parse(last ?? "") || 0, now.getTime() - 10 * 60_000) - 60_000).toISOString();
+  const { isBounce, rfqInBody } = await import("./accounts.js");
+  const mails = await reader.close.listSince<Record<string, unknown>>("email", { since, fields: "id,lead_id,user_id,direction,sender,subject,date_created,attachments,body_text", max: 300 }).catch(() => []);
+  const roster = await raceRoster(ownerId);
+  const have = new Set((await todaysTaps(ownerId, reader.rep.timeZone, now)).map((x) => x.id));
+  const found: RaceTap[] = [];
+  for (const e of mails) {
+    if (e.direction !== "incoming" || /@westgatesupply\.com/i.test(String(e.sender ?? "")) || isBounce(e as never)) continue;
+    const t = team.find((x) => x.rep.closeUserId === e.user_id);
+    if (!t || roster.excluded.includes(t.rep.email.toLowerCase())) continue;
+    const leadId = String(e.lead_id ?? "");
+    if (!leadId || have.has(`${leadId}:${localDay(t.rep.timeZone, new Date(String(e.date_created))).day}`)) continue;
+    const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f));
+    const words = !files.length && rfqInBody(e.subject as string, e.body_text as string);
+    if (!files.length && !words) continue;
+    const history = await t.close.leadEmails(leadId).catch(() => []);
+    const sent = history.filter((h) => h.direction !== "incoming" && ["sent", "outbox"].includes(String(h.status)));
+    if (!sent.length) continue; // only companies we've reached out to, like the RFQ count
+    const ours = new Set(sent.flatMap((h) => ((h.attachments as Array<{ filename?: string }> | undefined) ?? []).map((a) => (a.filename ?? "").toLowerCase())));
+    if (files.length && files.every((f) => ours.has(f.toLowerCase()))) continue; // our own quote coming back
+    const tap = await recordRfqTap(team, ownerId, t, leadId, { how: files.length ? "file" : "email", at: String(e.date_created) }).catch(() => null);
+    if (tap) { found.push(tap); have.add(tap.id); }
+  }
+  return found;
 }

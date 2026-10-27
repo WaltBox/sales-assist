@@ -97,7 +97,7 @@ export function theirFiles(a: unknown): string[] {
 }
 const hasRealAttachment = (a: unknown) => theirFiles(a).length > 0;
 /** A Westgate quote ("WG-2YT8TF_Quote.pdf"): ours, even when a customer sends it back. */
-const OUR_QUOTE = /^WG-[A-Z0-9]+.*quote/i;
+export const OUR_QUOTE = /^WG-[A-Z0-9]+.*quote/i;
 
 async function myCalls(d: Deps, since: Date, until: Date) {
   return (await d.close.calls({ since: since.toISOString(), max: 2000 }))
@@ -431,7 +431,7 @@ export async function periodDetail(d: Deps, period: Period, metric: Metric): Pro
 // first line card on. An RFQ is an email from them with a real file (not a W-9, a tax form, a credit app or a
 // cert), an ask typed into the email ("please quote the following"), or one the rep marked "RFQ came in".
 
-const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit/i;
+export const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit/i;
 const timelineCache = new Map<string, { at: number; value: RfqTimeline }>();
 export type RfqTimeline = {
   since: string; total: number; thisWeek: number; lastWeek: number;
