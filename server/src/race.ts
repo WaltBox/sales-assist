@@ -14,19 +14,22 @@ import { store } from "./store.js";
  * Worked out once a minute for the whole team and shared: every panel reads the same copy, so Close isn't asked once
  * per panel. A rep whose numbers can't be read (a Close login that's been turned off) still has a lane, flagged.
  */
-// Rebalanced 10/26 (Walt: "way too many points being issued"): RFQs are what wins. A strong day of calling without one
-// is worth about half the finish line; the finish (400) is about 8 RFQs.
-export const POINTS = { dial: 1, reached: 3, lineCard: 5, rfq: 50, firstRfq: 25 } as const;
+// Walt 10/27: the finish is 180 calls; a new-company RFQ moves you as far as 12 calls. The screens read the finish from
+// here, so changing it doesn't need an extension update.
+export const POINTS = { dial: 1, reached: 0, lineCard: 0, rfq: 12, firstRfq: 0 } as const;
+export const GOAL = 180;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
   email: string; name: string; first: string; guest?: boolean;
   dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs: number; points: number;
   week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number } | null;
   error: string | null;
+  /** The rep's Close user and time zone, so the lane can be counted live between rebuilds. */
+  rid?: string; tz?: string;
 };
 /** showAt: the moment every screen plays it, the same for everyone (10/26: "hit everyone's device at the exact same time"). */
 export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string; leadId?: string; showAt?: string };
-export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; roster: { excluded: string[] } };
+export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; goal?: number; roster: { excluded: string[] } };
 
 const ROSTER_KEY = "raceRoster";
 /** Who's left out (Walt picks: "some people call but aren't BDRs"). Work Trial starts out. */
@@ -46,23 +49,38 @@ const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: n
   x.dials * POINTS.dial + x.reached * POINTS.reached + x.lineCards * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
 
 const RACE_KEY = "race:team";
-const FRESH_MS = 20_000;
+const LOCK_KEY = "race:building";
+/** How old the shared copy gets before someone rebuilds it. One rebuild reads ~90 Close calls per rep (10/27: running one
+ * every 20s per panel, and two more after every dial, queued every Close call behind it: saves and notes took 7s each). */
+const REBUILD_MS = 2 * 60_000;
 let building: Promise<Race> | null = null;
 
-/** The race as of the last minute: the shared copy if it's fresh, else worked out now (one build at a time). */
-export async function teamRace(team: Deps[], ownerId: string, opts: { fresh?: boolean } = {}): Promise<Race> {
+/** The race as last worked out: always the shared copy when there is one, rebuilt behind it by one server at a time.
+ * RFQ taps don't wait for a rebuild: raceLive and the tap route read them straight from the store. */
+export async function teamRace(team: Deps[], ownerId: string, opts: { fresh?: boolean; force?: boolean } = {}): Promise<Race> {
   const saved = await store.cacheGet<Race>(RACE_KEY).catch(() => null);
-  // Every panel asks for a fresh read right after someone scores; one every 10 seconds is plenty for the whole team.
-  if (saved && opts.fresh && Date.now() - Date.parse(saved.at) < 10_000) return saved;
-  if (saved && !opts.fresh && Date.now() - Date.parse(saved.at) < FRESH_MS) return saved;
-  if (saved && !opts.fresh && Date.now() - Date.parse(saved.at) < 10 * FRESH_MS) {
-    // A little old: show it now, rebuild behind it.
-    if (!building) building = buildRace(team, ownerId).finally(() => { building = null; });
-    background(building, "race");
+  // force: an RFQ was just tapped (a few a day), so that lane's points go up now rather than in two minutes.
+  if (saved && !opts.force && Date.now() - Date.parse(saved.at) < REBUILD_MS) return saved;
+  if (saved) {
+    if (!building && !(await store.cacheGet<boolean>(LOCK_KEY).catch(() => null))) {
+      await store.cacheSet(LOCK_KEY, true, 90_000).catch(() => undefined);
+      building = buildRace(team, ownerId).finally(() => { building = null; void store.cacheSet(LOCK_KEY, null, 1).catch(() => undefined); });
+      background(building, "race");
+    }
     return saved;
   }
-  if (!building) building = buildRace(team, ownerId, !!opts.fresh).finally(() => { building = null; });
+  if (!building) building = buildRace(team, ownerId).finally(() => { building = null; });
   return building;
+}
+
+/** The week's numbers, saved for 15 minutes in the shared store (they're ~47 Close calls a rep; today's lane is fresher). */
+async function weekFor(t: Deps) {
+  const key = `raceweek:${t.rep.email.toLowerCase()}:${weekStart(localDay(t.rep.timeZone, new Date()).day)}`;
+  const saved = await store.cacheGet<Awaited<ReturnType<typeof periodStats>>>(key).catch(() => null);
+  if (saved) return saved;
+  const week = await periodStats(t, "week").catch(() => null);
+  if (week) await store.cacheSet(key, week, 15 * 60_000).catch(() => undefined);
+  return week;
 }
 
 /** fresh: someone just did something that scores (sent a line card, logged an RFQ), so read today's numbers now. */
@@ -78,8 +96,8 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       const today = localDay(t.rep.timeZone, now).day;
       const [day, rawLine, week] = await Promise.all([
         dayStats(t, { fresh }),
-        rfqTimeline(t, { savedOk: true, refreshAfterMs: fresh ? 30_000 : 4 * 60_000 }).catch(() => null),
-        periodStats(t, "week").catch(() => null),
+        rfqTimeline(t, { savedOk: true, refreshAfterMs: 10 * 60_000 }).catch(() => null),
+        weekFor(t),
       ]);
       const line = newCompaniesOnly(withTaps(rawLine, taps.filter((x) => x.email === t.rep.email.toLowerCase()), today));
       const todays = line?.days.find((x) => x.day === today)?.accounts ?? [];
@@ -90,7 +108,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       const weekRfqs = weekDays.reduce((n, x) => n + x.accounts.length, 0);
       const weekFirst = weekDays.reduce((n, x) => n + x.accounts.filter((a) => a.first).length, 0);
       const lane: RaceLane = {
-        email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base),
+        email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base), rid: t.rep.closeUserId, tz: t.rep.timeZone,
         week: weekOf(week ? { ...week, lineCards: week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
         error: null,
       };
@@ -116,7 +134,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
     day: localDay(team[0]?.rep.timeZone ?? "America/Chicago", now).day, at: now.toISOString(),
     lanes: [...results.map((r) => r.lane), ...guestLanes.map((g) => g.lane)].sort((a, b) => b.points - a.points || b.dials - a.dials),
     events: [...results.flatMap((r) => r.events), ...guestLanes.flatMap((g) => g.events)]
-      .map(({ leadId: _l, ...e }) => ({ ...e, showAt: shown.get(e.id) ?? showTime(now.toISOString()) })), points: POINTS, roster,
+      .map(({ leadId: _l, ...e }) => ({ ...e, showAt: shown.get(e.id) ?? showTime(now.toISOString()) })), points: POINTS, goal: GOAL, roster,
   };
   await store.cacheSet(RACE_KEY, race, 24 * 3600_000).catch(() => undefined);
   return race;
@@ -157,7 +175,7 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
     const today = localDay(tz, now).day, monday = weekStart(today);
     const dayOf = (iso: string | null | undefined) => (iso ? localDay(tz, new Date(iso)).day : "");
     const host = reps.find((r) => r.t.rep.closeUserId === t.rep.closeUserId);
-    const line = host?.line ?? newCompaniesOnly(await rfqTimeline(t, { savedOk: true, refreshAfterMs: 4 * 60_000 }).catch(() => null));
+    const line = host?.line ?? newCompaniesOnly(await rfqTimeline(t, { savedOk: true, refreshAfterMs: 10 * 60_000 }).catch(() => null));
     for (const g of guests) {
       const [list, ids] = await Promise.all([getList(t.rep.closeUserId, g.id).catch(() => null), guestLeadIds(t.rep.closeUserId, g)]);
       const marks = (list?.leads ?? []).filter((l) => l.outcome && l.outcomeAt);
@@ -305,5 +323,68 @@ export async function raceLive(ownerId: string, tz: string) {
   const events = new Map<string, RaceEvent>();
   for (const e of saved?.events ?? []) events.set(e.id, e);
   for (const x of taps) if (x.first && !events.has(x.id)) events.set(x.id, { id: x.id, email: x.email, name: x.name, company: x.company, first: true, day: x.day, showAt: showTime(x.at) });
-  return { now: now.toISOString(), day: localDay(tz, now).day, events: [...events.values()] };
+  const [live, chat] = await Promise.all([saved ? withLiveLanes(saved) : null, raceChat(ownerId, tz)]);
+  return { now: now.toISOString(), day: localDay(tz, now).day, events: [...events.values()], lanes: live?.lanes, goal: live?.goal ?? GOAL, points: POINTS, chat };
+}
+
+// ---------- every call moves the dot right away (Walt 10/27: "each time a call is made or updated") ----------
+
+type LiveCount = { dials: number; reached: number; lineCards: number };
+const liveCache = new Map<string, { at: number; value: LiveCount }>();
+const REACHED_TAPS = new Set(["reached_buyer", "got_name"]);
+
+/** Today's calls and line cards as this app saved them (each outcome tap, each send): our own store, no Close reads. */
+async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount> {
+  const hit = liveCache.get(rid);
+  if (hit && now.getTime() - hit.at < 2_500) return hit.value;
+  const { since } = localDay(tz, now);
+  const [items, sends] = await Promise.all([
+    store.listReviews<{ callId?: string | null; outcome?: string; createdAt: string }>(rid, since.toISOString()).catch(() => []),
+    store.getSetting<Record<string, { at: string }>>(rid, "lineCardSends").catch(() => null),
+  ]);
+  const calls = items.filter((it) => it.callId);
+  const value = {
+    dials: new Set(calls.map((it) => it.callId)).size,
+    reached: calls.filter((it) => REACHED_TAPS.has(String(it.outcome))).length,
+    lineCards: Object.values(sends ?? {}).filter((x) => Date.parse(x.at) >= since.getTime()).length,
+  };
+  liveCache.set(rid, { at: now.getTime(), value });
+  return value;
+}
+
+/** The saved race with each rep's lane brought up to what's been tapped since: Close and the app each miss some, so
+ * each number is the higher of the two. */
+export async function withLiveLanes(race: Race): Promise<Race> {
+  const now = new Date();
+  const lanes = await Promise.all(race.lanes.map(async (l) => {
+    if (!l.rid || !l.tz || l.error || localDay(l.tz, now).day !== race.day) return l;
+    const c = await liveCount(l.rid, l.tz, now).catch(() => null);
+    if (!c) return l;
+    const n = { dials: Math.max(l.dials, c.dials), reached: Math.max(l.reached, c.reached), lineCards: Math.max(l.lineCards, c.lineCards), rfqs: l.rfqs, firstRfqs: l.firstRfqs };
+    const points = scoreOf(n);
+    const add = points - l.points;
+    return { ...l, ...n, points, week: l.week && add > 0 ? { ...l.week, dials: l.week.dials + n.dials - l.dials, reached: l.week.reached + n.reached - l.reached, lineCards: l.week.lineCards + n.lineCards - l.lineCards, points: l.week.points + add } : l.week };
+  }));
+  return { ...race, goal: race.goal ?? GOAL, lanes: lanes.sort((a, b) => b.points - a.points || b.dials - a.dials) };
+}
+
+// ---------- the West Game chat (Walt 10/27: "kind of funny to add like a chat") ----------
+
+export type ChatMsg = { id: string; email: string; name: string; text: string; at: string; day: string };
+const CHAT_KEY = "raceChat";
+
+/** Today's messages, oldest first. Read with every live check, so a message shows on every screen within seconds. */
+export async function raceChat(ownerId: string, tz: string): Promise<ChatMsg[]> {
+  const today = localDay(tz, new Date()).day;
+  return ((await store.getSetting<ChatMsg[]>(ownerId, CHAT_KEY).catch(() => null)) ?? []).filter((m) => m.day === today);
+}
+
+export async function postChat(ownerId: string, tz: string, who: { email: string; name: string }, text: string): Promise<ChatMsg[]> {
+  const now = new Date();
+  const clean = text.replace(/\s+/g, " ").trim().slice(0, 280);
+  if (!clean) return raceChat(ownerId, tz);
+  const msg: ChatMsg = { id: `${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`, email: who.email, name: who.name, text: clean, at: now.toISOString(), day: localDay(tz, now).day };
+  const kept = (await raceChat(ownerId, tz)).slice(-79);
+  await store.putSetting(ownerId, CHAT_KEY, [...kept, msg]);
+  return [...kept, msg];
 }

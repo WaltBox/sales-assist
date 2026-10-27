@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Deps } from "../src/assistant.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
-import { POINTS, raceRoster, setRaceRoster, teamRace } from "../src/race.js";
+import { GOAL, POINTS, postChat, raceLive, raceRoster, setRaceRoster, teamRace, withLiveLanes } from "../src/race.js";
 import { store } from "../src/store.js";
 
 // The BDR race (10/25): a lane per rep, the car moves with dials, points decide the winner, RFQs are celebrated.
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
-test("points: an RFQ is worth 50 dials; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(POINTS.rfq, 50 * POINTS.dial);
+test("points: 180 calls finishes, an RFQ moves you 12 calls; the roster leaves people out; a broken Close login is a flagged lane", async () => {
+  assert.equal(GOAL, 180 * POINTS.dial);
+  assert.equal(POINTS.rfq, 12 * POINTS.dial);
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
   const ok = new FakeClose();
@@ -107,4 +108,26 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   const c = race.lanes.find((l) => l.first === "Chase")!;
   assert.deepEqual([c.rfqs, c.firstRfqs], [1, 1], "the tap counts before Close is read again; the old customer doesn't");
   assert.equal(race.events.find((e) => e.company === "Brand New Co")!.showAt, live.events[0].showAt, "the full copy keeps the same showtime");
+});
+
+test("every tapped call moves the dot before Close is read again, and the chat reaches every screen (10/27)", async () => {
+  const ownerId = "user_live_owner";
+  const team: Deps[] = [{ close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", ownerId) }] as never;
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, ownerId);
+  const before = race.lanes[0];
+  for (const [i, outcome] of ["voicemail", "reached_buyer", "no_answer"].entries()) {
+    await store.putReview({ id: `live_${i}`, repId: ownerId, leadId: `lead_live_${i}`, callId: `acti_live_${i}`, state: "saved", outcome, createdAt: new Date().toISOString() });
+  }
+  await new Promise((r) => setTimeout(r, 2600)); // past the few-second count cache
+  const after = (await withLiveLanes(race)).lanes[0];
+  assert.equal(after.dials, Math.max(before.dials, 3));
+  assert.equal(after.points, before.points + (after.dials - before.dials) * POINTS.dial);
+  const live = await raceLive(ownerId, "America/Chicago");
+  assert.equal(live.lanes?.[0].dials, after.dials, "the live check carries the lanes");
+  assert.equal(live.goal, GOAL);
+  await postChat(ownerId, "America/Chicago", { email: "walt@westgatesupply.com", name: "Walt Boxwell" }, "  Chase   is cooked  ");
+  const chat = (await raceLive(ownerId, "America/Chicago")).chat;
+  assert.equal(chat.at(-1)?.text, "Chase is cooked");
+  assert.equal(chat.at(-1)?.name, "Walt Boxwell");
 });

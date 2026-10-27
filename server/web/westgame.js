@@ -19,8 +19,8 @@
     for (const c of [].concat(kids)) if (c != null && c !== false) n.append(c);
     return n;
   };
-  // The finish line (Walt 10/26: "should take like 8 RFQs"). Fixed, so getting there means a big day; past it, you stay on the flag.
-  const GOAL = 400;
+  // The finish line (Walt 10/27: 180 calls). The server says where it is; this is for an older server.
+  const GOAL = 180;
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -304,6 +304,7 @@
       if (g.seen.day !== day) g.seen = { day, ids: [] };
       return g.seen;
     }
+    const goal = () => (g.race && g.race.goal) || GOAL;
     const markSeen = (id) => { if (!g.seen.ids.includes(id)) { g.seen.ids.push(id); opts.store.set(SEEN, g.seen); } };
 
     async function load(fresh) {
@@ -333,6 +334,12 @@
       try { r = await opts.live(); } catch { return; }
       const t1 = Date.now();
       clock = Date.parse(r.now) - (t0 + t1) / 2;
+      // Everyone's calls as they're made (Walt 10/27): the dots move on this check, not the next full load.
+      if (r.lanes && JSON.stringify(r.lanes) !== JSON.stringify(g.race.lanes)) {
+        g.race = { ...g.race, lanes: r.lanes, goal: r.goal || g.race.goal, points: r.points || g.race.points };
+        if (!g.drag && !g.party) render();
+      }
+      if (r.chat) gotChat(r.chat);
       await seenFor(r.day, r.events);
       const serverNow = Date.now() + clock;
       for (const e of r.events) {
@@ -345,6 +352,59 @@
     }
     // Two at once take turns.
     function play(e) { if (g.party) queue.push(e); else celebrate(e, 1); }
+
+    // ---------- the chat (Walt 10/27): one box that survives redraws, so typing isn't wiped every few seconds ----------
+    g.chat = [];
+    g.chatSeen = null; // the last message this screen has shown
+    function gotChat(msgs) {
+      const last = msgs[msgs.length - 1];
+      const before = g.chatSeen;
+      const changed = msgs.length !== g.chat.length || (last && last.id) !== (g.chat[g.chat.length - 1] || {}).id;
+      g.chat = msgs;
+      if (!changed) return;
+      if (before === null) { g.chatSeen = last ? last.id : ""; fillChat(); return; }
+      const fresh = msgs.slice(msgs.findIndex((m) => m.id === before) + 1).filter((m) => m.email !== g.race.you);
+      g.chatSeen = last ? last.id : "";
+      fillChat();
+      // Closed: the newest line takes over the bar's words for a few seconds.
+      if (fresh.length && !g.open) {
+        const m = fresh[fresh.length - 1];
+        clearTimeout(g.toastTimer);
+        g.toast = m;
+        g.toastTimer = setTimeout(() => { g.toast = null; if (!g.drag && !g.party) render(); }, 7000);
+        if (!g.drag && !g.party) render();
+      }
+    }
+    function chatBox() {
+      if (g.chatEl) return g.chatEl;
+      const msgs = h("div", { class: "wg-msgs", role: "log", "aria-live": "polite" });
+      const input = h("input", { class: "wg-input", type: "text", maxlength: "280", placeholder: "Talk some trash…", "aria-label": "Message the team" });
+      const send = h("button", { class: "wg-send", type: "submit", text: "Send" });
+      const form = h("form", { class: "wg-say", onsubmit: async (e) => {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (!text || !opts.chat) return;
+        input.value = "";
+        send.disabled = true;
+        try { const r = await opts.chat(text); if (r && r.chat) { g.chatSeen = (r.chat[r.chat.length - 1] || {}).id || ""; g.chat = r.chat; fillChat(true); } }
+        catch { input.value = text; }
+        finally { send.disabled = false; input.focus(); }
+      } }, [input, send]);
+      g.chatEl = h("section", { class: "wg-chat" }, [h("p", { class: "wg-label", text: "Chat" }), msgs, form]);
+      fillChat();
+      return g.chatEl;
+    }
+    function fillChat(toBottom) {
+      if (!g.chatEl) return;
+      const box = g.chatEl.querySelector(".wg-msgs");
+      const atBottom = toBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+      const time = (at) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      box.replaceChildren(...(g.chat.length ? g.chat.map((m) => h("div", { class: `wg-msg${g.race && m.email === g.race.you ? " me" : ""}` }, [
+        h("b", { text: (m.name || "").split(/\s+/)[0] }), h("span", { text: m.text }), h("small", { text: time(m.at) }),
+      ])) : [h("p", { class: "wg-muted", text: "Quiet in here. Say something." })]));
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    }
+    const typing = () => !!(g.chatEl && g.chatEl.contains(document.activeElement));
 
     /** The lanes, with your own calls counted live. */
     function lanes() {
@@ -422,10 +482,10 @@
         h("table", {}, [
           h("tr", {}, [h("th", {}), h("th", { text: "Today" }), h("th", { text: "Week" }), h("th", { text: "Pts" })]),
           tr("Calls", full.dials, w && w.dials, `×${r.points.dial}`),
-          tr("Conversations", full.reached, w && w.reached, `×${r.points.reached}`),
-          tr("Line cards", full.lineCards, w && w.lineCards, `×${r.points.lineCard}`),
+          tr("Conversations", full.reached, w && w.reached, r.points.reached ? `×${r.points.reached}` : ""),
+          tr("Line cards", full.lineCards, w && w.lineCards, r.points.lineCard ? `×${r.points.lineCard}` : ""),
           tr("RFQs", full.rfqs, w && w.rfqs, `×${r.points.rfq}`),
-          full.firstRfqs ? tr("First RFQs", full.firstRfqs, null, `+${r.points.firstRfq}`) : null,
+          full.firstRfqs && r.points.firstRfq ? tr("First RFQs", full.firstRfqs, null, `+${r.points.firstRfq}`) : null,
           h("tr", { class: "wg-total" }, [h("td", { text: "Points" }), h("td", { text: String(full.points) }), h("td", { text: w ? String(w.points) : "–" }), h("td")]),
         ]),
       ]);
@@ -434,7 +494,7 @@
     function content() {
       const r = g.race;
       const ls = lanes();
-      const max = g.week ? GOAL * 5 : GOAL;
+      const max = g.week ? goal() * 5 : goal();
       const tab = (on, text, week) => h("button", { class: `wg-tab${on ? " on" : ""}`, text, onclick: () => { g.week = week; render(); } });
       const today = r.events.filter((e) => e.day === r.day);
       return [
@@ -443,12 +503,13 @@
           h("div", { class: "wg-tabs" }, [tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
         ]),
         h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
+        opts.chat ? chatBox() : null,
         h("section", { class: "wg-feed" }, [
           h("p", { class: "wg-label", text: today.length ? `RFQs today · ${today.length}` : "RFQs today" }),
           today.length ? h("ul", {}, today.slice().reverse().map((e) => h("li", {}, [h("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? h("span", { class: "wg-tag good", text: "First RFQ" }) : null])))
             : h("p", { class: "wg-muted", text: "None yet. The first one sets off something stupid on every screen." }),
         ]),
-        h("p", { class: "wg-muted", text: `Points: call ${r.points.dial} · conversation ${r.points.reached} · line card ${r.points.lineCard} · RFQ ${r.points.rfq} · first RFQ from an account +${r.points.firstRfq}. Starts over every morning.` }),
+        h("p", { class: "wg-muted", text: r.points.reached || r.points.lineCard ? `Points: call ${r.points.dial} · conversation ${r.points.reached} · line card ${r.points.lineCard} · RFQ ${r.points.rfq} · first RFQ from an account +${r.points.firstRfq}. Starts over every morning.` : `Every call moves you one step; a new company's RFQ moves you ${Math.round(r.points.rfq / (r.points.dial || 1))}. ${goal()} calls finishes the day. Starts over every morning.` }),
         r.owner && opts.webApp ? h("div", { class: "wg-links" }, [h("a", { href: opts.webApp, target: "_blank", rel: "noopener", text: "Pick who plays (web app)" })]) : null,
       ];
     }
@@ -466,7 +527,7 @@
       const closed = g.party ? PARTY : MIN;
       sheet.style.height = g.open ? `${maxH()}px` : `${closed}px`;
       document.body.style.setProperty("--rb", `${closed}px`);
-      const max = GOAL;
+      const max = goal();
       // The closed bar is a little scoreboard: your place, the whole team on one track, your points.
       const at = ls.findIndex((l) => l.email === g.race.you);
       const mine = at >= 0 ? ls[at] : ls[0];
@@ -480,7 +541,7 @@
           h("span", { class: "wg-mid" }, [
             h("span", { class: "wg-bar" }, [
               h("span", { class: "wg-brand", text: "West Game" }),
-              h("span", { class: "wg-sum", text: blurb(ls) }),
+              g.toast ? h("span", { class: "wg-sum wg-said" }, [h("b", { text: `${(g.toast.name || "").split(/\s+/)[0]}: ` }), g.toast.text]) : h("span", { class: "wg-sum", text: blurb(ls) }),
             ]),
             h("span", { class: "wg-mini" }, [
               h("i", { class: "wg-trail", style: `width: calc(${pctOf(mine, max)}% - ${pctOf(mine, max) / 100} * var(--wg-dot) + var(--wg-dot) / 2)` }),
@@ -493,6 +554,8 @@
       ]);
       grab.addEventListener("pointerdown", down);
       const old = sheet.querySelector(".wg-body");
+      // Typing in the chat: leave the body alone (moving the box would drop the cursor); just swap the bar.
+      if (typing() && old && !g.party) { if (sheet.firstChild !== grab) sheet.replaceChild(grab, sheet.firstChild); g.back = false; return; }
       const scroll = old ? old.scrollTop : 0;
       const body = h("div", { class: "wg-body" }, g.open || sheet.classList.contains("peek") ? content() : []);
       // While an RFQ is being celebrated, the party takes the bar's place. The same element stays put across redraws,

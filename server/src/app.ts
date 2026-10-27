@@ -33,7 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
-import { raceLive, raceRoster, recordRfqTap, setRaceRoster, teamRace } from "./race.js";
+import { postChat, raceLive, raceRoster, recordRfqTap, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -479,7 +479,7 @@ export function createApp(appDeps: AppDeps) {
   };
   app.get("/api/race", authed, route(async (req, d) => {
     const { team, ownerId } = await raceTeam(d);
-    const race = await teamRace(team, ownerId, { fresh: req.query.fresh === "1" });
+    const race = await withLiveLanes(await teamRace(team, ownerId));
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
   }));
@@ -492,13 +492,22 @@ export function createApp(appDeps: AppDeps) {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
     const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
     if (!owner) throw new GuestError(503, "West Game isn't available right now.");
-    const race = await teamRace(team, owner.rep.closeUserId, { fresh: req.query.fresh === "1" });
+    const race = await withLiveLanes(await teamRace(team, owner.rep.closeUserId));
     return { ...race, you: `guest:${g.guest.id}`, owner: false, roster: { excluded: [] } };
   }));
   // The day's RFQs with the moment each one plays, read every few seconds by every screen so they celebrate together.
   app.get("/api/race/live", authed, route(async (_req, d) => {
     const o = await liveOwnerInfo();
     return raceLive(o.id, d.rep.timeZone);
+  }));
+  // The West Game chat: anyone playing can post; everyone sees it on their next live check.
+  app.post("/api/race/chat", authed, route(async (req, d) => {
+    const o = await liveOwnerInfo();
+    return { chat: await postChat(o.id, d.rep.timeZone, { email: normalizeEmail(d.rep.email), name: d.rep.name }, z.string().max(1000).parse(req.body?.text)) };
+  }));
+  app.post("/api/guest/:token/race/chat", guestRoute(async (req, g) => {
+    const o = await liveOwnerInfo();
+    return { chat: await postChat(o.id, o.tz, { email: `guest:${g.guest.id}`, name: g.guest.name }, z.string().max(1000).parse(req.body?.text)) };
   }));
   // Who's in West Game, for the web app's Team page (Walt 10/25: "in the application, not the Chrome extension").
   app.get("/api/race/roster", authed, route(async (_req, d) => {
@@ -760,7 +769,7 @@ export function createApp(appDeps: AppDeps) {
     try {
       const { team, ownerId } = await raceTeam(d);
       await recordRfqTap(team, ownerId, d, id);
-      background(teamRace(team, ownerId, { fresh: true }).then(() => undefined), "race after RFQ tap");
+      background(teamRace(team, ownerId, { force: true }).then(() => undefined), "race after RFQ tap");
     } catch (e) { console.error(`[rfq tap ${id}]`, (e as Error).message); }
     return r;
   }));

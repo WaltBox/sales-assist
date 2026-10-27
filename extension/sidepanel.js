@@ -546,6 +546,7 @@ function startGame() {
   game = WestGame.create({
     load: (fresh) => api(`/api/race${fresh ? "?fresh=1" : ""}`),
     live: () => api("/api/race/live"),
+    chat: (text) => api("/api/race/chat", { text }),
     liveDials: () => (statsFresh() ? stats.dials : null),
     store: gameStore,
     webApp: `${settings.server}/#team`,

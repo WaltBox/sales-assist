@@ -320,3 +320,21 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
   .wg-ribbon { clip-path: none; }
   .wg-flashframe { display: none; }
 }
+
+/* The chat (10/27): a short scrolling log and one line to type in, in the lanes' ink-and-paper look. */
+.wg-chat { margin: 16px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.wg-msgs { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding: 9px 10px; background: #fff; border: 1.5px solid var(--wg-ink); box-shadow: 3px 3px 0 var(--wg-ink); }
+.wg-msgs .wg-muted { margin: 0; }
+.wg-msg { display: flex; align-items: baseline; gap: 6px; font-size: 13px; line-height: 1.35; color: var(--wg-ink); }
+.wg-msg b { flex: none; color: var(--wg-navy); }
+.wg-msg.me b { color: var(--wg-red); }
+.wg-msg span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wg-msg small { flex: none; font-size: 11px; color: var(--wg-muted); }
+.wg-say { display: flex; gap: 6px; margin-top: 4px; }
+.wg-input { flex: 1; min-width: 0; padding: 8px 10px; border: 1.5px solid var(--wg-ink); border-radius: 0; background: #fff; color: var(--wg-ink); font: inherit; font-size: 13px; }
+.wg-input:focus { outline: 2px solid var(--wg-red); outline-offset: 1px; }
+.wg-send { flex: none; padding: 8px 14px; border: 1.5px solid var(--wg-ink); border-radius: 0; background: var(--wg-red); color: #fff; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; box-shadow: 2px 2px 0 var(--wg-ink); }
+.wg-send:disabled { opacity: .6; }
+/* a new message on the closed bar */
+.wg-said { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-said b { color: var(--wg-gold); }

@@ -495,6 +495,7 @@
       S.game = WestGame.create({
         load: (fresh) => call(`/race${fresh ? "?fresh=1" : ""}`),
         live: () => call("/race/live"),
+        chat: (text) => call("/race/chat", { text }),
         liveDials: () => (S.list ? S.list.leads.filter((l) => l.outcome && l.outcomeAt && new Date(l.outcomeAt).toDateString() === today()).length : null),
         store: { get: async (k) => { try { return JSON.parse(localStorage.getItem(`${k}:${token}`) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(`${k}:${token}`, JSON.stringify(v)); } catch {} } },
       });
