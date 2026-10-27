@@ -30,7 +30,7 @@ import { formatPhone } from "./rules.js";
 import { myLeads } from "./myleads.js";
 import { EXTENSION_ZIP, packedFiles, packedVersion } from "./extension.js";
 import { guardSending, SendingError, sendingAccount, sendThrough } from "./sending.js";
-import { FollowUpError, LINE_CARD_URL, SITE_URL, writeFollowUp } from "./followup.js";
+import { FollowUpError, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { postChat, raceLive, raceRoster, recordRfqTap, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
@@ -72,7 +72,8 @@ export function createApp(appDeps: AppDeps) {
     if (kind !== "card" && kind !== "site") { res.status(404).end(); return; }
     await logLinkClick(String(req.params.token), kind, req.header("user-agent") ?? null).catch(() => null);
     res.setHeader("Cache-Control", "private, max-age=0, no-store");
-    res.redirect(302, kind === "card" ? LINE_CARD_URL : SITE_URL);
+    // The card is the current one kept here (10/27: the website's copy was the old one-pager).
+    res.redirect(302, kind === "card" ? "/brand/westgate-line-card.pdf" : SITE_URL);
   });
   app.get("/m/:token/:name", async (req, res) => {
     const name = String(req.params.name);

@@ -338,3 +338,9 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 /* a new message on the closed bar */
 .wg-said { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wg-said b { color: var(--wg-gold); }
+/* who the RFQs came from, under a lane's numbers (10/27) */
+.wg-from { margin-top: 10px; }
+.wg-from ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.wg-from li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--wg-line); font-size: 13px; }
+.wg-from li span { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.wg-from li small { flex: none; color: var(--wg-muted); }

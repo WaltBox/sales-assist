@@ -14,9 +14,9 @@ import { store } from "./store.js";
  * Worked out once a minute for the whole team and shared: every panel reads the same copy, so Close isn't asked once
  * per panel. A rep whose numbers can't be read (a Close login that's been turned off) still has a lane, flagged.
  */
-// Walt 10/27: the finish is 180 calls; a new-company RFQ moves you as far as 12 calls. The screens read the finish from
-// here, so changing it doesn't need an extension update.
-export const POINTS = { dial: 1, reached: 0, lineCard: 0, rfq: 12, firstRfq: 0 } as const;
+// Walt 10/27: the finish is 180 calls; a new-company RFQ moves you as far as 12 calls, a line card 3. The screens read
+// the finish and the points from here, so changing them doesn't need an extension update.
+export const POINTS = { dial: 1, reached: 0, lineCard: 3, rfq: 12, firstRfq: 0 } as const;
 export const GOAL = 180;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
@@ -24,6 +24,8 @@ export type RaceLane = {
   dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs: number; points: number;
   week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number } | null;
   error: string | null;
+  /** This week's RFQs that scored, newest first: who they came from (Walt 10/27: "show who the RFQ came from"). */
+  rfqFrom?: Array<{ leadId: string; company: string; day: string }>;
   /** The rep's Close user and time zone, so the lane can be counted live between rebuilds. */
   rid?: string; tz?: string;
 };
@@ -109,6 +111,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       const weekFirst = weekDays.reduce((n, x) => n + x.accounts.filter((a) => a.first).length, 0);
       const lane: RaceLane = {
         email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base), rid: t.rep.closeUserId, tz: t.rep.timeZone,
+        rfqFrom: weekDays.flatMap((x) => x.accounts.map((a) => ({ leadId: a.leadId, company: a.company, day: x.day }))).sort((a, b) => b.day.localeCompare(a.day)),
         week: weekOf(week ? { ...week, lineCards: week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
         error: null,
       };
@@ -191,7 +194,8 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
       const email = `guest:${g.id}`;
       out.push({
         lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
-          week: weekOf(wk, base, weekRfqs, weekFirst), error: null },
+          week: weekOf(wk, base, weekRfqs, weekFirst), error: null,
+          rfqFrom: (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => ids.has(a.leadId)).map((a) => ({ leadId: a.leadId, company: a.company, day: x.day }))).sort((a, b) => b.day.localeCompare(a.day)) },
         events: todays.map((a) => ({ id: `${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
       });
       // Their line cards went out from the rep's account: they count for the guest, not the rep.
@@ -203,6 +207,8 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
         l.rfqs -= todays.length; l.firstRfqs -= base.firstRfqs; l.points = scoreOf(l);
         if (l.week) { l.week.rfqs = Math.max(0, l.week.rfqs - weekRfqs); l.week.points = scoreOf(l.week); }
         host.events = host.events.filter((e) => !(e.leadId && gone.has(e.leadId)));
+        const theirs = new Set(weekMine.map((a) => a.leadId));
+        l.rfqFrom = l.rfqFrom?.filter((c) => !theirs.has(c.leadId));
       }
     }
   }
@@ -250,6 +256,7 @@ async function oneOwnerPerRfq(results: RepResult[]) {
     l.rfqs = Math.max(0, l.rfqs - goneToday.length);
     l.firstRfqs = Math.max(0, l.firstRfqs - goneToday.filter((a) => a.first).length);
     l.points = scoreOf(l);
+    l.rfqFrom = l.rfqFrom?.filter((c) => !keys.has(`${c.leadId}|${c.day}`));
     if (l.week) {
       const w = l.week as typeof l.week & { firstRfqs?: number };
       w.rfqs = Math.max(0, w.rfqs - gone.length);

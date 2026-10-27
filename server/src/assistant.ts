@@ -3,7 +3,9 @@ import { structured } from "./claude.js";
 import { buildHistory, type History } from "./history.js";
 import { background } from "./background.js";
 import { store } from "./store.js";
-import { config } from "./config.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { config, ROOT } from "./config.js";
 import { loadLeadContext, renderContext, type LeadContext, type RepInfo, type RepStats } from "./context.js";
 import { formatPhone, emailMatchesDomain, fillsInName, formatLocal, isBackwardsMove, isoWithOffset, localParts, samePerson, BUSINESS_START_MIN, LAST_CALL_MIN, zonedTime } from "./rules.js";
 import {
@@ -992,7 +994,7 @@ export function resetLineCardCache() {
  * The line card (and the rep's contact card) for an email. The PDF sits on Walt's email template, and Close won't let
  * anyone else attach a file Walt's account uploaded (10/23: "You do not have access to this file" on every teammate
  * send, after 10/21 had them read the template through Walt's account). Close's file links can't be downloaded
- * through the API either, so a teammate's copy of the line card comes from the website (the same PDF) and is uploaded
+ * through the API either, so a teammate's copy of the line card comes from web/brand (the same PDF) and is uploaded
  * into their own account. Close keeps an upload 24 hours; the copy is redone every 12. Anything else on the template
  * (a contact card) only goes with Walt's own emails.
  */
@@ -1011,9 +1013,7 @@ export async function lineCardAttachments(d: Deps): Promise<Attachments> {
       const card = template.find((a) => /line.?card/i.test(a.filename ?? "") && /\.pdf$/i.test(a.filename ?? ""));
       if (!card) attachments = [];
       else {
-        const res = await fetch(LINE_CARD_PUBLIC_URL, { signal: AbortSignal.timeout(20000) });
-        if (!res.ok) throw new Error(`Couldn't read the line card from the website (${res.status}).`);
-        attachments = [await c.uploadFile(card.filename, "application/pdf", Buffer.from(await res.arrayBuffer()))];
+        attachments = [await c.uploadFile(card.filename, "application/pdf", await readFile(LINE_CARD_FILE))];
       }
     }
     lineCards.set(key, { at: Date.now(), attachments });
@@ -1023,8 +1023,9 @@ export async function lineCardAttachments(d: Deps): Promise<Attachments> {
   return job;
 }
 const normalizeEmailAddr = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
-/** The same line card PDF the template carries, on the website (what the bumps link to). */
-const LINE_CARD_PUBLIC_URL = "https://westgatesupply.com/brand/westgate-line-card.pdf";
+/** The same line card PDF the template carries (the 4-page one, 10/27), kept here so teammates' copies don't wait on the
+ * website. Replace this file and the template's PDF together. */
+const LINE_CARD_FILE = path.resolve(ROOT, "web", "brand", "westgate-line-card.pdf");
 /** A contact card (.vcf) in the shared template is one rep's (10/19): it goes out only with the rep it names. */
 export function ownContactCard<T extends { filename?: string | null }>(attachments: T[], repName: string): T[] {
   const parts = repName.toLowerCase().split(/\s+/).filter((p) => p.length > 1);

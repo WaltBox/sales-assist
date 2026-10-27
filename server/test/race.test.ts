@@ -79,6 +79,8 @@ test("West Game: an RFQ two people both have goes to the one who marked it came 
   const race = await teamRace(team, walt, { fresh: true });
   const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!;
   assert.deepEqual([c.rfqs, c.firstRfqs, w.rfqs, w.firstRfqs], [1, 1, 0, 0]);
+  assert.deepEqual(c.rfqFrom?.map((x) => x.company), ["Haley Contracting"], "clicking Chase shows who it came from");
+  assert.deepEqual(w.rfqFrom ?? [], [], "and it's off Walt's list");
   assert.equal(race.events.filter((e) => e.company === "Haley Contracting").length, 1, "celebrated once");
   assert.equal(race.events.find((e) => e.company === "Haley Contracting")!.email, "chase@westgatesupply.com");
 });

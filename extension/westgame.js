@@ -488,6 +488,24 @@
           full.firstRfqs && r.points.firstRfq ? tr("First RFQs", full.firstRfqs, null, `+${r.points.firstRfq}`) : null,
           h("tr", { class: "wg-total" }, [h("td", { text: "Points" }), h("td", { text: String(full.points) }), h("td", { text: w ? String(w.points) : "–" }), h("td")]),
         ]),
+        rfqList(full),
+      ]);
+    }
+
+    /** Who each RFQ came from (Walt 10/27): today's first, then the rest of the week. */
+    function rfqList(l) {
+      const r = g.race;
+      const seen = new Set();
+      const rows = [
+        ...r.events.filter((e) => e.email === l.email && e.day === r.day).map((e) => ({ company: e.company, day: e.day })),
+        ...(l.rfqFrom || []),
+      ].filter((x) => { const k = `${x.company}|${x.day}`; if (seen.has(k)) return false; seen.add(k); return true; });
+      if (!rows.length && !l.rfqs) return null;
+      const when = (day) => day === r.day ? "Today" : new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "short" });
+      return h("div", { class: "wg-from" }, [
+        h("p", { class: "wg-label", text: "RFQs from" }),
+        rows.length ? h("ul", {}, rows.map((x) => h("li", {}, [h("span", { text: x.company || "An account" }), h("small", { text: when(x.day) })])))
+          : h("p", { class: "wg-muted", text: "Counted, the names show up in a minute." }),
       ]);
     }
 
@@ -509,7 +527,7 @@
           today.length ? h("ul", {}, today.slice().reverse().map((e) => h("li", {}, [h("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? h("span", { class: "wg-tag good", text: "First RFQ" }) : null])))
             : h("p", { class: "wg-muted", text: "None yet. The first one sets off something stupid on every screen." }),
         ]),
-        h("p", { class: "wg-muted", text: r.points.reached || r.points.lineCard ? `Points: call ${r.points.dial} · conversation ${r.points.reached} · line card ${r.points.lineCard} · RFQ ${r.points.rfq} · first RFQ from an account +${r.points.firstRfq}. Starts over every morning.` : `Every call moves you one step; a new company's RFQ moves you ${Math.round(r.points.rfq / (r.points.dial || 1))}. ${goal()} calls finishes the day. Starts over every morning.` }),
+        h("p", { class: "wg-muted", text: `Points: ${[["call", r.points.dial], ["conversation", r.points.reached], ["line card", r.points.lineCard], ["new company's RFQ", r.points.rfq]].filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ")}. ${goal()} points finishes the day. Starts over every morning.` }),
         r.owner && opts.webApp ? h("div", { class: "wg-links" }, [h("a", { href: opts.webApp, target: "_blank", rel: "noopener", text: "Pick who plays (web app)" })]) : null,
       ];
     }

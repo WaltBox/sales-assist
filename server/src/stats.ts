@@ -528,12 +528,18 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     add(String(n.lead_id), String(n.date_created), "marked");
     markedKeys.add(`${n.lead_id}|${localDay(tz, new Date(String(n.date_created))).day}`);
   }
-  // Or you set the lead to "RFQ Received" in Close yourself (BCS 9/29), or straight to Quoted. Only for leads with
-  // no other sign of an RFQ: the app's own status moves (and the 9/29 catch-up) follow RFQs already counted above.
+  // Or you set the lead to "RFQ Received" in Close yourself (BCS 9/29: it came by phone). Only for leads with no other
+  // sign of an RFQ. Quoted on its own doesn't count (10/27: Liam caught Potts Welding up to Quoted today for a quote he
+  // sent last week, and scored a new RFQ for today); the RFQ before a quote is what counts, from its file, email or tap.
   const counted = new Set([...found.values()].map((f) => f.leadId));
+  const statusOnly = new Set<string>(); // lead|day keys found only from a status change
   for (const c of changes) {
     if (c.date_created < start || counted.has(c.lead_id)) continue;
-    if (c.new_status_label === "RFQ Received" || (c.new_status_label === "Quoted" && c.old_status_label !== "RFQ Received")) { add(c.lead_id, c.date_created, "marked"); counted.add(c.lead_id); }
+    if (c.new_status_label === "RFQ Received") {
+      const k = `${c.lead_id}|${localDay(tz, new Date(c.date_created)).day}`;
+      if (!found.has(k)) statusOnly.add(k);
+      add(c.lead_id, c.date_created, "marked"); counted.add(c.lead_id);
+    }
   }
 
   const names = await leadNames(d, [...found.values()].map((f) => f.leadId));
@@ -546,6 +552,8 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     if (l) { statusOf.set(id, l.status_label ?? ""); addedOf.set(id, String((l as { date_created?: string }).date_created ?? "")); }
   }));
   for (const [k, f] of found) if (/^test lead\b/i.test(names.get(f.leadId) ?? "") || /vendor/i.test(statusOf.get(f.leadId) ?? "")) found.delete(k);
+  // A status set by mistake and changed back: the lead isn't at RFQ Received or past it any more, so it doesn't count.
+  for (const k of statusOnly) if (!/rfq|quot|won|order|customer|\bpo\b/i.test(statusOf.get(found.get(k)?.leadId ?? "") ?? "")) found.delete(k);
   // Each company's first RFQ day: that's a new customer coming in, the number Walt wants to see grow.
   const firstDay = new Map<string, string>();
   for (const f of found.values()) {
