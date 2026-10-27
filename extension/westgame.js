@@ -347,11 +347,18 @@
         const at = Date.parse(e.showAt || r.now);
         if (serverNow - at > 60_000) { markSeen(e.id); continue; } // opened the panel late: it's old news
         waiting.add(e.id);
-        setTimeout(() => { waiting.delete(e.id); markSeen(e.id); play(e); load(true); }, Math.max(0, at - serverNow));
+        setTimeout(() => { waiting.delete(e.id); if (g.seen.ids.includes(e.id)) return; markSeen(e.id); play(e); load(true); }, Math.max(0, at - serverNow));
       }
     }
     // Two at once take turns.
     function play(e) { if (g.party) queue.push(e); else celebrate(e, 1); }
+    // The person who tapped "RFQ came in" sees it the moment the save comes back (10/27), not on the next check.
+    function playNow(e) {
+      if (g.seen && g.seen.ids.includes(e.id)) return;
+      if (g.seen) markSeen(e.id);
+      play(e);
+      load(true);
+    }
 
     // ---------- the chat (Walt 10/27): one box that survives redraws, so typing isn't wiped every few seconds ----------
     g.chat = [];
@@ -509,6 +516,27 @@
       ]);
     }
 
+    /** The week at a glance (Walt 10/27): ranked by the week's points, with the days each person won. */
+    function leaderboard(ls) {
+      const r = g.race;
+      const days = r.weekDays || [];
+      const wins = (email) => days.filter((d) => d.winner && d.winner.email === email).length;
+      const dayName = (day) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "short" });
+      const cell = (text, cls) => h("td", { class: cls || "", text: String(text) });
+      return h("section", { class: "wg-board-week" }, [
+        h("table", {}, [
+          h("tr", {}, ["", "", "Pts", "Calls", "Cards", "RFQs", "Days"].map((t) => h("th", { text: t }))),
+          ...ls.map((l, i) => h("tr", { class: `${l.email === r.you ? "me" : ""}${i === 0 && l.points > 0 ? " top" : ""}` }, [
+            cell(i + 1, "wg-rank"),
+            h("td", { class: "wg-who" }, [l.email === r.you ? `${firstName(l)} (you)` : l.name, l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null]),
+            cell(l.points, "wg-num strong"), cell(l.dials, "wg-num"), cell(l.lineCards, "wg-num"), cell(l.rfqs, "wg-num"),
+            cell(wins(l.email) || "–", "wg-num"),
+          ])),
+        ]),
+        days.length ? h("p", { class: "wg-days" }, days.map((d) => h("span", {}, [h("b", { text: dayName(d.day) }), d.winner ? ` ${(d.winner.name || "").split(/\s+/)[0]} ${d.winner.points}` : " –"]))) : null,
+      ]);
+    }
+
     function content() {
       const r = g.race;
       const ls = lanes();
@@ -520,6 +548,7 @@
           h("h2", { class: "wg-title", text: g.week ? "This week's competition" : "Today's competition" }),
           h("div", { class: "wg-tabs" }, [tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
         ]),
+        g.week ? leaderboard(ls) : null,
         h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
         opts.chat ? chatBox() : null,
         h("section", { class: "wg-feed" }, [
@@ -676,7 +705,7 @@
     load(false);
     setInterval(() => load(false), opts.pollMs || 20_000);
     if (opts.live) setInterval(live, 3000);
-    return { render, load, celebrate, get race() { return g.race; } };
+    return { render, load, celebrate, playNow, get race() { return g.race; } };
   }
 
   window.WestGame = { create };

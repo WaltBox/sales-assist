@@ -480,7 +480,7 @@ export function createApp(appDeps: AppDeps) {
   };
   app.get("/api/race", authed, route(async (req, d) => {
     const { team, ownerId } = await raceTeam(d);
-    const race = await withLiveLanes(await teamRace(team, ownerId));
+    const race = await withLiveLanes(await teamRace(team, ownerId), { ownerId });
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
   }));
@@ -507,7 +507,7 @@ export function createApp(appDeps: AppDeps) {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
     const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
     if (!owner) throw new GuestError(503, "West Game isn't available right now.");
-    const race = await withLiveLanes(await teamRace(team, owner.rep.closeUserId));
+    const race = await withLiveLanes(await teamRace(team, owner.rep.closeUserId), { ownerId: owner.rep.closeUserId });
     return { ...race, you: `guest:${g.guest.id}`, owner: false, roster: { excluded: [] } };
   }));
   // The day's RFQs with the moment each one plays, read every few seconds by every screen so they celebrate together.
@@ -780,14 +780,17 @@ export function createApp(appDeps: AppDeps) {
   }));
   app.post("/api/leads/:leadId/rfq-received", authed, route(async (req, d) => {
     const id = leadId(req);
-    const r = await markRfqReceived(d, id, typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null);
     // West Game counts it now and every screen celebrates it together (10/26), without waiting on the next Close read.
-    try {
+    // The tap is saved first, alongside the Close writes rather than after them (10/27: "takes at least 30 seconds").
+    const tapping = (async () => {
       const { team, ownerId } = await raceTeam(d);
-      await recordRfqTap(team, ownerId, d, id);
+      const tap = await recordRfqTap(team, ownerId, d, id);
       background(teamRace(team, ownerId, { force: true }).then(() => undefined), "race after RFQ tap");
-    } catch (e) { console.error(`[rfq tap ${id}]`, (e as Error).message); }
-    return r;
+      return tap;
+    })().catch((e) => { console.error(`[rfq tap ${id}]`, (e as Error).message); return null; });
+    const [r, tap] = await Promise.all([markRfqReceived(d, id, typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null), tapping]);
+    // The tapper's screen plays it the moment this comes back; everyone else's on the live check.
+    return { ...r, race: tap?.first ? { id: tap.id, email: tap.email, name: tap.name, company: tap.company, first: true, day: tap.day } : null };
   }));
   // Where an RFQ stands, set by the rep ("With pricing · Berni has it"): a [RFQ status] note in Close.
   // "Shot down" from the side panel (Walt 10/5): Not Interested in Close, callbacks cleared, and out of the

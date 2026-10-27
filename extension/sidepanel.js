@@ -1049,6 +1049,7 @@ function rfqButton(st) {
     try {
       const res = await api(`/api/leads/${st.leadId}/rfq-received`, { note: st.rfqIn.note || null });
       st.rfqIn = { saved: true, completed: res.completedTasks };
+      if (res.race && game && game.playNow) game.playNow(res.race);
       bumpGame();
     } catch (e) { st.rfqIn = { ...st.rfqIn, busy: false, error: e.message }; }
     if (st === S) render();

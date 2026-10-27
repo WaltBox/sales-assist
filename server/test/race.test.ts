@@ -57,6 +57,13 @@ test("West Game: a guest plays while their link is on; their calls are the marks
   assert.deepEqual([lane.dials, lane.reached, lane.lineCards], [2, 1, 1]);
   assert.equal(lane.points, 2 * POINTS.dial + POINTS.reached + POINTS.lineCard);
 
+  // A new list mid-day doesn't wipe the calls already made (10/27: Micah went to 0).
+  await putList(ownerId, guest, { name: "Afternoon", rows: [{ company: "D Co", phone: "5551110003" }] });
+  const after = (await teamRace(team, ownerId, { fresh: true })).lanes.find((l) => l.email === `guest:${guest.id}`)!;
+  assert.deepEqual([after.dials, after.reached], [2, 1], "the morning's calls still count");
+  const { earlierCalls } = await import("../src/guests.js");
+  assert.deepEqual((await earlierCalls(ownerId, guest.id)).map((x) => x.company), ["A Co", "B Co"]);
+
   await setGuestActive(ownerId, guest.id, false);
   const off = await teamRace(team, ownerId, { fresh: true });
   assert.ok(!off.lanes.some((l) => l.guest), "a switched-off link doesn't play");
@@ -91,7 +98,7 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   const owner = "user_wg_tap_owner";
   const close = new FakeClose();
   const fresh = new Date(Date.now() - 5 * 86_400_000).toISOString(), old = new Date(Date.now() - 400 * 86_400_000).toISOString();
-  close.lead = (async (id: string) => ({ id, display_name: id === "lead_new" ? "Brand New Co" : "Old Customer Inc", date_created: id === "lead_new" ? fresh : old })) as never;
+  close.lead = (async (id: string) => ({ id, display_name: id === "lead_new" ? "Brand New Co" : id === "lead_new2" ? "Second New Co" : "Old Customer Inc", date_created: id.startsWith("lead_new") ? fresh : old })) as never;
   const team: Deps[] = [{ close, llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", owner) }] as never;
   const today = localDay("America/Chicago", new Date()).day;
   await store.cacheSet(`rfqline:${owner}`, { since: today, total: 0, thisWeek: 0, lastWeek: 0, firstToday: 0, firstThisWeek: 0, companies: 0, newThisWeek: 0, newLastWeek: 0, newThisMonth: 0, newLastMonth: 0, at: new Date().toISOString(), days: [] }, 3600_000);
@@ -110,6 +117,17 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   const c = race.lanes.find((l) => l.first === "Chase")!;
   assert.deepEqual([c.rfqs, c.firstRfqs], [1, 1], "the tap counts before Close is read again; the old customer doesn't");
   assert.equal(race.events.find((e) => e.company === "Brand New Co")!.showAt, live.events[0].showAt, "the full copy keeps the same showtime");
+
+  // A tap after the last rebuild counts on the very next live check (10/27: "fix so it's always right"), once.
+  await store.cacheSet("race:team", race, 3600_000);
+  const later = (await recordRfqTap(team, owner, team[0], "lead_new2"))!;
+  const lane = (await raceLive(owner, "America/Chicago")).lanes!.find((l) => l.first === "Chase")!;
+  assert.equal(later.first, true);
+  assert.equal(lane.rfqs, 2, "counted before the rebuild");
+  assert.equal(lane.points - c.points, 15, "and scored");
+  assert.ok(lane.rfqFrom!.some((x) => x.leadId === "lead_new2"), "and named");
+  const again = (await withLiveLanes(race, { ownerId: owner })).lanes.find((l) => l.first === "Chase")!;
+  assert.equal(again.rfqs, 2, "the one already in the lane isn't counted twice");
 });
 
 test("every tapped call moves the dot before Close is read again, and the chat reaches every screen (10/27)", async () => {
@@ -132,4 +150,17 @@ test("every tapped call moves the dot before Close is read again, and the chat r
   const chat = (await raceLive(ownerId, "America/Chicago")).chat;
   assert.equal(chat.at(-1)?.text, "Chase is cooked");
   assert.equal(chat.at(-1)?.name, "Walt Boxwell");
+});
+
+test("the weekly leaderboard knows who won each earlier day (10/27)", async () => {
+  const ownerId = "user_board_owner";
+  const team: Deps[] = [{ close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", ownerId) }] as never;
+  await store.cacheSet("race:team", null, 1);
+  const first = await teamRace(team, ownerId);
+  const monday = first.weekDays?.[0]?.day;
+  if (!monday) return; // a Monday: no earlier days this week yet
+  await store.cacheSet(`raceday:${monday}`, [{ email: "chase@westgatesupply.com", name: "Chase Bent", points: 190 }, { email: "walt@westgatesupply.com", name: "Walt Boxwell", points: 40 }], 60_000);
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, ownerId);
+  assert.deepEqual(race.weekDays?.[0], { day: monday, winner: { email: "chase@westgatesupply.com", name: "Chase Bent", points: 190 } });
 });

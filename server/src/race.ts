@@ -1,7 +1,7 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
 import { ADMIN_DOC, dayStats, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles } from "./stats.js";
-import { getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
+import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
 
@@ -32,7 +32,9 @@ export type RaceLane = {
 };
 /** showAt: the moment every screen plays it, the same for everyone (10/26: "hit everyone's device at the exact same time"). */
 export type RaceEvent = { id: string; email: string; name: string; company: string; first: boolean; day: string; leadId?: string; showAt?: string };
-export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; goal?: number; roster: { excluded: string[] } };
+/** Who won each earlier day this week, for the weekly leaderboard (Walt 10/27). */
+export type RaceDay = { day: string; winner: { email: string; name: string; points: number } | null };
+export type Race = { day: string; at: string; lanes: RaceLane[]; events: RaceEvent[]; points: typeof POINTS; goal?: number; roster: { excluded: string[] }; weekDays?: RaceDay[] };
 
 const ROSTER_KEY = "raceRoster";
 /** Who's left out (Walt picks: "some people call but aren't BDRs"). Work Trial starts out. */
@@ -140,6 +142,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
     events: [...results.flatMap((r) => r.events), ...guestLanes.flatMap((g) => g.events)]
       .map(({ leadId: _l, ...e }) => ({ ...e, showAt: shown.get(e.id) ?? showTime(now.toISOString()) })), points: POINTS, goal: GOAL, roster,
   };
+  race.weekDays = await weekDays(race);
   await store.cacheSet(RACE_KEY, race, 24 * 3600_000).catch(() => undefined);
   return race;
 }
@@ -181,8 +184,9 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
     const host = reps.find((r) => r.t.rep.closeUserId === t.rep.closeUserId);
     const line = host?.line ?? newCompaniesOnly(await rfqTimeline(t, { savedOk: true, refreshAfterMs: 10 * 60_000 }).catch(() => null));
     for (const g of guests) {
-      const [list, ids] = await Promise.all([getList(t.rep.closeUserId, g.id).catch(() => null), guestLeadIds(t.rep.closeUserId, g)]);
-      const marks = (list?.leads ?? []).filter((l) => l.outcome && l.outcomeAt);
+      const [list, ids, earlier] = await Promise.all([getList(t.rep.closeUserId, g.id).catch(() => null), guestLeadIds(t.rep.closeUserId, g), earlierCalls(t.rep.closeUserId, g.id)]);
+      // Calls on lists they've since replaced still count (10/27).
+      const marks = [...(list?.leads ?? []), ...earlier].filter((l) => l.outcome && l.outcomeAt);
       const count = (from: string) => {
         const m = marks.filter((l) => dayOf(l.outcomeAt) >= from && dayOf(l.outcomeAt) <= today);
         return { dials: m.length, reached: m.filter((l) => REACHED_OUTCOMES.has(l.outcome!)).length, lineCards: g.sends.filter((x) => dayOf(x.at) >= from && dayOf(x.at) <= today).length };
@@ -272,7 +276,7 @@ async function oneOwnerPerRfq(results: RepResult[]) {
 // ---------- RFQs the moment they're tapped, shown on every screen at once (Walt 10/26) ----------
 
 /** How long after an RFQ is first seen every screen plays it: long enough for every panel to have checked in. */
-export const SHOW_DELAY_MS = 7_000;
+export const SHOW_DELAY_MS = 4_000;
 const showTime = (at: string) => new Date(Date.parse(at) + SHOW_DELAY_MS).toISOString();
 const TAPS_KEY = "raceTaps";
 /** how: seen in an email (a file, or an RFQ in the words) rather than tapped. Only a tap counts as "marked it came in". */
@@ -295,11 +299,9 @@ export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadI
   if (seen && (/vendor/i.test(lead?.status_label ?? "") || /^test lead\b/i.test(lead?.display_name ?? ""))) return null;
   const added = Date.parse(String(lead?.date_created ?? ""));
   const newToUs = Number.isFinite(added) && now.getTime() - added < 120 * 86_400_000;
-  let before = false;
-  for (const t of team) {
-    const line = await rfqTimeline(t, { savedOk: true }).catch(() => null);
-    if (line?.days.some((x) => x.day < today && x.accounts.some((a) => a.leadId === leadId))) { before = true; break; }
-  }
+  // Saved lines only, all at once: this runs while the rep waits for the celebration.
+  const lines = await Promise.all(team.map((t) => rfqTimeline(t, { savedOk: true }).catch(() => null)));
+  const before = lines.some((line) => line?.days.some((x) => x.day < today && x.accounts.some((a) => a.leadId === leadId)));
   const tap: RaceTap = { id: `${leadId}:${today}`, email: d.rep.email.toLowerCase(), name: d.rep.name, leadId, company: lead?.display_name ?? "An account", at: now.toISOString(), day: today, first: newToUs && !before, ...(seen ? { how: seen.how } : {}) };
   const taps = (await todaysTaps(ownerId, d.rep.timeZone, now)).filter((x) => x.id !== tap.id);
   await store.putSetting(ownerId, TAPS_KEY, [...taps, tap]);
@@ -334,7 +336,7 @@ export async function raceLive(ownerId: string, tz: string) {
   const events = new Map<string, RaceEvent>();
   for (const e of saved?.events ?? []) events.set(e.id, e);
   for (const x of taps) if (x.first && !events.has(x.id)) events.set(x.id, { id: x.id, email: x.email, name: x.name, company: x.company, first: true, day: x.day, showAt: showTime(x.at) });
-  const [live, chat] = await Promise.all([saved ? withLiveLanes(saved) : null, raceChat(ownerId, tz)]);
+  const [live, chat] = await Promise.all([saved ? withLiveLanes(saved, { taps }) : null, raceChat(ownerId, tz)]);
   return { now: now.toISOString(), day: localDay(tz, now).day, events: [...events.values()], lanes: live?.lanes, goal: live?.goal ?? GOAL, points: POINTS, chat };
 }
 
@@ -364,17 +366,32 @@ async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount>
 }
 
 /** The saved race with each rep's lane brought up to what's been tapped since: Close and the app each miss some, so
- * each number is the higher of the two. */
-export async function withLiveLanes(race: Race): Promise<Race> {
+ * each number is the higher of the two. An RFQ tapped (or found in an email) since the last rebuild counts on the
+ * live check too (Walt 10/27: "fix so it's always right"), unless someone's lane already has that company today. */
+export async function withLiveLanes(race: Race, opts: { taps?: RaceTap[]; ownerId?: string } = {}): Promise<Race> {
   const now = new Date();
+  const tz = race.lanes.find((l) => l.tz)?.tz ?? "America/Chicago";
+  const taps = (opts.taps ?? (opts.ownerId ? await todaysTaps(opts.ownerId, tz, now).catch(() => []) : []))
+    .filter((x) => x.day === race.day && x.first);
+  const claimed = new Set(race.lanes.flatMap((l) => (l.rfqFrom ?? []).filter((c) => c.day === race.day).map((c) => c.leadId)));
   const lanes = await Promise.all(race.lanes.map(async (l) => {
-    if (!l.rid || !l.tz || l.error || localDay(l.tz, now).day !== race.day) return l;
-    const c = await liveCount(l.rid, l.tz, now).catch(() => null);
-    if (!c) return l;
-    const n = { dials: Math.max(l.dials, c.dials), reached: Math.max(l.reached, c.reached), lineCards: Math.max(l.lineCards, c.lineCards), rfqs: l.rfqs, firstRfqs: l.firstRfqs };
+    if (l.error) return l;
+    const mine = taps.filter((x) => x.email === l.email && !claimed.has(x.leadId));
+    const today = !!l.rid && !!l.tz && localDay(l.tz, now).day === race.day;
+    const c = today ? await liveCount(l.rid!, l.tz!, now).catch(() => null) : null;
+    if (!c && !mine.length) return l;
+    const n = {
+      dials: Math.max(l.dials, c?.dials ?? 0), reached: Math.max(l.reached, c?.reached ?? 0), lineCards: Math.max(l.lineCards, c?.lineCards ?? 0),
+      rfqs: l.rfqs + mine.length, firstRfqs: l.firstRfqs + mine.length,
+    };
     const points = scoreOf(n);
     const add = points - l.points;
-    return { ...l, ...n, points, week: l.week && add > 0 ? { ...l.week, dials: l.week.dials + n.dials - l.dials, reached: l.week.reached + n.reached - l.reached, lineCards: l.week.lineCards + n.lineCards - l.lineCards, points: l.week.points + add } : l.week };
+    const rfqFrom = mine.length ? [...mine.map((x) => ({ leadId: x.leadId, company: x.company, day: x.day })), ...(l.rfqFrom ?? [])] : l.rfqFrom;
+    const week = l.week && add > 0 ? {
+      ...l.week, dials: l.week.dials + n.dials - l.dials, reached: l.week.reached + n.reached - l.reached,
+      lineCards: l.week.lineCards + n.lineCards - l.lineCards, rfqs: l.week.rfqs + mine.length, points: l.week.points + add,
+    } : l.week;
+    return { ...l, ...n, points, rfqFrom, week };
   }));
   return { ...race, goal: race.goal ?? GOAL, lanes: lanes.sort((a, b) => b.points - a.points || b.dials - a.dials) };
 }
@@ -447,4 +464,24 @@ export async function scanForRfqs(team: Deps[], ownerId: string): Promise<RaceTa
     if (tap) { found.push(tap); have.add(tap.id); }
   }
   return found;
+}
+
+// ---------- the weekly leaderboard: each day's final standings, kept so the week knows who won each day ----------
+
+type DayStanding = Array<{ email: string; name: string; points: number }>;
+const dayKey = (day: string) => `raceday:${day}`;
+
+/** Saves today's standings (the last copy of the day is the final one) and reads back who won each earlier day. */
+async function weekDays(race: Race): Promise<RaceDay[]> {
+  const standing: DayStanding = race.lanes.filter((l) => !l.error).map((l) => ({ email: l.email, name: l.name, points: l.points }));
+  if (standing.some((x) => x.points > 0)) await store.cacheSet(dayKey(race.day), standing, 15 * 86_400_000).catch(() => undefined);
+  const out: RaceDay[] = [];
+  for (let t = Date.parse(`${weekStart(race.day)}T12:00:00Z`); ; t += 86_400_000) {
+    const day = new Date(t).toISOString().slice(0, 10);
+    if (day >= race.day) break;
+    const saved = await store.cacheGet<DayStanding>(dayKey(day)).catch(() => null);
+    const top = (saved ?? []).filter((x) => x.points > 0).sort((a, b) => b.points - a.points)[0] ?? null;
+    out.push({ day, winner: top });
+  }
+  return out;
 }

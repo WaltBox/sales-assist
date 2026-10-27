@@ -176,8 +176,35 @@ export async function putList(repId: string, guest: Guest, body: { name?: string
   })).filter((l) => l.company && l.phone);
   if (!leads.length) throw new GuestError(400, "Couldn't find any rows with a company and a phone number in that file.");
   const list: CallList = { name: s(body.name, 80) || "Call list", uploadedAt: new Date().toISOString(), leads };
+  await keepEarlierCalls(repId, guest.id);
   await store.putSetting(repId, listKey(guest.id), list);
   return list;
+}
+
+// ---------- calls from earlier lists (Walt 10/27: Micah uploaded a new list mid-day and his calls went to 0) ----------
+
+const calledKey = (guestId: string) => `guestCalled:${guestId}`;
+const CALLED_DAYS = 30;
+/** A row the guest called on a list they've since replaced: still their call for the game and the follow-ups. */
+export type EarlierCall = Omit<ListLead, "i"> & { list: string };
+
+export async function earlierCalls(repId: string, guestId: string): Promise<EarlierCall[]> {
+  return (await store.getSetting<EarlierCall[]>(repId, calledKey(guestId)).catch(() => null)) ?? [];
+}
+
+/** Before a new list replaces the old one, the rows already called move aside (with the Close lead each matched). */
+async function keepEarlierCalls(repId: string, guestId: string) {
+  const old = await getList(repId, guestId).catch(() => null);
+  if (!old) return;
+  const ids = (await store.getSetting<Record<string, string>>(repId, idsKey(guestId)).catch(() => null)) ?? {};
+  const called = old.leads.filter((l) => l.outcome && l.outcomeAt).map(({ i, ...l }) => ({ ...l, leadId: ids[i] ?? l.leadId, list: old.name }));
+  if (called.length) {
+    const cutoff = Date.now() - CALLED_DAYS * 86_400_000;
+    const kept = (await earlierCalls(repId, guestId)).filter((x) => Date.parse(x.outcomeAt ?? "") >= cutoff);
+    await store.putSetting(repId, calledKey(guestId), [...kept, ...called].slice(-LIST_MAX));
+  }
+  // Row numbers start over with the new list, so the old row → lead matches would point at the wrong companies.
+  await store.putSetting(repId, idsKey(guestId), {});
 }
 
 /**
@@ -265,8 +292,11 @@ export function listCsv(list: CallList) {
 const idsKey = (guestId: string) => `guestLeadIds:${guestId}`;
 /** Every Close lead a guest has touched: the line cards they sent and the list rows matched to a lead (West Game, 10/25). */
 export async function guestLeadIds(repId: string, guest: Guest): Promise<Set<string>> {
-  const ids = (await store.getSetting<Record<string, string>>(repId, idsKey(guest.id)).catch(() => null)) ?? {};
-  return new Set([...guest.sends.map((s) => s.leadId), ...Object.values(ids)].filter(Boolean));
+  const [ids, earlier] = await Promise.all([
+    store.getSetting<Record<string, string>>(repId, idsKey(guest.id)).catch(() => null),
+    earlierCalls(repId, guest.id),
+  ]);
+  return new Set([...guest.sends.map((s) => s.leadId), ...Object.values(ids ?? {}), ...earlier.map((x) => x.leadId ?? "")].filter(Boolean));
 }
 const followKey = (guestId: string) => `guestFollow:${guestId}`;
 /** Statuses Walt has taken over: the RFQ is in, the guest doesn't need to call. */
@@ -312,6 +342,14 @@ export async function guestFollowUps(d: Deps, guest: Guest, opts: { fresh?: bool
     const send = g.sends.find((s) => (l.email && s.to === l.email.toLowerCase()) || norm(s.company) === norm(l.company));
     rows.push({ i: l.i, company: l.company, phone: l.phone, askFor: l.gotName || l.askFor, state: l.state, outcome: l.outcome, calledAt: l.outcomeAt, notes: l.notes,
       leadId: ids[l.i] ?? l.leadId ?? send?.leadId ?? null, email: l.email || send?.to || "",
+      inClose: false, status: null, rfq: false, lineCardAt: send?.at ?? null, lineCardTo: send?.to ?? null, opens: 0, lastOpenAt: null, repliedAt: null });
+  }
+  // Companies called on an earlier list, unless they're on this one too.
+  for (const l of (await earlierCalls(repId, guest.id)).reverse()) {
+    if (rows.some((r) => norm(r.company) === norm(l.company))) continue;
+    const send = g.sends.find((s) => (l.email && s.to === l.email.toLowerCase()) || norm(s.company) === norm(l.company));
+    rows.push({ i: null, company: l.company, phone: l.phone, askFor: l.gotName || l.askFor, state: l.state, outcome: l.outcome, calledAt: l.outcomeAt, notes: l.notes,
+      leadId: l.leadId ?? send?.leadId ?? null, email: l.email || send?.to || "",
       inClose: false, status: null, rfq: false, lineCardAt: send?.at ?? null, lineCardTo: send?.to ?? null, opens: 0, lastOpenAt: null, repliedAt: null });
   }
   // Line cards sent from the "Send a line card" tab for companies that aren't on the sheet.

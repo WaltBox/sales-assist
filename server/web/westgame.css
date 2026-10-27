@@ -344,3 +344,22 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 .wg-from li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--wg-line); font-size: 13px; }
 .wg-from li span { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .wg-from li small { flex: none; color: var(--wg-muted); }
+/* the weekly leaderboard (10/27): ranked by the week's points, with each earlier day's winner */
+.wg-board-week { margin: 0 0 12px; padding: 8px 10px; background: #fff; border: 1.5px solid var(--wg-ink); box-shadow: 3px 3px 0 var(--wg-ink); }
+.wg-board-week table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wg-board-week th { font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); font-weight: 400; text-align: right; padding: 0 0 4px 6px; }
+.wg-board-week td { padding: 6px 0 6px 6px; border-top: 1px solid var(--wg-line); }
+.wg-board-week .wg-rank { width: 1.6em; padding-left: 0; font-weight: 700; color: var(--wg-muted); }
+.wg-board-week .wg-who { font-weight: 600; overflow-wrap: anywhere; }
+.wg-board-week .wg-who .wg-tag { margin-left: 6px; }
+.wg-board-week .wg-num { text-align: right; font-variant-numeric: tabular-nums; }
+.wg-board-week .strong { font-weight: 800; }
+.wg-board-week tr.top .wg-rank { color: var(--wg-gold); }
+.wg-board-week tr.me td { background: #fff6f6; }
+.wg-board-week tr.me .wg-who { color: var(--wg-red); }
+.wg-days { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0 0; font-size: 12px; color: var(--wg-muted); }
+.wg-days b { color: var(--wg-ink); font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+
+/* A crown above whoever's in first (Walt 10/27). Just the emoji, above the dot. */
+.wg-dot.lead::before { content: "👑"; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  font-size: calc(var(--wg-dot) * .62); line-height: 1; pointer-events: none; z-index: 4; }
