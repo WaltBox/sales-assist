@@ -14,10 +14,12 @@ import { store } from "./store.js";
  * Worked out once a minute for the whole team and shared: every panel reads the same copy, so Close isn't asked once
  * per panel. A rep whose numbers can't be read (a Close login that's been turned off) still has a lane, flagged.
  */
-// Walt 10/27: the finish is 300 (it was 220: 180 calls plus 20 line cards at 2 each); a new company's RFQ is worth 15. The screens read
-// the finish and the points from here, so changing them doesn't need an extension update.
-export const POINTS = { dial: 1, reached: 0, lineCard: 2, rfq: 15, firstRfq: 0 } as const;
-export const GOAL = 300;
+// Walt 10/27: hard to finish. Line cards run about one per four calls, so each call is worth about 1.5 points:
+// no RFQs takes about 240 calls, one RFQ about 200, two about 160, three about 120; 130 calls is the floor unless the
+// RFQs pour in. (It was 220 to finish with 15 an RFQ.) The screens read the finish and the points from here, so
+// changing them doesn't need an extension update.
+export const POINTS = { dial: 1, reached: 0, lineCard: 2, rfq: 60, firstRfq: 0 } as const;
+export const GOAL = 360;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
   email: string; name: string; first: string; guest?: boolean;

@@ -9,8 +9,11 @@ import { store } from "../src/store.js";
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
 test("points: 180 calls and 20 line cards finish, an RFQ is worth 15; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(GOAL, 300);
-  assert.equal(POINTS.rfq, 15);
+  assert.equal(GOAL, 360);
+  assert.equal(POINTS.rfq, 60);
+  // 240 calls with a line card every fourth one finishes with no RFQs; two RFQs finish at 160 calls.
+  assert.equal(240 * POINTS.dial + 60 * POINTS.lineCard, GOAL);
+  assert.equal(160 * POINTS.dial + 40 * POINTS.lineCard + 2 * POINTS.rfq, GOAL);
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
   const ok = new FakeClose();
@@ -124,7 +127,7 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   const lane = (await raceLive(owner, "America/Chicago")).lanes!.find((l) => l.first === "Chase")!;
   assert.equal(later.first, true);
   assert.equal(lane.rfqs, 2, "counted before the rebuild");
-  assert.equal(lane.points - c.points, 15, "and scored");
+  assert.equal(lane.points - c.points, POINTS.rfq, "and scored");
   assert.ok(lane.rfqFrom!.some((x) => x.leadId === "lead_new2"), "and named");
   const again = (await withLiveLanes(race, { ownerId: owner })).lanes.find((l) => l.first === "Chase")!;
   assert.equal(again.rfqs, 2, "the one already in the lane isn't counted twice");
