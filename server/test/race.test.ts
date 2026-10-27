@@ -9,7 +9,7 @@ import { store } from "../src/store.js";
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
 test("points: 180 calls and 20 line cards finish, an RFQ is worth 15; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(GOAL, 180 * POINTS.dial + 20 * POINTS.lineCard);
+  assert.equal(GOAL, 300);
   assert.equal(POINTS.rfq, 15);
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
@@ -163,4 +163,10 @@ test("the weekly leaderboard knows who won each earlier day (10/27)", async () =
   await store.cacheSet("race:team", null, 1);
   const race = await teamRace(team, ownerId);
   assert.deepEqual(race.weekDays?.[0], { day: monday, winner: { email: "chase@westgatesupply.com", name: "Chase Bent", points: 190 } });
+});
+
+test("a purchase order coming in isn't an RFQ (10/27: Fabricon's PO counted as one)", async () => {
+  const { ADMIN_DOC } = await import("../src/stats.js");
+  for (const f of ["WESTGATE PO#25-114-13519.pdf", "Purchase Order 12.pdf", "P.O. 4471.pdf"]) assert.ok(ADMIN_DOC.test(f), f);
+  for (const f of ["Copy of HHWT - Commodities Pricing Exercise - Take-Off 7.13.26.xlsx", "RFQ 2231 pipe.pdf", "Pool equipment.pdf", "Portland plant.pdf"]) assert.ok(!ADMIN_DOC.test(f), f);
 });

@@ -582,8 +582,16 @@ function statsStrip() {
     ...n(stats.dials, stats.dials === 1 ? "dial" : "dials"), sep(),
     ...n(tilde + stats.reached, "reached"), sep(),
     ...n(s.emailsSent, s.emailsSent === 1 ? "email" : "emails"), sep(),
-    ...n(tilde + s.rfqs, s.rfqs === 1 ? "RFQ" : "RFQs"),
+    // RFQs that came in, the same number West Game scores (10/27: this said 4 for Chase, his promises, while the game
+    // had 3 in). Promises stay on the stats page.
+    ...n(rfqsIn(s), rfqsIn(s) === 1 ? "RFQ" : "RFQs"),
   ]);
+}
+
+function rfqsIn(s) {
+  const r = game && game.race;
+  const mine = r && r.day === stats.day && r.lanes ? r.lanes.find((l) => l.email === r.you) : null;
+  return mine && !mine.error ? mine.rfqs : s.rfqReceived || 0;
 }
 
 function openStats() {

@@ -431,7 +431,15 @@ export async function periodDetail(d: Deps, period: Period, metric: Metric): Pro
 // first line card on. An RFQ is an email from them with a real file (not a W-9, a tax form, a credit app or a
 // cert), an ask typed into the email ("please quote the following"), or one the rep marked "RFQ came in".
 
-export const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit/i;
+// A purchase order is an order, not an RFQ (10/27: Fabricon's "WESTGATE PO#25-114-13519.pdf" counted as one).
+/**
+ * Marks that weren't an RFQ, fixed by hand. Winston/Royal Guard (Walt 10/27): Chase marked "RFQ came in" Monday for
+ * Robin's question ("Do you handle LF 350 LF 2 and 420 WPL6?"); the RFQ itself came Tuesday. It counts Tuesday.
+ */
+export const NOT_AN_RFQ: Array<{ leadId: string; day: string }> = [
+  { leadId: "lead_4FZxpuH8LEfjwgG2mfIL4uqwJex1SyUSGGlB2t0SbMO", day: "2026-10-26" },
+];
+export const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit|\bp\.?o\b|purchase.?order/i;
 const timelineCache = new Map<string, { at: number; value: RfqTimeline }>();
 export type RfqTimeline = {
   since: string; total: number; thisWeek: number; lastWeek: number;
@@ -554,6 +562,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   for (const [k, f] of found) if (/^test lead\b/i.test(names.get(f.leadId) ?? "") || /vendor/i.test(statusOf.get(f.leadId) ?? "")) found.delete(k);
   // A status set by mistake and changed back: the lead isn't at RFQ Received or past it any more, so it doesn't count.
   for (const k of statusOnly) if (!/rfq|quot|won|order|customer|\bpo\b/i.test(statusOf.get(found.get(k)?.leadId ?? "") ?? "")) found.delete(k);
+  for (const x of NOT_AN_RFQ) found.delete(`${x.leadId}|${x.day}`);
   // Each company's first RFQ day: that's a new customer coming in, the number Walt wants to see grow.
   const firstDay = new Map<string, string>();
   for (const f of found.values()) {
