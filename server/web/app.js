@@ -1440,6 +1440,42 @@ async function reloadAutos() {
   state.autos = await api("/api/automations").catch(() => state.autos);
   render();
 }
+// "New line card!" (Walt 10/28): the one-time wave to everyone who only had the old card.
+async function loadNewCard() {
+  if (state.newCard === null) return;
+  state.newCard = null; // loading
+  state.newCard = await api("/api/automations/new-card").catch(() => undefined);
+  render();
+}
+function newCardCard() {
+  const nc = state.newCard;
+  if (nc === undefined) { loadNewCard(); return null; }
+  if (!nc) return null;
+  const sum = nc.summary;
+  if (!sum && !nc.owner) return null;
+  const first = (n) => n.split(/\s+/)[0];
+  const run = async (path, body, msg) => {
+    if (msg && !confirm(msg)) return;
+    state.mailBusy = true; render();
+    try { const r = await api(path, body || {}); state.newCardMsg = r.planned ? `${r.planned.length} scheduled${r.skipped && r.skipped.length ? `, ${r.skipped.length} skipped` : ""}${r.reason ? ` · ${r.reason}` : ""}.` : "List built."; }
+    catch (e) { alert(e.message); }
+    state.mailBusy = false; state.newCard = undefined;
+    render(); reloadAutos();
+  };
+  return el("section", { class: "mcard" }, [
+    el("div", { class: "pagehead row" }, [el("p", { class: "label", text: "New line card!" }), el("span", { class: "muted small", text: sum ? `built ${shortDate(sum.builtAt)}` : "" })]),
+    sum
+      ? el("p", {}, [`${sum.total} compan${sum.total === 1 ? "y" : "ies"} that only ever got the old card. `, ...sum.reps.map((r, i) => el("span", {}, `${i ? " · " : ""}${first(r.name)}: ${r.sent} sent, ${r.waiting} to go${r.skipped ? `, ${r.skipped} skipped` : ""}`))])
+      : el("p", { text: "One email to everyone who only ever got the old line card, from whoever sent them a line card last (you, Chase or Liam), in a new thread with the new PDF and a meme. You're CC'd on the ones you don't send. Each person's share goes out on their mornings at their usual pace." }),
+    el("div", { class: "extrow" }, [
+      nc.owner && !sum ? el("button", { class: "btn small primary", disabled: state.mailBusy, text: "Build the list", onclick: () => run("/api/automations/new-card/plan") }) : null,
+      nc.owner && sum ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Rebuild the list", onclick: () => run("/api/automations/new-card/plan") }) : null,
+      sum && nc.mine ? el("button", { class: "btn small primary", disabled: state.mailBusy, text: `Send my share now (${nc.mine} waiting)`, onclick: () => run("/api/automations/new-card/send-now", {}, `Schedule up to your daily pace of these ${nc.mine} right now, for a morning slot their time? The rest go on the next mornings.`) }) : null,
+      sum && !nc.mine ? el("span", { class: "muted small", text: "Nothing waiting for you." }) : null,
+      state.newCardMsg ? el("span", { class: "muted small", text: state.newCardMsg }) : null,
+    ]),
+  ]);
+}
 
 // ---------- the meme library (Walt 10/5): upload a file or a zip, rename, retire ----------
 async function loadLibrary() {
@@ -1745,7 +1781,7 @@ function mailDashboard(au) {
       "Every email ends with the same ask: please send me over an RFQ and we'll get you a quote back. They go out around 8am their time, Mondays after 10.",
     ].map((t) => el("li", { text: t }))),
   ]);
-  return [tiles, addedCard, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
+  return [tiles, newCardCard(), addedCard, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
 }
 
 // ---------- Tasks (Walt 10/14: "why wouldn't you just create a new tasks section?") ----------

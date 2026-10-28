@@ -77,7 +77,7 @@ function threadText(emails: LeadEmail[]) {
 }
 
 /** Who the follow-up goes to: the other side of the latest email, else the last called contact, else the buyer on file. */
-function recipient(ctx: LeadContext, latest: LeadEmail | undefined, repEmail: string, thread: LeadEmail[] = []) {
+export function recipient(ctx: LeadContext, latest: LeadEmail | undefined, repEmail: string, thread: LeadEmail[] = []) {
   const byEmail = (addr: string) => ctx.contacts.find((c) => c.emails.some((x) => x.email.toLowerCase() === addr.toLowerCase()));
   // The name they write under beats the contact's name in Close (10/1: "Sam Ives" in Close, but jives@ signs as Jennifer Ives).
   const theirName = (addr: string) => {

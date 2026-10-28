@@ -517,48 +517,41 @@
     }
 
     /**
-     * The week's leaderboard (Walt 10/27; 10/28: "a cool leaderboard", no lanes, since the week maxes the track out).
-     * Ranked by the week's points, each with a bar against the leader, the week's pace line, calls, cards, RFQs, and a
-     * crown for each day won. Days so far run along the bottom.
+     * The week's leaderboard (Walt 10/27; 10/28: no track, no bars, one clean board). Ranked by the week's points:
+     * place, name, calls, line cards, RFQs, talks, points, and a crown for each day won. Day winners run underneath.
      */
     function leaderboard(ls) {
       const r = g.race;
       const days = r.weekDays || [];
       const wins = (email) => days.filter((d) => d.winner && d.winner.email === email).length;
       const dayName = (day) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "short" });
-      const top = Math.max(1, ...ls.map((l) => l.points));
-      // The pace line: a finished day's points for every day of the week so far (today included).
-      const pace = goal() * (days.length + 1);
-      const scale = Math.max(top, pace);
-      const medal = (i) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : String(i + 1));
-      const stat = (n, one, many) => h("span", { class: "wg-lbstat" }, [h("b", { text: String(n) }), ` ${n === 1 ? one : many}`]);
+      const num = (n, cls) => h("span", { class: `wg-lbn ${cls || ""}`, text: String(n) });
+      const head = h("div", { class: "wg-lbrow wg-lbhead", "aria-hidden": "true" }, [
+        h("span"), h("span", { text: "" }), h("span", { text: "Calls" }), h("span", { text: "Cards" }), h("span", { text: "RFQs" }), h("span", { class: "wg-lbtalks", text: "Talks" }), h("span", { class: "wg-lbp", text: "Pts" }),
+      ]);
+      const rows = ls.flatMap((l, i) => {
+        const me = l.email === r.you;
+        const won = wins(l.email);
+        const open = g.lane === l.email && !l.error;
+        const row = h("button", { class: `wg-lbrow${me ? " me" : ""}${i < 3 && l.points > 0 ? ` p${i + 1}` : ""}${open ? " on" : ""}`, onclick: () => { g.lane = open ? null : l.email; render(); } }, [
+          h("span", { class: "wg-lbrank", text: String(i + 1) }),
+          h("span", { class: "wg-lbwho" }, [
+            h("span", { class: "wg-lbname", text: me ? "You" : window.innerWidth <= 640 ? firstName(l) : l.name }),
+            l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null,
+            won ? h("span", { class: "wg-lbwon", title: `Won ${won} day${won === 1 ? "" : "s"} this week`, text: "👑".repeat(Math.min(won, 5)) }) : null,
+          ]),
+          num(l.dials), num(l.lineCards), num(l.rfqs, l.rfqs ? "hot" : ""), num(l.reached, "wg-lbtalks"),
+          h("span", { class: "wg-lbp" }, [h("b", { text: String(l.points) })]),
+        ]);
+        return open ? [row, h("div", { class: "wg-lbopen" }, [stats(l, i)])] : [row];
+      });
       return h("section", { class: "wg-lb" }, [
-        ...ls.map((l, i) => {
-          const me = l.email === r.you;
-          const won = wins(l.email);
-          return h("button", { class: `wg-lbrow${me ? " me" : ""}${i === 0 && l.points > 0 ? " top" : ""}${g.lane === l.email ? " on" : ""}`, onclick: () => { g.lane = g.lane === l.email ? null : l.email; render(); } }, [
-            h("span", { class: `wg-lbrank${i < 3 && l.points > 0 ? " medal" : ""}`, text: l.points > 0 ? medal(i) : String(i + 1) }),
-            h("span", { class: "wg-lbmain" }, [
-              h("span", { class: "wg-lbtop" }, [
-                h("span", { class: "wg-lbname", text: me ? `${firstName(l)} (you)` : l.name }),
-                l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null,
-                won ? h("span", { class: "wg-lbwon", title: `${won} day${won === 1 ? "" : "s"} won this week`, text: "👑".repeat(Math.min(won, 5)) }) : null,
-                h("span", { class: "wg-lbpts" }, [h("b", { text: String(l.points) }), h("small", { text: "pts" })]),
-              ]),
-              h("span", { class: "wg-lbbar" }, [
-                h("i", { class: "wg-lbfill", style: `width:${Math.min(100, (l.points / scale) * 100)}%` }),
-                h("i", { class: "wg-lbpace", style: `left:${Math.min(100, (pace / scale) * 100)}%`, title: `On pace: ${pace} points by the end of today` }),
-              ]),
-              h("span", { class: "wg-lbsub" }, [stat(l.dials, "call", "calls"), stat(l.lineCards, "line card", "line cards"), stat(l.rfqs, "RFQ", "RFQs"), l.reached ? stat(l.reached, "talk", "talks") : null]),
-            ]),
-            g.lane === l.email && !l.error ? stats(l, i) : null,
-          ]);
-        }),
+        h("div", { class: "wg-lbtable" }, [head, ...rows]),
         h("div", { class: "wg-lbdays" }, [
+          h("span", { class: "wg-label", text: "Days won" }),
           ...days.map((d) => h("span", { class: "wg-lbday" }, [h("b", { text: dayName(d.day) }), h("span", { text: d.winner ? `${(d.winner.name || "").split(/\s+/)[0]} · ${d.winner.points}` : "–" })])),
-          h("span", { class: "wg-lbday today" }, [h("b", { text: dayName(r.day) }), h("span", { text: ls[0] && ls[0].points > 0 ? `${firstName(ls[0])} leads · live` : "live" })]),
+          h("span", { class: "wg-lbday today" }, [h("b", { text: dayName(r.day) }), h("span", { text: "today" })]),
         ]),
-        h("p", { class: "wg-muted", text: `The line is pace: ${goal()} points a day, every day this week. Days won get a crown. Tap anyone for their numbers.` }),
       ]);
     }
 
@@ -571,7 +564,7 @@
       return [
         h("div", { class: "wg-head" }, [
           h("h2", { class: "wg-title", text: g.week ? "This week's competition" : "Today's competition" }),
-          h("div", { class: "wg-tabs" }, [tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
+          h("div", { class: "wg-tabs" }, [soundButton(), tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
         ]),
         g.week ? leaderboard(ls) : h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
         opts.chat ? chatBox() : null,
@@ -688,10 +681,60 @@
       if (g.open) load(true);
     }
 
+    // ---------- the bell (Walt 10/28: "a loud ass bell when someone brings in a new RFQ") ----------
+    // A ship's bell struck three times, made with the browser's own synth, so there's no file to load. Audio only
+    // starts after someone has clicked in the panel once (the browser's rule), which they always have.
+    const SOUND = "westGameSound";
+    g.sound = true;
+    opts.store.get(SOUND).then((v) => { if (v === false) g.sound = false; });
+    let audio = null;
+    function bell(strikes = 3) {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audio = audio || new AC();
+        if (audio.state === "suspended") audio.resume();
+        const out = audio.createGain();
+        out.gain.value = 1;
+        out.connect(audio.destination);
+        // The partials of a struck bell: a hum, the prime, and bright inharmonic overtones that die first.
+        const partials = [[1, 1, 2.4], [2.02, .55, 1.6], [3.01, .35, 1.1], [4.17, .25, .8], [5.43, .15, .6], [6.8, .1, .45]];
+        for (let i = 0; i < strikes; i++) {
+          const t0 = audio.currentTime + .05 + i * .42;
+          for (const [ratio, level, decay] of partials) {
+            const o = audio.createOscillator();
+            const gn = audio.createGain();
+            o.type = "sine";
+            o.frequency.value = 880 * ratio;
+            gn.gain.setValueAtTime(0, t0);
+            gn.gain.linearRampToValueAtTime(level * .9, t0 + .004);
+            gn.gain.exponentialRampToValueAtTime(.0005, t0 + decay);
+            o.connect(gn); gn.connect(out);
+            o.start(t0); o.stop(t0 + decay + .05);
+          }
+          // the clapper: a short burst of noise on the strike
+          const len = Math.floor(audio.sampleRate * .03);
+          const buf = audio.createBuffer(1, len, audio.sampleRate);
+          const data = buf.getChannelData(0);
+          for (let k = 0; k < len; k++) data[k] = (Math.random() * 2 - 1) * (1 - k / len);
+          const src = audio.createBufferSource();
+          const ng = audio.createGain();
+          ng.gain.value = .35;
+          src.buffer = buf; src.connect(ng); ng.connect(out); src.start(t0);
+        }
+      } catch { /* no sound device, or audio not allowed yet */ }
+    }
+    window.ringBell = () => bell(3);
+    function soundButton() {
+      return h("button", { class: `wg-sound${g.sound ? "" : " off"}`, title: g.sound ? "The bell rings for every RFQ. Tap to mute it on this screen." : "Muted on this screen. Tap to ring the bell for RFQs again.", "aria-label": g.sound ? "Mute the bell" : "Unmute the bell",
+        text: g.sound ? "Bell on" : "Bell off", onclick: () => { g.sound = !g.sound; opts.store.set(SOUND, g.sound); if (g.sound) bell(1); render(); } });
+    }
+
     // An RFQ anywhere on the team: the bar turns into one of the scenes for a few seconds, then slides back.
     function celebrate(e, n, key) {
       const r = g.race;
       if (!r) return;
+      if (g.sound && e.id !== "test") bell(n > 1 ? 5 : 3);
       const you = e.email === r.you;
       const name = (e.name || "").split(/\s+/)[0] || "Someone";
       const co = shortCo(e.company || "a new account");

@@ -33,6 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
+import { NEW_CARD_SENDERS, newCardPlan, newCardMorning, newCardSummary, planNewCard, sendNewCard } from "./newcard.js";
 import { postChat, raceLive, raceRoster, recordRfqTap, rfqScanDue, scanForRfqs, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -669,6 +670,18 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));
   // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.
+  // "New line card!" (10/28): the owner plans the wave once; each rep's share goes out on their mornings, or now.
+  app.get("/api/automations/new-card", authed, route(async (_req, d) => {
+    const plan = await newCardPlan();
+    return { summary: newCardSummary(plan), mine: plan ? plan.leads.filter((l) => l.repId === d.rep.closeUserId && !plan.done[l.leadId]).length : 0, owner: normalizeEmail(d.rep.email) === config.ownerEmail, senders: NEW_CARD_SENDERS };
+  }));
+  app.post("/api/automations/new-card/plan", authed, route(async (_req, d) => {
+    if (normalizeEmail(d.rep.email) !== config.ownerEmail) throw new GuestError(403, "Only the owner plans this.");
+    const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+    const senders = team.filter((t) => NEW_CARD_SENDERS.includes(normalizeEmail(t.rep.email)));
+    return { summary: newCardSummary(await planNewCard(d, senders)) };
+  }));
+  app.post("/api/automations/new-card/send-now", authed, route((req, d) => sendNewCard(d, { max: Number(req.body?.max) || undefined })));
   app.post("/api/automations/send-now", authed, route((req, d) => sendBumpsNow(d, {
     leadIds: Array.isArray(req.body?.lead_ids) ? req.body.lead_ids.map(String) : [],
     variant: typeof req.body?.variant === "string" ? req.body.variant : null,
@@ -930,7 +943,11 @@ export function createApp(appDeps: AppDeps) {
         if (!d) continue;
         // Only the hosted server plans the morning (10/8: the Mac copy planned too, 90 seconds after it, and 80 leads
         // got two emails). PLAN_MORNING=1 turns it on for a copy that runs alone.
-        if (process.env.VERCEL || process.env.PLAN_MORNING === "1") await morningRun(d).catch((err) => console.error(`morning run ${rep.email}:`, (err as Error).message));
+        if (process.env.VERCEL || process.env.PLAN_MORNING === "1") {
+          // The "New line card!" wave first (10/28): it takes the morning's slots, and the sequence fills in behind it.
+          await newCardMorning(d).catch((err) => console.error(`new card ${rep.email}:`, (err as Error).message));
+          await morningRun(d).catch((err) => console.error(`morning run ${rep.email}:`, (err as Error).message));
+        }
         await ensureRescueDrafts(d).catch((err) => console.error(`rescue drafts ${rep.email}:`, (err as Error).message));
         await syncAutomations(d).catch((err) => console.error(`sync ${rep.email}:`, (err as Error).message));
         // RFQ potential: sites never read, or read over a month ago, a few per pass, so the heat map stays current by itself.
