@@ -45,7 +45,7 @@ button { font: inherit; }
 
 /* ---------- the sidebar (10/28; it was a top bar) ---------- */
 .shell { display: flex; align-items: flex-start; min-height: 100vh; }
-.side {
+.sidebar {
   position: sticky; top: 0; flex: none; width: 236px; height: 100vh; overflow-y: auto; z-index: 10;
   display: flex; flex-direction: column; gap: 22px; padding: 20px 14px 18px;
   background: var(--navy); color: var(--paper); border-right: 2px solid var(--ink);
@@ -55,7 +55,8 @@ button { font: inherit; }
 .fold { flex: none; width: 26px; height: 26px; border: 1px solid rgba(229, 224, 209, .35); background: transparent; color: var(--paper); cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
 .fold:hover { border-color: rgba(229, 224, 209, .7); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; min-width: 0; font-family: var(--label); letter-spacing: .18em; text-transform: uppercase; font-size: 14px; }
-.brandtext { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.brandtext { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; line-height: 1.1; }
+.brand { flex: 1; }
 .brand img { height: 20px; filter: brightness(0) invert(1); }
 .brand .sub { opacity: .7; font-size: 12px; letter-spacing: .12em; }
 .who { margin-top: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 16px 8px 0; border-top: 1px solid rgba(229, 224, 209, .2); font-size: 13px; }
@@ -410,30 +411,30 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .navicon { flex: none; opacity: .85; }
 .nav button.on .navicon { opacity: 1; }
 /* Folded: a rail of icons, the counts tucked on them, your initials at the bottom. */
-.side.folded { width: 64px; padding-left: 10px; padding-right: 10px; }
-.side.folded .sidetop { flex-direction: column; gap: 10px; }
-.side.folded .brand { padding: 0; }
-.side.folded .brandtext, .side.folded .navlabel { display: none; }
-.side.folded .nav button { position: relative; justify-content: center; padding: 10px 0; }
-.side.folded .navc { position: absolute; top: 2px; right: 2px; margin: 0; font-size: 10px; padding: 0 4px; }
-.side.folded .who { align-items: center; padding-left: 0; padding-right: 0; }
+.sidebar.folded { width: 64px; padding-left: 10px; padding-right: 10px; }
+.sidebar.folded .sidetop { flex-direction: column; gap: 10px; }
+.sidebar.folded .brand { padding: 0; }
+.sidebar.folded .brandtext, .sidebar.folded .navlabel { display: none; }
+.sidebar.folded .nav button { position: relative; justify-content: center; padding: 10px 0; }
+.sidebar.folded .navc { position: absolute; top: 2px; right: 2px; margin: 0; font-size: 10px; padding: 0 4px; }
+.sidebar.folded .who { align-items: center; padding-left: 0; padding-right: 0; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid rgba(229, 224, 209, .6); background: transparent; color: var(--paper); cursor: pointer; font-family: var(--label); font-size: 13px; letter-spacing: .06em; }
 .foldext { font-family: var(--label); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; text-decoration: none; }
 .foldext.extbehind { padding: 2px 7px; }
 /* A phone or a narrow window: the sidebar becomes a bar across the top, the pages scroll sideways. */
 @media (max-width: 900px) {
   .shell { display: block; }
-  .side { position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 14px; border-right: 0; border-bottom: 2px solid var(--ink); }
+  .sidebar { position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 14px; border-right: 0; border-bottom: 2px solid var(--ink); }
   .nav { flex-direction: row; flex: 1; order: 3; width: 100%; overflow-x: auto; gap: 4px; padding-bottom: 2px; }
   .nav button { width: auto; white-space: nowrap; padding: 6px 10px; }
   .navc { margin-left: 0; }
   .who { margin: 0 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0; border: 0; }
   .fold { display: none; }
-  .side.folded { width: auto; padding: 10px 14px; }
-  .side.folded .brandtext, .side.folded .navlabel { display: inline; }
-  .side.folded .sidetop { flex-direction: row; }
-  .side.folded .nav button { padding: 6px 10px; }
-  .side.folded .navc { position: static; }
+  .sidebar.folded { width: auto; padding: 10px 14px; }
+  .sidebar.folded .brandtext, .sidebar.folded .navlabel { display: inline; }
+  .sidebar.folded .sidetop { flex-direction: row; }
+  .sidebar.folded .nav button { padding: 6px 10px; }
+  .sidebar.folded .navc { position: static; }
 }
 .pagehead { align-items: center; margin-bottom: 8px; }
 .ptitle { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(22px, 2.6vw, 30px); line-height: 1; }

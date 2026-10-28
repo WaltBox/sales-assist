@@ -319,7 +319,7 @@ function icon(k) {
 function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
   const initials = state.me ? state.me.rep.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() : "";
-  return el("aside", { class: `side${sideFolded ? " folded" : ""}` }, [
+  return el("aside", { class: `sidebar${sideFolded ? " folded" : ""}` }, [
     el("div", { class: "sidetop" }, [
       el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), el("span", { class: "brandtext" }, ["Westgate", el("span", { class: "sub", text: "Assistant" })])]),
       el("button", { class: "fold", title: sideFolded ? "Open the menu" : "Collapse the menu", "aria-label": sideFolded ? "Open the menu" : "Collapse the menu", text: sideFolded ? "»" : "«", onclick: foldSide }),
