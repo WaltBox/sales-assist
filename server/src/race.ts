@@ -356,7 +356,9 @@ async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount>
     store.listReviews<{ callId?: string | null; outcome?: string; createdAt: string }>(rid, since.toISOString()).catch(() => []),
     store.getSetting<Record<string, { at: string }>>(rid, "lineCardSends").catch(() => null),
   ]);
-  const calls = items.filter((it) => it.callId);
+  // The store also hands back older items still in a working state (a failed build from last week): today's only
+  // (10/28: Chase's game said 67 calls, Close 46; 30 of the app's were from earlier days).
+  const calls = items.filter((it) => it.callId && it.createdAt >= since.toISOString());
   const value = {
     dials: new Set(calls.map((it) => it.callId)).size,
     reached: calls.filter((it) => REACHED_TAPS.has(String(it.outcome))).length,

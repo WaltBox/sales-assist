@@ -145,6 +145,8 @@ test("every tapped call moves the dot before Close is read again, and the chat r
   for (const [i, outcome] of ["voicemail", "reached_buyer", "no_answer"].entries()) {
     await store.putReview({ id: `live_${i}`, repId: ownerId, leadId: `lead_live_${i}`, callId: `acti_live_${i}`, state: "saved", outcome, createdAt: new Date().toISOString() });
   }
+  // A failed build from days ago comes back from the store whatever the date asked for; it isn't one of today's calls.
+  await store.putReview({ id: "live_old", repId: ownerId, leadId: "lead_live_old", callId: "acti_live_old", state: "failed", outcome: "no_answer", createdAt: new Date(Date.now() - 3 * 86_400_000).toISOString() });
   await new Promise((r) => setTimeout(r, 2600)); // past the few-second count cache
   const after = (await withLiveLanes(race)).lanes[0];
   assert.equal(after.dials, Math.max(before.dials, 3));
