@@ -414,7 +414,8 @@
     const typing = () => !!(g.chatEl && g.chatEl.contains(document.activeElement));
 
     /** The lanes, with your own calls counted live. */
-    function lanes() {
+    // week: the week's numbers (the Week tab). The bar across the top is always today's race (Walt 10/28).
+    function lanes(week = g.week) {
       const r = g.race;
       if (!r) return [];
       const live = opts.liveDials ? opts.liveDials() : null;
@@ -422,7 +423,7 @@
         if (l.email !== r.you || live == null || live <= l.dials) return l;
         return { ...l, dials: live, points: l.points + (live - l.dials) * r.points.dial };
       });
-      if (g.week) out = out.filter((l) => l.week).map((l) => ({ ...l, ...l.week, firstRfqs: 0 }));
+      if (week) out = out.filter((l) => l.week).map((l) => ({ ...l, ...l.week, firstRfqs: 0 }));
       return out.sort((a, b) => b.points - a.points || b.dials - a.dials);
     }
 
@@ -582,7 +583,7 @@
     function render() {
       const page = opts.mount; // the web app's West Game tab (10/28): always open, in the page, nothing to drag
       let sheet = page ? page.querySelector(".wg-sheet") : document.getElementById("westgame");
-      const ls = lanes();
+      const ls = lanes(false); // the bar is today's race, whichever tab is open below it
       if (!ls.length) {
         if (page) page.replaceChildren(h("p", { class: "wg-muted", text: g.race ? "Nobody's racing today yet." : "Loading West Game…" }));
         else { if (sheet) sheet.remove(); document.body.classList.remove("has-race"); }
