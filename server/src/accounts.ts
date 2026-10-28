@@ -55,13 +55,26 @@ const WAITING_ON: Record<RfqStage, RfqStatus["waitingOn"]> = {
 export const isPurchaseOrder = (files: string[]) => files.some((f) => /purchase.?order|\bP\.?O\.?\s*#?\d/i.test(f));
 
 /** An RFQ typed or pasted into the email itself (Josipa 9/25: "Item Description Ordered WELDNUT OFFSET 1/4-20…"). */
+/** An out-of-office or other auto-reply (10/28: Rex's "Automatic reply: Amwell - RFQ" celebrated as Walt's RFQ). */
+export const isAutoReply = (e: { subject?: string | null; body_text?: string | null }) =>
+  /^\s*(automatic reply|auto-?reply|autoreply|auto response|out of (the )?office|autosvar|réponse automatique|abwesenheit)/i.test(e.subject ?? "")
+  || /^\s*(hi|hello|greetings|thank you for your (email|message))?[,.!\s]*(i|we)('m| am|'re| are| will be) (currently |now )?(out of (the )?office|away from (the|my) (office|desk)|on (vacation|leave|pto))/i.test(e.body_text ?? "");
+/** Not a request: an order, its status, shipping, an invoice. The words inside don't make it an RFQ. */
+const ORDER_SUBJECT = /\b(p\.?o\.?|purchase order|order status|order confirmation|shipping|tracking|esd|invoice|payment|remit)\b/i;
+
 export function rfqInBody(subject: string | null | undefined, body: string | null | undefined): boolean {
+  if (isAutoReply({ subject, body_text: body })) return false;
   const own = (body ?? "").split(/\n\s*On .{5,120}wrote:|\n-{2,}\s*Original Message|\nFrom: .+\n(Sent|Date): /i)[0];
+  // "If anything comes across I will send you a request for quote" (R&H Machine, 10/23) is a promise, not an ask.
+  if (/\b(i'?ll|i will|we'?ll|we will|i'?d|we'?d|would|if anything|when (we|i) have|once (we|i) have)\b[^.!?\n]{0,80}\b(rfq|request for (a )?quote|quote request)/i.test(own)) return false;
   // The subject counts on a new email ("RFQ 26-0100"), not a reply to one ("RE: 26-407 Equipment, RFQ" was a thank-you).
   // In their words it has to be an ask, not a mention ("I'll reach out when we have a materials list or RFQ", Metal Rise).
   const askBody = /\b(please (quote|price)|can you (please )?(also )?(quote|price)|could you (please )?(quote|price)|quote the following|price the following|pricing (on|for) the following|request for (a )?quote|quote request|(rfq|materials? list|bom) (is )?attached|attached (is|are) (our|the|an?) (rfq|materials? list|bom))\b/i;
   const askSubject = /\b(rfq|request for (a )?quote|quote request)\b/i;
-  if (askBody.test(own) || (!/^\s*(re|aw|sv|fw|fwd)\s*:/i.test(subject ?? "") && askSubject.test(subject ?? ""))) return true;
+  if (askBody.test(own)) return true;
+  // An order's status email (Novus Process, "ESD PO OS037235") has a parts table too; it isn't an RFQ.
+  if (ORDER_SUBJECT.test(subject ?? "")) return false;
+  if (!/^\s*(re|aw|sv|fw|fwd)\s*:/i.test(subject ?? "") && askSubject.test(subject ?? "")) return true;
   return /\b(item|part)(\s*#|\s+no\.?)?\b[\s\S]{0,60}\bdescription\b/i.test(own) && /\b(qty|quantity|ordered|each|ea)\b/i.test(own);
 }
 
@@ -646,7 +659,7 @@ export function buildAccount(x: {
   const rfqPromised = x.notes.some((n) => n.note.includes(RFQ_TAG));
   // An RFQ is an email from them with a real file; a quote is ours back with a file or "quote"/"pricing" in the subject.
   const windowStart = new Date(new Date(t0).getTime() - 3 * DAY).toISOString();
-  const rfqMail = x.emails.filter((e) => e.direction === "incoming" && at(e) >= windowStart && !x.ours(e.sender) && !isBounce(e)
+  const rfqMail = x.emails.filter((e) => e.direction === "incoming" && at(e) >= windowStart && !x.ours(e.sender) && !isBounce(e) && !isAutoReply(e)
     && (theirFiles(e.attachments).length || rfqInBody(e.subject, x.bounceBodies?.get(e.id) ?? e.body_text)))
     .sort((a, b) => at(b).localeCompare(at(a)))[0];
   const quoteMail = rfqMail && x.emails.filter((e) => e.direction === "outgoing" && at(e) > at(rfqMail)

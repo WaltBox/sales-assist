@@ -47,7 +47,7 @@ export async function setRaceRoster(ownerId: string, email: string, racing: bool
   const e = email.trim().toLowerCase();
   const excluded = racing ? r.excluded.filter((x) => x !== e) : [...new Set([...r.excluded, e])];
   await store.putSetting(ownerId, ROSTER_KEY, { excluded });
-  await store.cacheSet(RACE_KEY, null, 1).catch(() => undefined);
+  await store.cacheDelete(RACE_KEY).catch(() => undefined);
   return { excluded };
 }
 
@@ -70,7 +70,7 @@ export async function teamRace(team: Deps[], ownerId: string, opts: { fresh?: bo
   if (saved) {
     if (!building && !(await store.cacheGet<boolean>(LOCK_KEY).catch(() => null))) {
       await store.cacheSet(LOCK_KEY, true, 90_000).catch(() => undefined);
-      building = buildRace(team, ownerId).finally(() => { building = null; void store.cacheSet(LOCK_KEY, null, 1).catch(() => undefined); });
+      building = buildRace(team, ownerId).finally(() => { building = null; void store.cacheDelete(LOCK_KEY).catch(() => undefined); });
       background(building, "race");
     }
     return saved;
@@ -442,13 +442,13 @@ export async function scanForRfqs(team: Deps[], ownerId: string): Promise<RaceTa
   const reader = team.find((t) => t.rep.closeUserId === ownerId) ?? team[0];
   if (!reader) return [];
   const since = new Date(Math.max(Date.parse(last ?? "") || 0, now.getTime() - 10 * 60_000) - 60_000).toISOString();
-  const { isBounce, rfqInBody } = await import("./accounts.js");
+  const { isAutoReply, isBounce, rfqInBody } = await import("./accounts.js");
   const mails = await reader.close.listSince<Record<string, unknown>>("email", { since, fields: "id,lead_id,user_id,direction,sender,subject,date_created,attachments,body_text", max: 300 }).catch(() => []);
   const roster = await raceRoster(ownerId);
   const have = new Set((await todaysTaps(ownerId, reader.rep.timeZone, now)).map((x) => x.id));
   const found: RaceTap[] = [];
   for (const e of mails) {
-    if (e.direction !== "incoming" || /@westgatesupply\.com/i.test(String(e.sender ?? "")) || isBounce(e as never)) continue;
+    if (e.direction !== "incoming" || /@westgatesupply\.com/i.test(String(e.sender ?? "")) || isBounce(e as never) || isAutoReply(e as never)) continue;
     const t = team.find((x) => x.rep.closeUserId === e.user_id);
     if (!t || roster.excluded.includes(t.rep.email.toLowerCase())) continue;
     const leadId = String(e.lead_id ?? "");

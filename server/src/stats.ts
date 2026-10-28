@@ -494,7 +494,7 @@ const rebuilding = new Set<string>();
 async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   const tz = d.rep.timeZone;
   const key = d.rep.closeUserId;
-  const { isBounce, rfqInBody } = await import("./accounts.js");
+  const { isAutoReply, isBounce, rfqInBody } = await import("./accounts.js");
   const now = d.now?.() ?? new Date();
   const window = new Date(now.getTime() - 120 * DAY_MS).toISOString();
   const [emails, notes, changes] = await Promise.all([
@@ -525,7 +525,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   }
   for (const e of emails) {
     const leadId = String(e.lead_id);
-    if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never)) continue;
+    if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never) || isAutoReply(e as never)) continue;
     const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f) && !sentFiles.get(leadId)?.has(f.toLowerCase()));
     if (files.length) add(leadId, String(e.date_created), "file");
     else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email");

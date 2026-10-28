@@ -221,6 +221,12 @@ test("an RFQ typed into the email counts, and a teammate looped in means it's wi
   assert.equal(rfqInBody("Re: line card", "Please quote the attached"), true);
   assert.equal(rfqInBody("RFQ 26-0100", "Hello Jacob, see below."), true, "a new RFQ email");
   assert.equal(rfqInBody("Re: Westgate Supply – line card", "Thanks for sending that over. I'll be sure to reach out when we have a materials list or RFQ."), false, "a mention, not an ask (Metal Rise)");
+  // 10/28: the scan celebrated an out-of-office reply in an "Amwell - RFQ" thread, an order-status email with a parts
+  // table, and a promise to send one someday.
+  assert.equal(rfqInBody("Automatic reply: Amwell - RFQ [instantly:01a0]", "I will be out of the office until 11/2/26. If you need immediate assistance, please contact Melissa."), false, "an auto-reply");
+  assert.equal(rfqInBody("ESD PO OS037235", "Good Morning Walt, can you provide an Estimated Shipping Date for the following:\nItem # Description Qty\n1 Flange 4"), false, "an order's status, not an RFQ");
+  assert.equal(rfqInBody("Re: Great talking with you – Westgate Supply line card", "If anything comes across I will send you a request for quote.\nBrittany"), false, "a promise (R&H Machine)");
+  assert.equal(rfqInBody("ThermaPlate 26408 RFQ 20ga. Sheets", "Could you please provide your best price and lead time for the following: (40) Sheets 20ga."), true, "a real one still counts");
   assert.equal(rfqInBody("26-0100 Bolting & Gaskets.", "Hi Walt, can you please also quote the following"), true, "Mayra's second ask");
   assert.equal(rfqInBody("RE: 26-407 Equipment, RFQ, WG", "You too! Thank you"), false, "a thank-you on the RFQ thread isn't a new RFQ");
   assert.equal(rfqInBody("Re: line card", "Got it, thanks! I'll send something when a project comes up."), false);

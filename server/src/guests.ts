@@ -44,7 +44,7 @@ export async function createGuest(repId: string, name: string): Promise<{ guest:
   const token = randomBytes(24).toString("base64url");
   const guest: Guest = { id: randomUUID(), name: clean, tokenHash: hash(token), createdAt: new Date().toISOString(), active: true, offAt: null, sends: [] };
   await saveGuests(repId, [...(await listGuests(repId)), guest]);
-  await store.cacheSet("race:team", null, 1).catch(() => undefined); // a new link plays in West Game right away
+  await store.cacheDelete("race:team").catch(() => undefined); // a new link plays in West Game right away
   return { guest, token };
 }
 
@@ -56,7 +56,7 @@ export async function setGuestActive(repId: string, id: string, active: boolean)
   g.offAt = active ? null : new Date().toISOString();
   await saveGuests(repId, guests);
   // West Game shows who's playing; a link switched on or off shows up there right away (race.ts's shared copy).
-  await store.cacheSet("race:team", null, 1).catch(() => undefined);
+  await store.cacheDelete("race:team").catch(() => undefined);
   return g;
 }
 
