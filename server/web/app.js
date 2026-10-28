@@ -210,7 +210,8 @@ function render() {
   if (!token) return $app.replaceChildren(signIn());
   loadExtInfo();
   const err = state.error ? el("p", { class: "empty", text: `Couldn't load everything: ${state.error}` }) : null;
-  $app.replaceChildren(topBar(), updateBanner() || "", el("main", {}, state.page === "emails" ? [err, emailsSection()]
+  // A sidebar (Walt 10/28): the pages down the left, you and the extension at the bottom; the page beside it.
+  $app.replaceChildren(el("div", { class: "shell" }, [topBar(), el("div", { class: "content" }, [updateBanner() || "", el("main", {}, state.page === "emails" ? [err, emailsSection()]
     : state.page === "rfqs" ? [err, rfqsPage()]
     : state.page === "tasks" ? [err, tasksPage()]
     : state.page === "guests" ? [err, guestsPage()]
@@ -218,7 +219,7 @@ function render() {
     : state.page === "team" ? [teamPage()]
     : state.page === "game" ? [gamePage()]
       : state.page === "heat" ? [err, heatPage()]
-        : [hello(), err, accountsSection()]));
+        : [hello(), err, accountsSection()])])]));
 }
 
 // Sign in with your @westgatesupply.com email. First time: create a password
@@ -292,32 +293,62 @@ function signIn() {
 }
 
 
+// The sidebar folds to a rail of icons (10/28); the choice is remembered on this computer.
+let sideFolded = (() => { try { return localStorage.getItem("sideFolded") === "1"; } catch { return false; } })();
+function foldSide() { sideFolded = !sideFolded; try { localStorage.setItem("sideFolded", sideFolded ? "1" : "0"); } catch {} render(); }
+// Line icons for the pages, one path each, drawn in the sidebar's ink.
+const PAGE_ICONS = {
+  accounts: "M4 6h16v12H4z M4 10h16 M9 10v8",
+  tasks: "M5 5h14v14H5z M8 12l3 3 5-6",
+  heat: "M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-6 1-9z",
+  rfqs: "M7 3h7l4 4v14H7z M14 3v4h4 M10 12h5 M10 16h5",
+  emails: "M4 6h16v12H4z M4 7l8 6 8-6",
+  guests: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M3 20a6 6 0 0 1 12 0 M16 11a3 3 0 1 0 0-6 M21 20a6 6 0 0 0-6-6",
+  game: "M6 21V4 M6 4h12l-3 4 3 4H6",
+};
+function icon(k) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  for (const [a, v] of Object.entries({ class: "navicon", viewBox: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(a, v);
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", PAGE_ICONS[k]);
+  svg.append(path);
+  return svg;
+}
+
 function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
-  return el("header", { class: "top" }, el("div", { class: "in" }, [
-    el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), "Westgate", el("span", { class: "sub", text: "Assistant" })]),
+  const initials = state.me ? state.me.rep.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() : "";
+  return el("aside", { class: `side${sideFolded ? " folded" : ""}` }, [
+    el("div", { class: "sidetop" }, [
+      el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), el("span", { class: "brandtext" }, ["Westgate", el("span", { class: "sub", text: "Assistant" })])]),
+      el("button", { class: "fold", title: sideFolded ? "Open the menu" : "Collapse the menu", "aria-label": sideFolded ? "Open the menu" : "Collapse the menu", text: sideFolded ? "»" : "«", onclick: foldSide }),
+    ]),
     el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
-      class: state.page === k ? "on" : "", onclick: () => go(k),
-    }, [label,
+      class: state.page === k ? "on" : "", title: label, onclick: () => go(k),
+    }, [icon(k), el("span", { class: "navlabel", text: label }),
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
       k === "tasks" && state.tasks ? el("span", { class: `navc mono${state.tasks.today.length ? " hotc" : ""}`, text: state.tasks.today.length }) : null,
       // Companies that have sent an RFQ, the same 32 as the RFQs page (10/12), not just the ones on the board.
       k === "rfqs" && (state.teamRfq?.line || state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.teamRfq?.line ? state.teamRfq.line.companies : state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
       k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => a.heat && a.heat.band === "today" && !a.rfq).length }) : null,
     ]))),
-    el("div", { class: "who" }, [
+    sideFolded ? el("div", { class: "who" }, [
+      el("button", { class: "avatar", title: `${state.me ? state.me.rep.name : ""} · open the menu for your line, phone and sign out`, text: initials || "…", onclick: foldSide }),
+      el("button", { class: `linkbtn foldext${extBehind() ? " extbehind" : ""}`, title: extBehind() ? "Update extension" : "Update or get the extension", text: extBehind() ? "Upd" : "Ext", onclick: () => go("extension") }),
+    ]) : el("div", { class: "who" }, [
+      state.me ? el("span", { class: "whoname", text: state.me.rep.name }) : null,
       line ? el("button", {
         class: "myline", title: "Copy your Close number",
         onclick: (e) => { navigator.clipboard?.writeText(line); e.currentTarget.lastChild.textContent = "Copied"; setTimeout(render, 1200); },
       }, [el("span", { class: "k", text: "My line" }), el("span", { text: prettyPhone(line) })]) : null,
-      state.me ? el("span", { text: state.me.rep.name }) : null,
       // The phone that goes in your emails (10/19, each rep their own).
       state.me ? el("button", { class: "linkbtn", title: "The phone number in your line card emails", text: state.me.rep.phone ? `Email phone ${prettyPhone(state.me.rep.phone)}` : "Add your phone", onclick: setPhone }) : null,
       el("button", { class: `linkbtn${extBehind() ? " extbehind" : ""}`, text: extBehind() ? "Update extension" : "Update or get the extension", onclick: () => go("extension") }),
       state.me && state.me.owner ? el("button", { class: "linkbtn", text: "Team", onclick: () => go("team") }) : null,
       el("button", { class: "linkbtn", text: "Sign out", onclick: signOut }),
     ]),
-  ]));
+  ]);
 }
 
 // ---------- West Game (10/28): the same race as the side panel's, open on its own tab, with Today and Week ----------

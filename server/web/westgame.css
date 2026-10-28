@@ -345,20 +345,34 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 .wg-from li span { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .wg-from li small { flex: none; color: var(--wg-muted); }
 /* the weekly leaderboard (10/27): ranked by the week's points, with each earlier day's winner */
-.wg-board-week { margin: 0 0 12px; padding: 8px 10px; background: #fff; border: 1.5px solid var(--wg-ink); box-shadow: 3px 3px 0 var(--wg-ink); }
-.wg-board-week table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.wg-board-week th { font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); font-weight: 400; text-align: right; padding: 0 0 4px 6px; }
-.wg-board-week td { padding: 6px 0 6px 6px; border-top: 1px solid var(--wg-line); }
-.wg-board-week .wg-rank { width: 1.6em; padding-left: 0; font-weight: 700; color: var(--wg-muted); }
-.wg-board-week .wg-who { font-weight: 600; overflow-wrap: anywhere; }
-.wg-board-week .wg-who .wg-tag { margin-left: 6px; }
-.wg-board-week .wg-num { text-align: right; font-variant-numeric: tabular-nums; }
-.wg-board-week .strong { font-weight: 800; }
-.wg-board-week tr.top .wg-rank { color: var(--wg-gold); }
-.wg-board-week tr.me td { background: #fff6f6; }
-.wg-board-week tr.me .wg-who { color: var(--wg-red); }
-.wg-days { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0 0; font-size: 12px; color: var(--wg-muted); }
-.wg-days b { color: var(--wg-ink); font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+/* The week's leaderboard (10/28): ranked rows with a bar against the leader and the week's pace line. */
+.wg-lb { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.wg-lbrow { display: grid; grid-template-columns: 40px 1fr; gap: 0 10px; align-items: center; width: 100%; padding: 10px 12px; text-align: left; cursor: pointer; color: var(--wg-ink);
+  background: #fff; border: 1.5px solid var(--wg-ink); box-shadow: 3px 3px 0 var(--wg-ink); font: inherit; }
+.wg-lbrow.top { border-width: 2px; box-shadow: 4px 4px 0 var(--wg-gold), 4px 4px 0 1.5px var(--wg-ink); }
+.wg-lbrow.me { background: #fff6f6; }
+.wg-lbrow.me .wg-lbname { color: var(--wg-red); }
+.wg-lbrow.on { background: #f4f0e5; }
+.wg-lbrank { font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 22px; text-align: center; color: var(--wg-muted); }
+.wg-lbrank.medal { font-size: 26px; }
+.wg-lbmain { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wg-lbtop { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.wg-lbname { font-weight: 700; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-lbwon { font-size: 14px; letter-spacing: -2px; }
+.wg-lbpts { margin-left: auto; font-family: var(--display, Arial, sans-serif); font-weight: 800; font-size: 24px; line-height: 1; white-space: nowrap; }
+.wg-lbpts small { font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; margin-left: 3px; color: var(--wg-muted); }
+.wg-lbbar { position: relative; display: block; height: 12px; background: repeating-linear-gradient(90deg, #ece6d6 0 14px, #e4ddca 14px 15px); box-shadow: inset 0 1px 2px rgba(17, 17, 20, .18); overflow: hidden; }
+.wg-lbfill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(0, 25, 57, .35), var(--wg-navy)); transition: width .8s cubic-bezier(.3, 1.3, .5, 1); }
+.wg-lbrow.me .wg-lbfill { background: linear-gradient(90deg, rgba(220, 0, 37, .35), var(--wg-red)); }
+.wg-lbrow.top .wg-lbfill { background: linear-gradient(90deg, #f5b400, #c98f00); }
+.wg-lbpace { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--wg-ink); }
+.wg-lbsub { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--wg-muted); }
+.wg-lbstat b { color: var(--wg-ink); font-variant-numeric: tabular-nums; }
+.wg-lbrow .wg-stats { grid-column: 1 / -1; margin-top: 10px; }
+.wg-lbdays { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.wg-lbday { display: inline-flex; flex-direction: column; gap: 1px; padding: 6px 10px; border: 1px solid var(--wg-line); background: #fff; font-size: 12px; min-width: 72px; }
+.wg-lbday b { font-family: var(--label, Arial, sans-serif); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--wg-muted); }
+.wg-lbday.today { border-color: var(--wg-ink); }
 
 /* A crown above whoever's in first (Walt 10/27). Just the emoji, above the dot. */
 .wg-dot.lead::before { content: "👑"; position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);

@@ -43,22 +43,29 @@ button { font: inherit; }
 .muted { color: var(--muted); }
 .label { font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 
-/* ---------- top bar ---------- */
-.top {
-  position: sticky; top: 0; z-index: 10; background: var(--navy); color: var(--paper);
-  border-bottom: 2px solid var(--ink);
+/* ---------- the sidebar (10/28; it was a top bar) ---------- */
+.shell { display: flex; align-items: flex-start; min-height: 100vh; }
+.side {
+  position: sticky; top: 0; flex: none; width: 236px; height: 100vh; overflow-y: auto; z-index: 10;
+  display: flex; flex-direction: column; gap: 22px; padding: 20px 14px 18px;
+  background: var(--navy); color: var(--paper); border-right: 2px solid var(--ink);
 }
-.top .in { max-width: 1480px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; gap: 10px; font-family: var(--label); letter-spacing: .18em; text-transform: uppercase; font-size: 14px; }
+.content { flex: 1; min-width: 0; }
+.sidetop { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.fold { flex: none; width: 26px; height: 26px; border: 1px solid rgba(229, 224, 209, .35); background: transparent; color: var(--paper); cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+.fold:hover { border-color: rgba(229, 224, 209, .7); }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; min-width: 0; font-family: var(--label); letter-spacing: .18em; text-transform: uppercase; font-size: 14px; }
+.brandtext { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
 .brand img { height: 20px; filter: brightness(0) invert(1); }
 .brand .sub { opacity: .7; font-size: 12px; letter-spacing: .12em; }
-.who { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.who { margin-top: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 16px 8px 0; border-top: 1px solid rgba(229, 224, 209, .2); font-size: 13px; }
+.whoname { font-weight: 600; }
 .myline {
   font-family: var(--label); letter-spacing: .08em; font-size: 12px; padding: 5px 9px;
   border: 1px solid rgba(229, 224, 209, .45); background: transparent; color: var(--paper); cursor: pointer;
 }
 .myline .k { opacity: .65; margin-right: 6px; }
-.linkbtn { background: none; border: 0; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; font-size: 13px; }
+.linkbtn { background: none; border: 0; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; font-size: 13px; text-align: left; }
 
 /* ---------- page ---------- */
 main { max-width: 1480px; margin: 0 auto; padding: 20px 24px 60px; display: flex; flex-direction: column; gap: 20px; }
@@ -193,7 +200,7 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
   .ev { grid-template-columns: 18px 48px 1fr; }
 }
 @media (max-width: 560px) {
-  .top .in, main { padding-left: 16px; padding-right: 16px; }
+  main { padding-left: 16px; padding-right: 16px; }
 }
 
 /* the Line card column: dot + word */
@@ -391,15 +398,43 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .whenf { display: flex; flex-direction: column; line-height: 1.25; }
 .offnote { font-size: 13px; color: var(--amber); margin: -6px 0 6px; }
 
-/* top bar pages */
-.nav { display: flex; gap: 4px; flex: 1; margin-left: 12px; }
+/* the pages, down the sidebar */
+.nav { display: flex; flex-direction: column; gap: 2px; }
 .nav button {
-  background: none; border: 1px solid transparent; color: var(--paper); cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--label); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; padding: 6px 10px;
+  background: none; border: 1px solid transparent; color: var(--paper); cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-family: var(--label); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; padding: 9px 10px;
 }
 .nav button:hover { border-color: rgba(229, 224, 209, .3); }
 .nav button.on { border-color: rgba(229, 224, 209, .55); background: rgba(229, 224, 209, .1); }
-.navc { font-size: 11px; background: var(--paper); color: var(--navy); padding: 0 5px; }
+.navc { margin-left: auto; font-size: 11px; background: var(--paper); color: var(--navy); padding: 0 5px; }
+.navicon { flex: none; opacity: .85; }
+.nav button.on .navicon { opacity: 1; }
+/* Folded: a rail of icons, the counts tucked on them, your initials at the bottom. */
+.side.folded { width: 64px; padding-left: 10px; padding-right: 10px; }
+.side.folded .sidetop { flex-direction: column; gap: 10px; }
+.side.folded .brand { padding: 0; }
+.side.folded .brandtext, .side.folded .navlabel { display: none; }
+.side.folded .nav button { position: relative; justify-content: center; padding: 10px 0; }
+.side.folded .navc { position: absolute; top: 2px; right: 2px; margin: 0; font-size: 10px; padding: 0 4px; }
+.side.folded .who { align-items: center; padding-left: 0; padding-right: 0; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid rgba(229, 224, 209, .6); background: transparent; color: var(--paper); cursor: pointer; font-family: var(--label); font-size: 13px; letter-spacing: .06em; }
+.foldext { font-family: var(--label); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; text-decoration: none; }
+.foldext.extbehind { padding: 2px 7px; }
+/* A phone or a narrow window: the sidebar becomes a bar across the top, the pages scroll sideways. */
+@media (max-width: 900px) {
+  .shell { display: block; }
+  .side { position: static; width: auto; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 14px; border-right: 0; border-bottom: 2px solid var(--ink); }
+  .nav { flex-direction: row; flex: 1; order: 3; width: 100%; overflow-x: auto; gap: 4px; padding-bottom: 2px; }
+  .nav button { width: auto; white-space: nowrap; padding: 6px 10px; }
+  .navc { margin-left: 0; }
+  .who { margin: 0 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0; border: 0; }
+  .fold { display: none; }
+  .side.folded { width: auto; padding: 10px 14px; }
+  .side.folded .brandtext, .side.folded .navlabel { display: inline; }
+  .side.folded .sidetop { flex-direction: row; }
+  .side.folded .nav button { padding: 6px 10px; }
+  .side.folded .navc { position: static; }
+}
 .pagehead { align-items: center; margin-bottom: 8px; }
 .ptitle { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(22px, 2.6vw, 30px); line-height: 1; }
 

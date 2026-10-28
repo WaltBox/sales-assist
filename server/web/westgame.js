@@ -516,24 +516,49 @@
       ]);
     }
 
-    /** The week at a glance (Walt 10/27): ranked by the week's points, with the days each person won. */
+    /**
+     * The week's leaderboard (Walt 10/27; 10/28: "a cool leaderboard", no lanes, since the week maxes the track out).
+     * Ranked by the week's points, each with a bar against the leader, the week's pace line, calls, cards, RFQs, and a
+     * crown for each day won. Days so far run along the bottom.
+     */
     function leaderboard(ls) {
       const r = g.race;
       const days = r.weekDays || [];
       const wins = (email) => days.filter((d) => d.winner && d.winner.email === email).length;
       const dayName = (day) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "short" });
-      const cell = (text, cls) => h("td", { class: cls || "", text: String(text) });
-      return h("section", { class: "wg-board-week" }, [
-        h("table", {}, [
-          h("tr", {}, ["", "", "Pts", "Calls", "Cards", "RFQs", "Days"].map((t) => h("th", { text: t }))),
-          ...ls.map((l, i) => h("tr", { class: `${l.email === r.you ? "me" : ""}${i === 0 && l.points > 0 ? " top" : ""}` }, [
-            cell(i + 1, "wg-rank"),
-            h("td", { class: "wg-who" }, [l.email === r.you ? `${firstName(l)} (you)` : l.name, l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null]),
-            cell(l.points, "wg-num strong"), cell(l.dials, "wg-num"), cell(l.lineCards, "wg-num"), cell(l.rfqs, "wg-num"),
-            cell(wins(l.email) || "–", "wg-num"),
-          ])),
+      const top = Math.max(1, ...ls.map((l) => l.points));
+      // The pace line: a finished day's points for every day of the week so far (today included).
+      const pace = goal() * (days.length + 1);
+      const scale = Math.max(top, pace);
+      const medal = (i) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : String(i + 1));
+      const stat = (n, one, many) => h("span", { class: "wg-lbstat" }, [h("b", { text: String(n) }), ` ${n === 1 ? one : many}`]);
+      return h("section", { class: "wg-lb" }, [
+        ...ls.map((l, i) => {
+          const me = l.email === r.you;
+          const won = wins(l.email);
+          return h("button", { class: `wg-lbrow${me ? " me" : ""}${i === 0 && l.points > 0 ? " top" : ""}${g.lane === l.email ? " on" : ""}`, onclick: () => { g.lane = g.lane === l.email ? null : l.email; render(); } }, [
+            h("span", { class: `wg-lbrank${i < 3 && l.points > 0 ? " medal" : ""}`, text: l.points > 0 ? medal(i) : String(i + 1) }),
+            h("span", { class: "wg-lbmain" }, [
+              h("span", { class: "wg-lbtop" }, [
+                h("span", { class: "wg-lbname", text: me ? `${firstName(l)} (you)` : l.name }),
+                l.guest ? h("span", { class: "wg-tag", text: "Guest" }) : null,
+                won ? h("span", { class: "wg-lbwon", title: `${won} day${won === 1 ? "" : "s"} won this week`, text: "👑".repeat(Math.min(won, 5)) }) : null,
+                h("span", { class: "wg-lbpts" }, [h("b", { text: String(l.points) }), h("small", { text: "pts" })]),
+              ]),
+              h("span", { class: "wg-lbbar" }, [
+                h("i", { class: "wg-lbfill", style: `width:${Math.min(100, (l.points / scale) * 100)}%` }),
+                h("i", { class: "wg-lbpace", style: `left:${Math.min(100, (pace / scale) * 100)}%`, title: `On pace: ${pace} points by the end of today` }),
+              ]),
+              h("span", { class: "wg-lbsub" }, [stat(l.dials, "call", "calls"), stat(l.lineCards, "line card", "line cards"), stat(l.rfqs, "RFQ", "RFQs"), l.reached ? stat(l.reached, "talk", "talks") : null]),
+            ]),
+            g.lane === l.email && !l.error ? stats(l, i) : null,
+          ]);
+        }),
+        h("div", { class: "wg-lbdays" }, [
+          ...days.map((d) => h("span", { class: "wg-lbday" }, [h("b", { text: dayName(d.day) }), h("span", { text: d.winner ? `${(d.winner.name || "").split(/\s+/)[0]} · ${d.winner.points}` : "–" })])),
+          h("span", { class: "wg-lbday today" }, [h("b", { text: dayName(r.day) }), h("span", { text: ls[0] && ls[0].points > 0 ? `${firstName(ls[0])} leads · live` : "live" })]),
         ]),
-        days.length ? h("p", { class: "wg-days" }, days.map((d) => h("span", {}, [h("b", { text: dayName(d.day) }), d.winner ? ` ${(d.winner.name || "").split(/\s+/)[0]} ${d.winner.points}` : " –"]))) : null,
+        h("p", { class: "wg-muted", text: `The line is pace: ${goal()} points a day, every day this week. Days won get a crown. Tap anyone for their numbers.` }),
       ]);
     }
 
@@ -548,8 +573,7 @@
           h("h2", { class: "wg-title", text: g.week ? "This week's competition" : "Today's competition" }),
           h("div", { class: "wg-tabs" }, [tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
         ]),
-        g.week ? leaderboard(ls) : null,
-        h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
+        g.week ? leaderboard(ls) : h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
         opts.chat ? chatBox() : null,
         h("section", { class: "wg-feed" }, [
           h("p", { class: "wg-label", text: today.length ? `RFQs today · ${today.length}` : "RFQs today" }),
