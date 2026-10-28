@@ -353,7 +353,7 @@ function topBar() {
 
 // ---------- West Game (10/28): the same race as the side panel's, open on its own tab, with Today and Week ----------
 // One element kept across redraws: the game draws into it and keeps its own timers, so a page redraw doesn't reset it.
-const gameHost = el("div", { class: "gamehost" });
+const gameHost = el("div", { class: "gamehost" }, [el("p", { class: "muted", text: "Loading West Game…" })]);
 let game = null;
 function gamePage() {
   if (!game && window.WestGame) {

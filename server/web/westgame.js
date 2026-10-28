@@ -565,7 +565,7 @@
       return [
         h("div", { class: "wg-head" }, [
           h("h2", { class: "wg-title", text: g.week ? "This week's competition" : "Today's competition" }),
-          h("div", { class: "wg-tabs" }, [soundButton(), tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
+          h("div", { class: "wg-tabs" }, [tab(!g.week, "Today", false), tab(g.week, "Week", true)]),
         ]),
         g.week ? leaderboard(ls) : h("div", { class: "wg-field" }, ls.flatMap((l, i) => lane(l, i, max))),
         opts.chat ? chatBox() : null,
@@ -574,7 +574,7 @@
           today.length ? h("ul", {}, today.slice().reverse().map((e) => h("li", {}, [h("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? h("span", { class: "wg-tag good", text: "First RFQ" }) : null])))
             : h("p", { class: "wg-muted", text: "None yet. The first one sets off something stupid on every screen." }),
         ]),
-        h("p", { class: "wg-muted", text: `Points: ${[["call", r.points.dial], ["conversation", r.points.reached], ["line card", r.points.lineCard], ["new company's RFQ", r.points.rfq]].filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ")}. ${goal()} points finishes the day. Starts over every morning.` }),
+        h("p", { class: "wg-muted" }, [`Points: ${[["call", r.points.dial], ["conversation", r.points.reached], ["line card", r.points.lineCard], ["new company's RFQ", r.points.rfq]].filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ")}. ${goal()} points finishes the day. Starts over every morning. `, soundButton()]),
         r.owner && opts.webApp ? h("div", { class: "wg-links" }, [h("a", { href: opts.webApp, target: "_blank", rel: "noopener", text: "Pick who plays (web app)" })]) : null,
       ];
     }
@@ -727,8 +727,8 @@
     }
     window.ringBell = () => bell(3);
     function soundButton() {
-      return h("button", { class: `wg-sound${g.sound ? "" : " off"}`, title: g.sound ? "The bell rings for every RFQ. Tap to mute it on this screen." : "Muted on this screen. Tap to ring the bell for RFQs again.", "aria-label": g.sound ? "Mute the bell" : "Unmute the bell",
-        text: g.sound ? "Bell on" : "Bell off", onclick: () => { g.sound = !g.sound; opts.store.set(SOUND, g.sound); if (g.sound) bell(1); render(); } });
+      return h("button", { class: `wg-soundlink${g.sound ? "" : " off"}`, title: g.sound ? "The bell rings for every RFQ. Tap to mute it on this screen." : "Muted on this screen. Tap to ring the bell for RFQs again.", "aria-label": g.sound ? "Mute the bell" : "Unmute the bell",
+        text: g.sound ? "The bell is on. Mute it here." : "The bell is muted here. Turn it on.", onclick: () => { g.sound = !g.sound; opts.store.set(SOUND, g.sound); if (g.sound) bell(1); render(); } });
     }
 
     // An RFQ anywhere on the team: the bar turns into one of the scenes for a few seconds, then slides back.
