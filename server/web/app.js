@@ -34,7 +34,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#team" ? "team" : location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : "accounts"; }
+function pageFromHash() { return location.hash === "#team" ? "team" : location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : location.hash === "#game" ? "game" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -216,6 +216,7 @@ function render() {
     : state.page === "guests" ? [err, guestsPage()]
     : state.page === "extension" ? [extensionPage()]
     : state.page === "team" ? [teamPage()]
+    : state.page === "game" ? [gamePage()]
       : state.page === "heat" ? [err, heatPage()]
         : [hello(), err, accountsSection()]));
 }
@@ -295,7 +296,7 @@ function topBar() {
   const line = state.me && state.me.lines && state.me.lines[0];
   return el("header", { class: "top" }, el("div", { class: "in" }, [
     el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), "Westgate", el("span", { class: "sub", text: "Assistant" })]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"], ["guests", "Guests"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", onclick: () => go(k),
     }, [label,
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
@@ -317,6 +318,24 @@ function topBar() {
       el("button", { class: "linkbtn", text: "Sign out", onclick: signOut }),
     ]),
   ]));
+}
+
+// ---------- West Game (10/28): the same race as the side panel's, open on its own tab, with Today and Week ----------
+// One element kept across redraws: the game draws into it and keeps its own timers, so a page redraw doesn't reset it.
+const gameHost = el("div", { class: "gamehost" });
+let game = null;
+function gamePage() {
+  if (!game && window.WestGame) {
+    game = WestGame.create({
+      mount: gameHost,
+      webApp: "#team",
+      load: (fresh) => api(`/api/race${fresh ? "?fresh=1" : ""}`),
+      live: () => api("/api/race/live"),
+      chat: (text) => api("/api/race/chat", { text }),
+      store: { get: async (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } },
+    });
+  }
+  return el("section", { class: "gamepage" }, [gameHost]);
 }
 
 async function setPhone() {

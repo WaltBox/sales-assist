@@ -587,6 +587,8 @@ textarea { resize: vertical; min-height: 70px; }
 .chip3.warn { color: var(--amber); border-color: rgba(138, 90, 0, .45); }
 .glance .g-row.called strong { color: var(--amber); }
 .btn.cooling { color: var(--amber); border-color: var(--amber); }
+.btn.hijack { color: var(--red); border-color: var(--red); font-weight: 700; }
+.hijacked { font-size: 12px; color: var(--muted); }
 .ecounts { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: flex-end; }
 .ecount { font: inherit; font-family: var(--label); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: none; border: 0; border-bottom: 1.5px solid transparent; padding: 2px 0; cursor: pointer; }
 .ecount:hover { color: var(--ink); }

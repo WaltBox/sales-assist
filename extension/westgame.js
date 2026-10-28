@@ -563,17 +563,30 @@
 
     const maxH = () => Math.round(window.innerHeight * 0.82);
     function render() {
-      let sheet = document.getElementById("westgame");
+      const page = opts.mount; // the web app's West Game tab (10/28): always open, in the page, nothing to drag
+      let sheet = page ? page.querySelector(".wg-sheet") : document.getElementById("westgame");
       const ls = lanes();
-      if (!ls.length) { if (sheet) sheet.remove(); document.body.classList.remove("has-race"); return; }
-      document.body.classList.add("has-race");
-      if (!sheet) { sheet = h("section", { id: "westgame", class: "wg-sheet", "aria-label": "West Game" }); document.body.append(sheet); }
+      if (!ls.length) {
+        if (page) page.replaceChildren(h("p", { class: "wg-muted", text: g.race ? "Nobody's racing today yet." : "Loading West Game…" }));
+        else { if (sheet) sheet.remove(); document.body.classList.remove("has-race"); }
+        return;
+      }
+      if (page) {
+        if (!sheet) { sheet = h("section", { class: "wg-sheet wg-page open", "aria-label": "West Game" }); page.replaceChildren(sheet); }
+        g.open = true;
+        if (!g.lane) g.lane = g.race.you;
+      } else {
+        document.body.classList.add("has-race");
+        if (!sheet) { sheet = h("section", { id: "westgame", class: "wg-sheet", "aria-label": "West Game" }); document.body.append(sheet); }
+      }
       if (g.drag) return;
       sheet.classList.toggle("open", g.open);
       sheet.classList.toggle("partying", !!g.party);
       const closed = g.party ? PARTY : MIN;
-      sheet.style.height = g.open ? `${maxH()}px` : `${closed}px`;
-      document.body.style.setProperty("--rb", `${closed}px`);
+      if (!page) {
+        sheet.style.height = g.open ? `${maxH()}px` : `${closed}px`;
+        document.body.style.setProperty("--rb", `${closed}px`);
+      }
       const max = goal();
       // The closed bar is a little scoreboard: your place, the whole team on one track, your points.
       const at = ls.findIndex((l) => l.email === g.race.you);
@@ -596,10 +609,10 @@
               ...fanned(ls).map(({ l, i, shift }) => dot(l, i, max, true, shift)),
             ]),
           ]),
-          h("span", { class: "wg-score" }, [h("b", { text: String(mine.points) }), h("small", { text: g.open ? "▾ pts" : "▴ pts" })]),
+          h("span", { class: "wg-score" }, [h("b", { text: String(mine.points) }), h("small", { text: page ? "pts" : g.open ? "▾ pts" : "▴ pts" })]),
         ]),
       ]);
-      grab.addEventListener("pointerdown", down);
+      if (!page) grab.addEventListener("pointerdown", down);
       const old = sheet.querySelector(".wg-body");
       // Typing in the chat: leave the body alone (moving the box would drop the cursor); just swap the bar.
       if (typing() && old && !g.party) { if (sheet.firstChild !== grab) sheet.replaceChild(grab, sheet.firstChild); g.back = false; return; }

@@ -365,3 +365,9 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
   font-size: calc(var(--wg-dot) * .62); line-height: 1; pointer-events: none; z-index: 4; }
 /* In the big lanes the crown goes on the Lead tag instead: at the finish it ran into the points (10/27). */
 .wg-track .wg-dot.lead::before { content: none; }
+
+/* The web app's West Game tab (10/28): the same game, open in the page instead of a sheet over it. */
+.wg-sheet.wg-page { position: relative; inset: auto; z-index: auto; height: auto; border: 2px solid var(--wg-ink); box-shadow: 6px 6px 0 rgba(17, 17, 20, .12); transition: none; }
+.wg-sheet.wg-page .wg-grab { cursor: default; touch-action: auto; }
+.wg-sheet.wg-page .wg-handle { display: none; }
+.wg-sheet.wg-page .wg-body { overflow: visible; max-width: none; padding: 10px 18px 24px; }

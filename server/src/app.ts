@@ -23,7 +23,7 @@ import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store
 import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, holdAccount, morningRun, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
+import { automationsView, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
@@ -699,7 +699,14 @@ export function createApp(appDeps: AppDeps) {
       })),
     };
   }));
-  app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({ cooling: await coolingFor(d, leadId(req)) })));
+  // Teammates to hijack from (10/28): whose automatic emails this account is in, besides your own.
+  const teammates = async (d: Deps) => (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null))))
+    .filter((x): x is Deps => !!x && x.rep.closeUserId !== d.rep.closeUserId);
+  app.get("/api/leads/:leadId/hold", authed, route(async (req, d) => ({
+    cooling: await coolingFor(d, leadId(req)),
+    sequences: await sequencesWith(await teammates(d), leadId(req)).catch(() => []),
+  })));
+  app.post("/api/leads/:leadId/hijack", authed, route(async (req, d) => hijackAccount(await teammates(d), d, leadId(req))));
   // Memes for the automatic bumps (9/30): the list (with which this lead has already had), and the pick for a lead's next bump.
   app.get("/api/memes", authed, route(async (req, d) => {
     const memes = await memesFor(d);

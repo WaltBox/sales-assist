@@ -1,6 +1,7 @@
 import { rfqByStatus } from "./accounts.js";
 import { background } from "./background.js";
-import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, forgetBoard, type Account } from "./accounts.js";
+import { accountsBoard, BUMP_AFTER_BUSINESS_DAYS, cachedBoard, forgetBoard, type Account } from "./accounts.js";
+import { ownerFieldId } from "./myleads.js";
 import { reachedToday } from "./dialviews.js";
 import type { Deps } from "./assistant.js";
 import { config } from "./config.js";
@@ -541,6 +542,40 @@ export async function holdAccount(d: Deps, leadId: string, hold: boolean, opts: 
   await store.putSetting(d.rep.closeUserId, "cooling", map);
   await store.putSetting(d.rep.closeUserId, "held", legacy);
   return { leadId, held: hold, until };
+}
+
+// ---------- Hijack (Walt 10/28): take an account over from a teammate's email sequence ----------
+
+/** Whose automatic emails an account is in: the teammates whose board has it and isn't cooling it. */
+export async function sequencesWith(others: Deps[], leadId: string): Promise<Array<{ email: string; name: string }>> {
+  const out: Array<{ email: string; name: string }> = [];
+  for (const t of others) {
+    const board = await cachedBoard(t).catch(() => null);
+    if (!board?.accounts.some((a) => a.leadId === leadId && !a.rfq)) continue;
+    if (await coolingFor(t, leadId).catch(() => null)) continue;
+    out.push({ email: t.rep.email.toLowerCase(), name: t.rep.name });
+  }
+  return out;
+}
+
+/**
+ * "Hijack": the account comes out of every teammate's automatic emails (a cooling period with no end, any bump
+ * already scheduled pulled back, their unsent rescue draft dropped) and its Lead owner in Close becomes you. It
+ * joins your own sequence the way any account does: when you send them a line card from your account.
+ */
+export async function hijackAccount(others: Deps[], d: Deps, leadId: string) {
+  const from = await sequencesWith(others, leadId);
+  const first = d.rep.name.split(/\s+/)[0] || d.rep.name;
+  for (const t of others.filter((t) => from.some((f) => f.email === t.rep.email.toLowerCase()))) {
+    await holdAccount(t, leadId, true, { why: `${first} took this account over` });
+    await stopScheduledFor(t, leadId, `${first} took this account over.`).catch(() => undefined);
+    await dropRescueDraft(t, leadId).catch(() => undefined);
+    forgetBoard(t.rep.closeUserId);
+  }
+  const field = await ownerFieldId(d).catch(() => null);
+  if (field) await d.close.updateLead(leadId, { [`custom.${field}`]: d.rep.closeUserId }).catch(() => undefined);
+  await d.close.createNote(leadId, `[Hijacked] ${d.rep.name} took this account over${from.length ? ` from ${from.map((f) => f.name).join(" and ")}` : ""}.`, false).catch(() => undefined);
+  return { leadId, from, owner: field ? d.rep.email.toLowerCase() : null };
 }
 
 // ---------- the forecast: who gets an automatic email, and when, if nothing changes ----------

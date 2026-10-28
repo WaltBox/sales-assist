@@ -583,3 +583,23 @@ test("at most 80 emails a day (10/12): the forecast slides the overflow to the n
   for (const x of f) perDay.set(x.sendOn.slice(0, 10), (perDay.get(x.sendOn.slice(0, 10)) ?? 0) + 1);
   for (const [day, n] of perDay) assert.ok(n <= DAILY_CAP, `${day}: ${n}`);
 });
+
+test("Hijack (10/28): the account leaves a teammate's automatic emails and its Lead owner becomes you", async () => {
+  const { hijackAccount, sequencesWith, forecast } = await import("../src/automations.js");
+  const { close, d: walt } = setup("user_hj_walt");
+  walt.rep = { ...walt.rep, name: "Walt Boxwell", email: "walt@westgatesupply.com" };
+  const chase: Deps = { close: new FakeClose(), llm: demoLlm, rep: { ...rep, closeUserId: "user_hj_chase", name: "Chase Bent", email: "chase@westgatesupply.com" } };
+  const crest = (await accountsBoard(walt, { fresh: true })).accounts.find((a) => a.company === "Crest Mechanical")!;
+  await store.putAutomation({ id: "acti_hj_bump", repId: walt.rep.closeUserId, leadId: crest.leadId, company: crest.company, to: crest.contact.email!, subject: "Re: x", kind: "bump", label: "", reason: "", scheduledFor: new Date(Date.now() + 3600e3).toISOString(), createdAt: new Date().toISOString(), status: "scheduled", statusAt: null, note: null, checkedAt: null });
+
+  await store.putSetting(walt.rep.closeUserId, "cooling", {}); // the store outlives a test run
+  await store.putSetting("team", "leadOwnerFieldId", "cf_hj_owner"); // the Lead owner field, whatever other tests left
+  assert.deepEqual((await sequencesWith([walt], crest.leadId)).map((x) => x.name), ["Walt Boxwell"], "Crest is in Walt's emails");
+  const r = await hijackAccount([walt], chase, crest.leadId);
+  assert.deepEqual(r.from.map((x) => x.name), ["Walt Boxwell"]);
+  assert.equal((await forecast(walt)).find((x) => x.leadId === crest.leadId)?.held, true, "out of Walt's emails for good");
+  assert.equal((await store.listAutomations(walt.rep.closeUserId, new Date(Date.now() - 86400e3).toISOString())).find((a) => a.id === "acti_hj_bump")?.status, "stopped", "the scheduled bump is pulled back");
+  assert.deepEqual(await sequencesWith([walt], crest.leadId), [], "nobody's sequence has it now");
+  assert.equal((chase.close as FakeClose).leadFields_[crest.leadId]?.["custom.cf_hj_owner"], "user_hj_chase", "Lead owner in Close is Chase");
+  assert.ok(close.writes.some((w) => w.op === "note" && /\[Cooling\].*Chase took this account over/.test(String((w.body as { note: string }).note))), "Walt's lead says why");
+});

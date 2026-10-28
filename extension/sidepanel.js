@@ -160,6 +160,7 @@ async function loadBrief(st, refresh = false) {
       api(`/api/leads/${st.leadId}/hold`).catch(() => null),
     ]);
     st.cooling = holdInfo && holdInfo.cooling ? holdInfo.cooling : null;
+    st.sequences = holdInfo && holdInfo.sequences ? holdInfo.sequences : [];
     // The purchasing cycle as heard so far, and the one question to ask next (Walt 10/5).
     if (purch) st.purch = { ...purch, edit: null, busy: false, saved: false };
     // Their line card was never opened: the rescue email is drafted, ready to send once they pick up.
@@ -1124,6 +1125,27 @@ function pmsBuyButton(st) {
   ]);
 }
 
+// "Hijack" (Walt 10/28): the account is in a teammate's automatic emails; one tap takes it over. It comes out of their
+// sequence (any bump already scheduled is pulled back) and you become its Lead owner in Close. It joins your own
+// sequence when you send them a line card.
+function hijackButton(st) {
+  const h = st.hijack || {};
+  if (h.done) return el("span", { class: "hijacked", text: `Hijacked from ${h.from.map((x) => x.name.split(/\s+/)[0]).join(" and ")} · out of their emails, yours in Close` });
+  const seqs = st.sequences || [];
+  if (!seqs.length) return null;
+  const names = seqs.map((x) => x.name.split(/\s+/)[0]).join(" and ");
+  const run = async () => {
+    st.hijack = { busy: true }; render();
+    try {
+      const r = await api(`/api/leads/${st.leadId}/hijack`);
+      st.hijack = { done: true, from: r.from.length ? r.from : seqs };
+      st.sequences = [];
+    } catch (e) { st.hijack = null; st.error = e.message; }
+    if (st === S) render();
+  };
+  return el("button", { class: "btn small hijack", disabled: !!h.busy, text: h.busy ? "Hijacking…" : `Hijack from ${names}`, title: `In ${names}'s automatic emails. Tap to take it: out of their sequence, you as Lead owner in Close.`, onclick: run });
+}
+
 // "Shot down" (Walt 10/5): they said no. The lead goes to Not Interested in Close with a note, its open callbacks
 // are marked done, and it leaves the calls and the automatic emails. Two steps (tap, then save) so a slip doesn't
 // close an account; Undo puts the status back.
@@ -1145,6 +1167,7 @@ function shotDownButton(st) {
   const open = () => { st.shotDown = { open: true, note: "" }; render(); setTimeout(() => { const i = document.getElementById("shot-note"); if (i) i.focus(); }, 0); };
   if (!r.open) return el("div", { class: "shotwrap" }, [
     pmsBuyButton(st),
+    hijackButton(st),
     coolOffButton(st),
     r.undone ? el("span", { class: "muted small", text: `Undone: back to ${r.undone}. The callbacks it cleared stay done, so tap an outcome to set a new one.` }) : null,
   ]);
