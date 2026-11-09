@@ -174,18 +174,29 @@ export class FileStore implements Store {
  * so nothing but this server can read them.
  */
 export class SupabaseStore implements Store {
-  constructor(private url: string, private key: string) {}
+  /** How long one store call may take. Without a limit (11/9) a slow afternoon at Supabase held every request open
+   * until Vercel killed it at five minutes, and the pile of hung requests kept the store slow. */
+  constructor(private url: string, private key: string, private timeoutMs = Number(process.env.STORE_TIMEOUT_MS) || 10_000) {}
 
   private async req<T>(method: string, pathAndQuery: string, body?: unknown, prefer?: string): Promise<T> {
-    const res = await fetch(`${this.url}/rest/v1/${pathAndQuery}`, {
-      method,
-      headers: {
-        apikey: this.key, authorization: `Bearer ${this.key}`, "content-type": "application/json",
-        ...(prefer ? { prefer } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`Supabase ${method} ${pathAndQuery.split("?")[0]}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    const what = `Supabase ${method} ${pathAndQuery.split("?")[0]}`;
+    let res: Response;
+    try {
+      res = await fetch(`${this.url}/rest/v1/${pathAndQuery}`, {
+        method,
+        headers: {
+          apikey: this.key, authorization: `Bearer ${this.key}`, "content-type": "application/json",
+          ...(prefer ? { prefer } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (e) {
+      const name = (e as { name?: string }).name;
+      if (name === "TimeoutError" || name === "AbortError") throw new Error(`${what}: no answer in ${this.timeoutMs >= 1000 ? `${Math.round(this.timeoutMs / 1000)}s` : `${this.timeoutMs}ms`}`);
+      throw e;
+    }
+    if (!res.ok) throw new Error(`${what}: ${res.status} ${(await res.text()).slice(0, 200)}`);
     const text = await res.text();
     return (text ? JSON.parse(text) : null) as T;
   }

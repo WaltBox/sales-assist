@@ -178,3 +178,49 @@ test("a purchase order coming in isn't an RFQ (10/27: Fabricon's PO counted as o
   for (const f of ["WESTGATE PO#25-114-13519.pdf", "Purchase Order 12.pdf", "P.O. 4471.pdf"]) assert.ok(ADMIN_DOC.test(f), f);
   for (const f of ["Copy of HHWT - Commodities Pricing Exercise - Take-Off 7.13.26.xlsx", "RFQ 2231 pipe.pdf", "Pool equipment.pdf", "Portland plant.pdf"]) assert.ok(!ADMIN_DOC.test(f), f);
 });
+
+test("the live check is one shared copy (11/9): screens read the saved row, a tap or a post drops it, the full load reuses its lanes", async () => {
+  const { raceWithLive, recordRfqTap } = await import("../src/race.js");
+  const ownerId = "user_live_shared";
+  const close = new FakeClose();
+  const fresh = new Date(Date.now() - 5 * 86_400_000).toISOString();
+  close.lead = (async (id: string) => ({ id, display_name: "Shared Co", date_created: fresh })) as never;
+  const team: Deps[] = [{ close, llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", ownerId) }] as never;
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, ownerId);
+
+  // Count what the store is asked for: the second check and the full load read the one saved copy.
+  const s = store as unknown as { getSetting: (...a: unknown[]) => Promise<unknown>; listReviews: (...a: unknown[]) => Promise<unknown> };
+  const real = { getSetting: s.getSetting, listReviews: s.listReviews };
+  let reads = 0;
+  s.getSetting = function (...a: unknown[]) { reads++; return real.getSetting.apply(this, a); };
+  s.listReviews = function (...a: unknown[]) { reads++; return real.listReviews.apply(this, a); };
+  try {
+    const first = await raceLive(ownerId, "America/Chicago");
+    const built = reads;
+    assert.ok(built >= 3, `working it out reads the taps, the chat and the lanes (${built})`);
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await raceLive(ownerId, "America/Chicago");
+    assert.equal(reads, built, "the next check reads nothing new");
+    assert.deepEqual({ ...second, now: "" }, { ...first, now: "" }, "the same copy");
+    assert.notEqual(second.now, first.now, "with this moment's clock");
+    const full = await raceWithLive(race, ownerId, "America/Chicago");
+    assert.equal(reads, built, "the full load reuses the copy's lanes");
+    assert.deepEqual(full.lanes, second.lanes);
+    assert.equal(full.goal, GOAL);
+
+    // A tap drops the copy: the very next check carries it.
+    await store.cacheSet(`rfqline:${ownerId}`, { since: second.day, total: 0, thisWeek: 0, lastWeek: 0, firstToday: 0, firstThisWeek: 0, companies: 0, newThisWeek: 0, newLastWeek: 0, newThisMonth: 0, newLastMonth: 0, at: new Date().toISOString(), days: [] }, 3600_000);
+    const tap = (await recordRfqTap(team, ownerId, team[0], "lead_shared"))!;
+    const after = await raceLive(ownerId, "America/Chicago");
+    assert.ok(after.events.some((e) => e.id === tap.id), "the tap is on the next check");
+    assert.ok(reads > built, "worked out again");
+    const n = reads;
+    await postChat(ownerId, "America/Chicago", { email: "walt@westgatesupply.com", name: "Walt Boxwell" }, "shared copy says hi");
+    assert.equal((await raceLive(ownerId, "America/Chicago")).chat.at(-1)?.text, "shared copy says hi", "a post is on the next check");
+    assert.ok(reads > n);
+  } finally {
+    s.getSetting = real.getSetting;
+    s.listReviews = real.listReviews;
+  }
+});

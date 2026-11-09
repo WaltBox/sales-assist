@@ -306,6 +306,7 @@ export async function recordRfqTap(team: Deps[], ownerId: string, d: Deps, leadI
   const tap: RaceTap = { id: `${leadId}:${today}`, email: d.rep.email.toLowerCase(), name: d.rep.name, leadId, company: lead?.display_name ?? "An account", at: now.toISOString(), day: today, first: newToUs && !before, ...(seen ? { how: seen.how } : {}) };
   const taps = (await todaysTaps(ownerId, d.rep.timeZone, now)).filter((x) => x.id !== tap.id);
   await store.putSetting(ownerId, TAPS_KEY, [...taps, tap]);
+  await forgetLive(ownerId);
   return tap;
 }
 
@@ -330,15 +331,64 @@ function newCompaniesOnly(line: RfqLine): RfqLine {
 }
 type RfqLine = Awaited<ReturnType<typeof rfqTimeline>>;
 
-/** The day's RFQs and their showtimes, for the screens to play in sync: cheap, read every few seconds. */
-export async function raceLive(ownerId: string, tz: string) {
-  const now = new Date();
+export type RaceLivePayload = { now: string; day: string; events: RaceEvent[]; lanes?: RaceLane[]; goal: number; points: typeof POINTS; chat: ChatMsg[] };
+
+/**
+ * One shared copy of the live check (11/9). Every open screen reads this every few seconds, and working it out
+ * meant a store read for the race, the taps and the chat plus two per rep for the live counts: ~17 a screen a
+ * check, a thousand a minute across the team, and the store's REST layer gave out mid-afternoon (sign-in and
+ * everything else timed out behind it). Now one screen works it out and saves it for a few seconds; the rest read
+ * that one row. A tap or a chat post drops the copy so it shows on the next check.
+ */
+const LIVE_KEY = "race:live";
+const LIVE_MS = 5_000;
+/** Shorter still on this server: a burst of screens on one instance shares the answer without a store read. */
+const LIVE_MEM_MS = 2_000;
+const liveMem = new Map<string, { at: number; value: RaceLivePayload }>();
+const liveKeyOf = (ownerId: string, tz: string) => `${LIVE_KEY}:${ownerId}:${tz}`;
+/** The copies this server has handed out, so a tap can drop every time zone's. */
+const liveKeys = new Set<string>();
+
+/** Something that should show on every screen now (a tap, a chat post): the shared copy is stale. */
+export async function forgetLive(ownerId: string) {
+  const mine = [...liveKeys].filter((k) => k.startsWith(`${LIVE_KEY}:${ownerId}:`));
+  for (const k of mine) liveMem.delete(k);
+  await Promise.all(mine.map((k) => store.cacheDelete(k).catch(() => undefined)));
+}
+
+async function buildLive(ownerId: string, tz: string, now: Date): Promise<RaceLivePayload> {
   const [saved, taps] = await Promise.all([store.cacheGet<Race>(RACE_KEY).catch(() => null), todaysTaps(ownerId, tz, now)]);
   const events = new Map<string, RaceEvent>();
   for (const e of saved?.events ?? []) events.set(e.id, e);
   for (const x of taps) if (x.first && !events.has(x.id)) events.set(x.id, { id: x.id, email: x.email, name: x.name, company: x.company, first: true, day: x.day, showAt: showTime(x.at) });
   const [live, chat] = await Promise.all([saved ? withLiveLanes(saved, { taps }) : null, raceChat(ownerId, tz)]);
   return { now: now.toISOString(), day: localDay(tz, now).day, events: [...events.values()], lanes: live?.lanes, goal: live?.goal ?? GOAL, points: POINTS, chat };
+}
+
+/** The day's RFQs and their showtimes, for the screens to play in sync: the shared copy, worked out at most every few
+ * seconds. `now` is always this moment: the screens set their clocks by it. */
+export async function raceLive(ownerId: string, tz: string): Promise<RaceLivePayload> {
+  const now = new Date();
+  const key = liveKeyOf(ownerId, tz);
+  liveKeys.add(key);
+  const mem = liveMem.get(key);
+  if (mem && now.getTime() - mem.at < LIVE_MEM_MS) return { ...mem.value, now: now.toISOString() };
+  const saved = await store.cacheGet<RaceLivePayload>(key).catch(() => null);
+  if (saved) {
+    liveMem.set(key, { at: now.getTime(), value: saved });
+    return { ...saved, now: now.toISOString() };
+  }
+  const value = await buildLive(ownerId, tz, now);
+  liveMem.set(key, { at: now.getTime(), value });
+  await store.cacheSet(key, value, LIVE_MS).catch(() => undefined);
+  return value;
+}
+
+/** The full copy with today's live lanes, the way every screen's 20-second load reads it: the lanes come from the
+ * shared live copy (one store read), not a fresh count of every rep's calls for every screen. */
+export async function raceWithLive(race: Race, ownerId: string, tz: string): Promise<Race> {
+  const live = await raceLive(ownerId, tz);
+  return live.lanes ? { ...race, goal: race.goal ?? GOAL, lanes: live.lanes } : withLiveLanes(race, { ownerId });
 }
 
 // ---------- every call moves the dot right away (Walt 10/27: "each time a call is made or updated") ----------
@@ -417,6 +467,7 @@ export async function postChat(ownerId: string, tz: string, who: { email: string
   const msg: ChatMsg = { id: `${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`, email: who.email, name: who.name, text: clean, at: now.toISOString(), day: localDay(tz, now).day };
   const kept = (await raceChat(ownerId, tz)).slice(-79);
   await store.putSetting(ownerId, CHAT_KEY, [...kept, msg]);
+  await forgetLive(ownerId);
   return [...kept, msg];
 }
 

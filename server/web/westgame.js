@@ -785,7 +785,9 @@
 
     load(false);
     setInterval(() => load(false), opts.pollMs || 20_000);
-    if (opts.live) setInterval(live, 3000);
+    // Every 8s (11/9; it was 3): the server hands every screen one shared copy, and the showtime on each RFQ keeps
+    // the celebration in sync whichever second a screen picks it up.
+    if (opts.live) setInterval(live, 8000);
     return { render, load, celebrate, playNow, get race() { return g.race; } };
   }
 
