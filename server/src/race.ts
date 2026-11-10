@@ -132,7 +132,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       };
     }
   }));
-  await oneOwnerPerRfq(results);
+  await oneOwnerPerRfq(results, ownerId, previous);
   const guestLanes = await guestRacers(team, roster, results, now);
   // One showtime per RFQ, kept from the first time it was seen (a tap's, or the last copy's), so every screen agrees.
   const shown = new Map<string, string>([
@@ -228,34 +228,78 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
  * whose account got the reply). Per company per day: whoever marked it came in; if nobody did, the company's Lead owner
  * in Close; if that's nobody racing, whoever's account it showed up in first. Everyone else's copy comes off their lane.
  */
-async function oneOwnerPerRfq(results: RepResult[]) {
-  type Entry = { r: RepResult; leadId: string; day: string; how: string; first: boolean; marked: boolean; company: string };
+/** Whose an RFQ is, written down the first time the game decides (11/10), so a rebuild never moves it. */
+const CREDITS_KEY = "rfqCredits";
+type RfqCredit = { rep: string; at: string; why: string };
+export async function rfqCredits(ownerId: string): Promise<Record<string, RfqCredit>> {
+  return (await store.getSetting<Record<string, RfqCredit>>(ownerId, CREDITS_KEY).catch(() => null)) ?? {};
+}
+
+/**
+ * One owner per RFQ (10/26, redone 11/10: Global Welding's RFQ to Walt scored for Jacob, who quoted it and tapped it,
+ * and credit moved between people as each line refreshed). An RFQ counts for the rep whose inbox it came to, and for
+ * nobody else, whoever else emailed the company. One that came outside Close (a tap, a status) and shows on two
+ * lines goes to whoever tapped it, else whoever sent them the line card, else the Close owner, else the first on
+ * the board. Every decision is written down and reused, so it holds until someone changes it on purpose.
+ */
+async function oneOwnerPerRfq(results: RepResult[], ownerId: string, previous: Race | null = null) {
+  type Entry = { r: RepResult; leadId: string; day: string; how: string; first: boolean; marked: boolean; company: string; to?: string; card: boolean };
   const live = results.filter((r) => r.line && r.today);
+  if (!live.length) return;
   const byKey = new Map<string, Entry[]>();
   for (const r of live) {
     const monday = weekStart(r.today);
     for (const d of r.line!.days) if (d.day >= monday) for (const a of d.accounts) {
       const k = `${a.leadId}|${d.day}`;
-      byKey.set(k, [...(byKey.get(k) ?? []), { r, leadId: a.leadId, day: d.day, how: a.how, first: a.first, marked: !!a.marked || a.how === "marked", company: a.company }]);
+      byKey.set(k, [...(byKey.get(k) ?? []), { r, leadId: a.leadId, day: d.day, how: a.how, first: a.first, marked: !!a.marked || a.how === "marked", company: a.company, to: a.to, card: !!a.card }]);
     }
   }
-  const shared = [...byKey.values()].filter((es) => new Set(es.map((e) => e.r)).size > 1);
-  if (!shared.length) return;
-  // Lead owners, read once with any login that can see the leads.
+  const racerOf = new Map(live.map((r) => [r.t.rep.closeUserId, r]));
+  const credits = await rfqCredits(ownerId);
+  const decided: Record<string, RfqCredit> = {};
+  // The first time (11/10): the days already on the board stay exactly as they stood; only today is decided anew.
+  if (!Object.keys(credits).length && previous) {
+    const today = live[0].today;
+    for (const l of previous.lanes) if (!l.email.startsWith("guest:")) for (const c of l.rfqFrom ?? []) if (c.day < today) decided[`${c.leadId}|${c.day}`] = { rep: l.email, at: new Date().toISOString(), why: "as it stood on the board when this started (11/10)" };
+    Object.assign(credits, decided);
+  }
+  const lose = new Map<RepResult, Set<string>>(); // rep → lead|day keys they don't get
+  const loseAll = (es: Entry[], keep: RepResult | null, k: string) => { for (const e of es) if (e.r !== keep) lose.set(e.r, new Set([...(lose.get(e.r) ?? []), k])); };
+  // Lead owners, read once with any login that can see the leads, only for what nothing else settles.
+  const open = [...byKey.entries()].filter(([k, es]) => !credits[k] && new Set(es.map((e) => e.r)).size > 1 && !es.some((e) => e.to && racerOf.has(e.to)) && !es.some((e) => e.marked) && !es.some((e) => e.card));
   const reader = live[0].t;
-  const field = await ownerFieldId(reader).catch(() => null);
+  const field = open.length ? await ownerFieldId(reader).catch(() => null) : null;
   const ownerOf = new Map<string, string | null>();
-  if (field) await Promise.all([...new Set(shared.map((es) => es[0].leadId))].map(async (id) => {
+  if (field) await Promise.all([...new Set(open.map(([, es]) => es[0].leadId))].map(async (id) => {
     const lead = await reader.close.lead(id).catch(() => null) as Record<string, unknown> | null;
     const v = lead ? lead[`custom.${field}`] : null;
     ownerOf.set(id, typeof v === "string" ? v : null);
   }));
-  const lose = new Map<RepResult, Set<string>>(); // rep → lead|day keys they don't get
-  for (const es of shared) {
+  for (const [k, es] of byKey) {
+    const stored = credits[k];
+    const storedRep = stored ? live.find((r) => r.t.rep.email.toLowerCase() === stored.rep) ?? null : null;
+    if (stored) {
+      // Already decided: it's theirs, or nobody's on this board.
+      loseAll(es, storedRep, k);
+      continue;
+    }
+    const inbox = es.find((e) => e.to && racerOf.has(e.to));
+    if (inbox) {
+      // It came to a racer's inbox: theirs, even when only someone else's line has caught it so far.
+      const keep = racerOf.get(inbox.to!)!;
+      loseAll(es, es.some((e) => e.r === keep) ? keep : null, k);
+      decided[k] = { rep: keep.t.rep.email.toLowerCase(), at: new Date().toISOString(), why: "came to their inbox" };
+      continue;
+    }
+    if (new Set(es.map((e) => e.r)).size < 2) continue;
     const owner = ownerOf.get(es[0].leadId);
-    const keep = es.find((e) => e.marked) ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0];
-    for (const e of es) if (e.r !== keep.r) lose.set(e.r, new Set([...(lose.get(e.r) ?? []), `${e.leadId}|${e.day}`]));
+    const pick = es.find((e) => e.marked) ? "tapped it" : es.find((e) => e.card) ? "sent the line card" : owner && es.some((e) => e.r.t.rep.closeUserId === owner) ? "owns the lead in Close" : "first on the board";
+    const keep = (es.find((e) => e.marked) ?? es.find((e) => e.card) ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0]).r;
+    loseAll(es, keep, k);
+    decided[k] = { rep: keep.t.rep.email.toLowerCase(), at: new Date().toISOString(), why: pick };
   }
+  if (Object.keys(decided).length) await store.putSetting(ownerId, CREDITS_KEY, { ...credits, ...decided }).catch(() => undefined);
+  if (!lose.size) return;
   for (const [r, keys] of lose) {
     const l = r.lane;
     const today = [...keys].filter((k) => k.endsWith(`|${r.today}`));

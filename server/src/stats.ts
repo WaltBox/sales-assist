@@ -448,7 +448,11 @@ export type RfqTimeline = {
   /** New companies (their first RFQ ever) by calendar week (Mon–Sun) and month (Walt 10/12: "how many new companies
    *  have I brought in this week, this month"). */
   newThisWeek: number; newLastWeek: number; newThisMonth: number; newLastMonth: number;
-  days: Array<{ day: string; count: number; total: number; newCompanies: number; companiesTotal: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean; marked?: boolean }> }>;
+  days: Array<{ day: string; count: number; total: number; newCompanies: number; companiesTotal: number; accounts: Array<{ leadId: string; company: string; how: "file" | "email" | "marked"; first: boolean; marked?: boolean;
+    /** The Close user whose inbox the RFQ email came to (11/10): the game credits them, whoever else emailed the company. */
+    to?: string;
+    /** This rep sent them the line card. */
+    card?: boolean }> }>;
   /** When this was worked out (the page shows a saved copy at once and refreshes it behind). */
   at?: string;
 };
@@ -509,11 +513,12 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   const funnel = new Set(emails.filter((e) => e.direction === "outgoing" && e.user_id === key && ["sent", "outbox"].includes(String(e.status))).map((e) => String(e.lead_id)));
   const start = cards.map((e) => String(e.date_created)).sort()[0] ?? now.toISOString();
   const ours = (s: unknown) => /@westgatesupply\.com/i.test(String(s ?? "")) || String(s ?? "").toLowerCase().includes(me);
-  const found = new Map<string, { at: string; leadId: string; how: "file" | "email" | "marked" }>(); // lead|day → first
-  const add = (leadId: string, at: string, how: "file" | "email" | "marked") => {
+  const found = new Map<string, { at: string; leadId: string; how: "file" | "email" | "marked"; to?: string }>(); // lead|day → first
+  const add = (leadId: string, at: string, how: "file" | "email" | "marked", to?: string) => {
     const k = `${leadId}|${localDay(tz, new Date(at)).day}`;
-    if (!found.has(k)) found.set(k, { at, leadId, how });
+    if (!found.has(k)) found.set(k, { at, leadId, how, ...(to ? { to } : {}) });
   };
+  const cardLeads = new Set(cards.map((e) => String(e.lead_id)));
   // Files we sent each company. Our own quote coming back in a forwarded chain isn't their RFQ (10/26: Reagan Power's
   // "FW: FW: FW:" with WG-2YT8TF_Quote.pdf counted as a new RFQ).
   const sentFiles = new Map<string, Set<string>>();
@@ -527,8 +532,9 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     const leadId = String(e.lead_id);
     if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never) || isAutoReply(e as never)) continue;
     const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f) && !sentFiles.get(leadId)?.has(f.toLowerCase()));
-    if (files.length) add(leadId, String(e.date_created), "file");
-    else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email");
+    const to = typeof e.user_id === "string" ? e.user_id : undefined;
+    if (files.length) add(leadId, String(e.date_created), "file", to);
+    else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email", to);
   }
   // This rep tapped "RFQ came in" (kept apart from how it was found: the file can land first, 10/26 Haley Contracting).
   const markedKeys = new Set<string>();
@@ -575,7 +581,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     // A new company, not an established one (Walt 10/26): their first RFQ here, and in Close only since this window
     // began. A long-standing customer quiet for four months isn't a new account.
     const newToUs = (addedOf.get(f.leadId) ?? "") >= window;
-    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day && newToUs, marked: markedKeys.has(`${f.leadId}|${day}`) }]);
+    byDay.set(day, [...(byDay.get(day) ?? []), { leadId: f.leadId, company: names.get(f.leadId) ?? "An account", how: f.how, first: firstDay.get(f.leadId) === day && newToUs, marked: markedKeys.has(`${f.leadId}|${day}`), ...(f.to ? { to: f.to } : {}), ...(cardLeads.has(f.leadId) ? { card: true } : {}) }]);
   }
   // Every day from the first line card to today, so the line shows the quiet days too.
   const days: RfqTimeline["days"] = [];

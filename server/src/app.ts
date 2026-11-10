@@ -22,7 +22,7 @@ import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSessi
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
 import { checkSpots, deleteMeme, memesFor, fillsOf, logLinkClick, logMemeEvent, memeCounts, MemeError, memeImage, memeLanding, memesSeen, memeStats, memeTrack, memeUrl, MEMES_DIR, pickMeme, renameMeme, SAMPLE_FILLS, setMemeGeneral, setMemeSpots, spotsFor, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, rfqTapAllowed, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, createCampaign, createCampaignFrom, deleteCampaign, listCampaigns, previewCampaign, saveCampaign, setLiveCampaign, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
@@ -887,6 +887,8 @@ export function createApp(appDeps: AppDeps) {
     const id = leadId(req);
     // West Game counts it now and every screen celebrates it together (10/26), without waiting on the next Close read.
     // The tap is saved first, alongside the Close writes rather than after them (10/27: "takes at least 30 seconds").
+    // Unless the company is out (11/10): then neither happens.
+    await rfqTapAllowed(d, id);
     const tapping = (async () => {
       const { team, ownerId } = await raceTeam(d);
       const tap = await recordRfqTap(team, ownerId, d, id);

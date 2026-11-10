@@ -489,3 +489,14 @@ test("a lead marked RFQ Received in Close counts as an RFQ: out of the sequence 
   for (const s of ["RFQ Received", "Quoted", "Customer", "rfq received"]) assert.ok(rfqByStatus(s), s);
   for (const s of ["Sent Line Card", "Qualified", "project managers", null]) assert.ok(!rfqByStatus(s), String(s));
 });
+
+test("an RFQ tap on a company that said no is refused (11/10: Walt's tap for Global Welding landed on Halgo Power)", async () => {
+  const { markRfqReceived, ShotDownError } = await import("../src/accounts.js");
+  const { demoLlm, FakeClose } = await import("../src/demo.js");
+  const { DEMO_LEAD_ID } = await import("../src/fixtures.js");
+  const close = new FakeClose();
+  close.leadStatus.set(DEMO_LEAD_ID, "Not Interested");
+  const d = { close, llm: demoLlm, rep: { closeUserId: "user_tap", name: "Walt Boxwell", email: "walt@westgatesupply.com", timeZone: "America/Chicago" } } as never;
+  await assert.rejects(markRfqReceived(d, DEMO_LEAD_ID, null), ShotDownError);
+  assert.ok(!close.writes.some((w) => w.op === "note"), "no RFQ note written");
+});

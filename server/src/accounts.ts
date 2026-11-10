@@ -124,9 +124,19 @@ export function rfqStatus(rfq: { at: string; files: string[]; quotedAt: string |
   return { stage, waitingOn: WAITING_ON[stage], since: mark.date_created, note, manual: true };
 }
 
+/**
+ * A tap lands on whatever lead the panel is showing (11/10: Walt's tap for Global Welding landed on Halgo Power, who
+ * had just said no). A company that's out, or a supplier, doesn't take an RFQ until its status says otherwise.
+ */
+export async function rfqTapAllowed(d: Deps, leadId: string) {
+  const lead = (await d.close.lead(leadId).catch(() => null)) as { display_name?: string; status_label?: string } | null;
+  if (lead && /not interested|vendor/i.test(lead.status_label ?? "")) throw new ShotDownError(`${lead.display_name ?? "This company"} is marked ${lead.status_label}. If an RFQ really came in, change the status in Close first.`);
+}
+
 /** "RFQ came in" from the side panel: out of the calls and automatic emails, onto the RFQs page. */
 export async function markRfqReceived(d: Deps, leadId: string, what: string | null) {
   const nowIso = new Date(d.now?.() ?? new Date()).toISOString();
+  await rfqTapAllowed(d, leadId);
   const already = (await d.close.notes(leadId, 20).catch(() => [])).some((n) => n.note.includes(RFQ_IN_TAG) && Date.parse(nowIso) - Date.parse(n.date_created) < 12 * 3600e3);
   const note = `${RFQ_IN_TAG} ${what?.trim() || "Came in outside Close"}`;
   if (!already) await d.close.createNote(leadId, note, false);

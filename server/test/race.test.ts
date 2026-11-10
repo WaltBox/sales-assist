@@ -228,3 +228,85 @@ test("the live check is one shared copy (11/9): screens read the saved row, a ta
     s.listReviews = real.listReviews;
   }
 });
+
+test("an RFQ counts for the inbox it came to (11/10: Global Welding), whoever else emailed or tapped, and the decision is written down", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const { rfqCredits } = await import("../src/race.js");
+  const walt = "user_wg_walt3", jacob = "user_wg_jacob3";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Jacob Lizarraga", "jacob@westgatesupply.com", jacob) },
+  ] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (extra: Record<string, unknown>) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+    days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_gws", company: "Global Welding Services", how: "email", first: true, to: walt, ...extra }] }] });
+  // Helen's list came to Walt. Jacob replied, so the company is on his line too, and he tapped "RFQ came in".
+  await store.cacheSet(`rfqline:${walt}`, line({ card: true }), 3600_000);
+  await store.cacheSet(`rfqline:${jacob}`, line({ marked: true }), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, walt, { fresh: true });
+  const w = race.lanes.find((l) => l.first === "Walt")!, j = race.lanes.find((l) => l.first === "Jacob")!;
+  assert.deepEqual([w.rfqs, j.rfqs], [1, 0], "Walt's inbox, Walt's RFQ");
+  assert.deepEqual(j.rfqFrom ?? [], []);
+  assert.equal(race.events.find((e) => e.company === "Global Welding Services")!.email, "walt@westgatesupply.com");
+  const credits = await rfqCredits(walt);
+  assert.deepEqual([credits[`lead_gws|${today}`]?.rep, credits[`lead_gws|${today}`]?.why], ["walt@westgatesupply.com", "came to their inbox"]);
+  // Only Jacob's line has caught it so far (Walt's refreshes later): still not Jacob's.
+  await store.cacheSet(`rfqline:${walt}`, { ...line({}), days: [] }, 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const lag = await teamRace(team, walt, { fresh: true });
+  assert.equal(lag.lanes.find((l) => l.first === "Jacob")!.rfqs, 0, "an RFQ to Walt's inbox never scores for Jacob");
+});
+
+test("a decided RFQ holds on every rebuild (11/10: credit moved as lines refreshed and people tapped)", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const walt = "user_wg_walt4", chase = "user_wg_chase4";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
+  ] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (marked: boolean) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+    days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_phone", company: "Phone RFQ Co", how: "file", first: true, marked }] }] });
+  // The file landed in a shared mailbox, so it's on both lines with no inbox to go by: Chase tapped it first, so it's his, and that's written down.
+  await store.cacheSet(`rfqline:${walt}`, line(false), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line(true), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const first = await teamRace(team, walt, { fresh: true });
+  assert.deepEqual([first.lanes.find((l) => l.first === "Walt")!.rfqs, first.lanes.find((l) => l.first === "Chase")!.rfqs], [0, 1]);
+  // Later Walt taps it too and Chase's line refreshes without the mark: it stays Chase's.
+  await store.cacheSet(`rfqline:${walt}`, line(true), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line(false), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const again = await teamRace(team, walt, { fresh: true });
+  assert.deepEqual([again.lanes.find((l) => l.first === "Walt")!.rfqs, again.lanes.find((l) => l.first === "Chase")!.rfqs], [0, 1], "decided once, kept");
+});
+
+test("the first time the ledger runs, the days already on the board stay as they stood (11/10: don't lose the current stats)", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const { rfqCredits } = await import("../src/race.js");
+  const walt = "user_wg_walt5", chase = "user_wg_chase5";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
+  ] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  // Yesterday's board had Tate under Chase. Under the new rule it'd be Walt's (his inbox), but what stood, stands.
+  await store.cacheSet("race:team", { at: new Date().toISOString(), day: today, goal: 100, lanes: [
+    { email: "walt@westgatesupply.com", name: "Walt Boxwell", first: "Walt", dials: 0, reached: 0, lineCards: 0, rfqs: 0, firstRfqs: 0, points: 0, week: null, error: null, rfqFrom: [] },
+    { email: "chase@westgatesupply.com", name: "Chase Bent", first: "Chase", dials: 0, reached: 0, lineCards: 0, rfqs: 1, firstRfqs: 1, points: 15, week: null, error: null, rfqFrom: [{ leadId: "lead_tate", company: "Tate Fabricating", day: yesterday }] },
+  ], events: [], chat: [] }, 3600_000);
+  const line = () => ({ since: yesterday, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 0, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+    days: [{ day: yesterday, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_tate", company: "Tate Fabricating", how: "email", first: true, to: walt }] }, { day: today, count: 0, total: 1, newCompanies: 0, companiesTotal: 1, accounts: [] }] });
+  await store.cacheSet(`rfqline:${walt}`, line(), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line(), 3600_000);
+  // With a copy on the board the rebuild runs behind it: wait for the ledger to show the rebuild has run.
+  await teamRace(team, walt, { fresh: true, force: true });
+  let credits = await rfqCredits(walt);
+  for (let i = 0; i < 60 && !credits[`lead_tate|${yesterday}`]; i++) { await new Promise((r) => setTimeout(r, 50)); credits = await rfqCredits(walt); }
+  assert.equal(credits[`lead_tate|${yesterday}`]?.rep, "chase@westgatesupply.com", "written down as it stood");
+  const race = (await store.cacheGet<{ lanes: Array<{ first: string; rfqFrom?: Array<{ company: string }> }> }>("race:team"))!;
+  const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!;
+  assert.deepEqual([w.rfqFrom?.map((x) => x.company) ?? [], c.rfqFrom?.map((x) => x.company)], [[], ["Tate Fabricating"]], "yesterday stays Chase's");
+});
