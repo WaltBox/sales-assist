@@ -266,7 +266,7 @@ test("a decided RFQ holds on every rebuild (11/10: credit moved as lines refresh
     { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
   ] as never;
   const today = localDay("America/Chicago", new Date()).day;
-  const line = (marked: boolean) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(),
+  const line = (marked: boolean) => ({ since: today, total: 1, thisWeek: 1, lastWeek: 0, firstToday: 1, firstThisWeek: 1, companies: 1, newThisWeek: 1, newLastWeek: 0, newThisMonth: 1, newLastMonth: 0, at: new Date().toISOString(), inboxes: true,
     days: [{ day: today, count: 1, total: 1, newCompanies: 1, companiesTotal: 1, accounts: [{ leadId: "lead_phone", company: "Phone RFQ Co", how: "file", first: true, marked }] }] });
   // The file landed in a shared mailbox, so it's on both lines with no inbox to go by: Chase tapped it first, so it's his, and that's written down.
   await store.cacheSet(`rfqline:${walt}`, line(false), 3600_000);
@@ -309,4 +309,62 @@ test("the first time the ledger runs, the days already on the board stay as they
   const race = (await store.cacheGet<{ lanes: Array<{ first: string; rfqFrom?: Array<{ company: string }> }> }>("race:team"))!;
   const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!;
   assert.deepEqual([w.rfqFrom?.map((x) => x.company) ?? [], c.rfqFrom?.map((x) => x.company)], [[], ["Tate Fabricating"]], "yesterday stays Chase's");
+});
+
+test("a guest's RFQ counts once, for the guest (11/10: EN-FAB came off Walt's lane twice and scored for Chase and Jameson both)", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const { createGuest } = await import("../src/guests.js");
+  const walt = "user_wg_walt6", chase = "user_wg_chase6";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
+  ] as never;
+  const { guest } = await createGuest(walt, "Jameson");
+  await store.putSetting(walt, `guestLeadIds:${guest.id}`, { "1": "lead_enfab" });
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (accounts: Array<Record<string, unknown>>) => ({ since: today, total: accounts.length, thisWeek: accounts.length, lastWeek: 0, firstToday: accounts.length, firstThisWeek: accounts.length, companies: accounts.length, newThisWeek: accounts.length, newLastWeek: 0, newThisMonth: accounts.length, newLastMonth: 0, at: new Date().toISOString(), inboxes: true,
+    days: [{ day: today, count: accounts.length, total: accounts.length, newCompanies: accounts.length, companiesTotal: accounts.length, accounts }] });
+  // Jameson sent EN-FAB the line card from Walt's account and the RFQ came back to Walt's inbox. Chase's board set the
+  // lead to RFQ Received (it's his by the hand-off rule), so his line caught it as marked. Sistersville is Walt's own.
+  await store.cacheSet(`rfqline:${walt}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "file", first: true, to: walt, card: true }, { leadId: "lead_stw", company: "Sistersville Tank Works", how: "file", first: true, to: walt }]), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "marked", first: true }]), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, walt, { fresh: true });
+  const w = race.lanes.find((l) => l.first === "Walt")!, c = race.lanes.find((l) => l.first === "Chase")!, j = race.lanes.find((l) => l.email === `guest:${guest.id}`)!;
+  assert.deepEqual([w.rfqs, c.rfqs, j.rfqs], [1, 0, 1], "Walt's inbox, Jameson's company: Jameson's RFQ");
+  assert.deepEqual([w.rfqFrom?.map((x) => x.company), j.rfqFrom?.map((x) => x.company), c.rfqFrom ?? []], [["Sistersville Tank Works"], ["EN-FAB"], []]);
+  assert.equal(w.rfqs, w.rfqFrom!.filter((x) => x.day === today).length, "the number is the list");
+  assert.deepEqual(race.events.filter((e) => e.company === "EN-FAB").map((e) => e.email), [`guest:${guest.id}`], "celebrated once, for Jameson");
+});
+
+test("an old line copy with no inboxes can show a tiebreak but not write it down (11/10); the host's number always matches the list", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const { createGuest } = await import("../src/guests.js");
+  const { rfqCredits } = await import("../src/race.js");
+  const walt = "user_wg_walt7", chase = "user_wg_chase7";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", walt) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", chase) },
+  ] as never;
+  const { guest } = await createGuest(walt, "Jameson");
+  await store.putSetting(walt, `guestLeadIds:${guest.id}`, { "1": "lead_enfab" });
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (accounts: Array<Record<string, unknown>>, inboxes: boolean) => ({ since: today, total: accounts.length, thisWeek: accounts.length, lastWeek: 0, firstToday: accounts.length, firstThisWeek: accounts.length, companies: accounts.length, newThisWeek: accounts.length, newLastWeek: 0, newThisMonth: accounts.length, newLastMonth: 0, at: new Date().toISOString(), ...(inboxes ? { inboxes: true } : {}),
+    days: [{ day: today, count: accounts.length, total: accounts.length, newCompanies: accounts.length, companiesTotal: accounts.length, accounts }] });
+  // Copies from before the inbox was kept: nothing says whose inbox EN-FAB came to. Chase tapped it, so for now it reads as his.
+  await store.cacheSet(`rfqline:${walt}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "file", first: true }, { leadId: "lead_other", company: "Other Co", how: "email", first: true }], false), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "file", first: true, marked: true }], false), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const stale = await teamRace(team, walt, { fresh: true });
+  const lane = (r: typeof stale, who: string) => r.lanes.find((l) => l.first === who || l.email === `guest:${guest.id}` && who === "Jameson")!;
+  assert.deepEqual([lane(stale, "Walt").rfqs, lane(stale, "Chase").rfqs, lane(stale, "Jameson").rfqs], [1, 1, 0], "shown as Chase's for now");
+  assert.deepEqual(lane(stale, "Walt").rfqFrom?.map((x) => x.company), ["Other Co"], "Walt's number is his list, not one short of it");
+  assert.equal((await rfqCredits(walt))[`lead_enfab|${today}`], undefined, "not written down from an old copy");
+  // The lines refresh and say whose inbox it came to: Walt's, so it's Jameson's, and that's what's written down.
+  await store.cacheSet(`rfqline:${walt}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "file", first: true, to: walt, card: true }, { leadId: "lead_other", company: "Other Co", how: "email", first: true, to: walt }], true), 3600_000);
+  await store.cacheSet(`rfqline:${chase}`, line([{ leadId: "lead_enfab", company: "EN-FAB", how: "file", first: true, marked: true }], true), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const fresh = await teamRace(team, walt, { fresh: true });
+  assert.deepEqual([lane(fresh, "Walt").rfqs, lane(fresh, "Chase").rfqs, lane(fresh, "Jameson").rfqs], [1, 0, 1]);
+  assert.equal((await rfqCredits(walt))[`lead_enfab|${today}`]?.why, "came to their inbox");
 });

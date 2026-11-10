@@ -455,6 +455,8 @@ export type RfqTimeline = {
     card?: boolean }> }>;
   /** When this was worked out (the page shows a saved copy at once and refreshes it behind). */
   at?: string;
+  /** Built since 11/10, when an email RFQ started carrying the inbox it came to: a copy without this doesn't know. */
+  inboxes?: boolean;
 };
 
 /**
@@ -514,9 +516,13 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   const start = cards.map((e) => String(e.date_created)).sort()[0] ?? now.toISOString();
   const ours = (s: unknown) => /@westgatesupply\.com/i.test(String(s ?? "")) || String(s ?? "").toLowerCase().includes(me);
   const found = new Map<string, { at: string; leadId: string; how: "file" | "email" | "marked"; to?: string }>(); // lead|day → first
+  // Close lists newest first, so among a day's emails the earliest one is the RFQ and its inbox is the one that
+  // counts (11/10: Helen's second Global Welding list went to Jacob; her first had come to Walt). A tap or a status
+  // never displaces an email, whichever came first.
   const add = (leadId: string, at: string, how: "file" | "email" | "marked", to?: string) => {
     const k = `${leadId}|${localDay(tz, new Date(at)).day}`;
-    if (!found.has(k)) found.set(k, { at, leadId, how, ...(to ? { to } : {}) });
+    const had = found.get(k);
+    if (!had || (how !== "marked" && had.how !== "marked" && at < had.at)) found.set(k, { at, leadId, how, ...(to ? { to } : {}) });
   };
   const cardLeads = new Set(cards.map((e) => String(e.lead_id)));
   // Files we sent each company. Our own quote coming back in a forwarded chain isn't their RFQ (10/26: Reagan Power's
@@ -528,13 +534,18 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     for (const a of (e.attachments as Array<{ filename?: string }> | undefined) ?? []) if (a.filename) set.add(a.filename.toLowerCase());
     sentFiles.set(String(e.lead_id), set);
   }
+  // Companies whose RFQ came by email to anyone's inbox (11/10: EN-FAB's came to Walt, and Chase's board setting the
+  // lead to RFQ Received read as a second RFQ, Chase's). A status on such a lead isn't an RFQ of its own.
+  const cameByEmail = new Set<string>();
   for (const e of emails) {
     const leadId = String(e.lead_id);
-    if (e.direction !== "incoming" || !funnel.has(leadId) || String(e.date_created) < start || ours(e.sender) || isBounce(e as never) || isAutoReply(e as never)) continue;
+    if (e.direction !== "incoming" || ours(e.sender) || isBounce(e as never) || isAutoReply(e as never)) continue;
     const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f) && !sentFiles.get(leadId)?.has(f.toLowerCase()));
-    const to = typeof e.user_id === "string" ? e.user_id : undefined;
-    if (files.length) add(leadId, String(e.date_created), "file", to);
-    else if (rfqInBody(e.subject as string, e.body_text as string)) add(leadId, String(e.date_created), "email", to);
+    const how = files.length ? "file" : rfqInBody(e.subject as string, e.body_text as string) ? "email" : null;
+    if (!how) continue;
+    cameByEmail.add(leadId);
+    if (!funnel.has(leadId) || String(e.date_created) < start) continue;
+    add(leadId, String(e.date_created), how, typeof e.user_id === "string" ? e.user_id : undefined);
   }
   // This rep tapped "RFQ came in" (kept apart from how it was found: the file can land first, 10/26 Haley Contracting).
   const markedKeys = new Set<string>();
@@ -548,7 +559,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
   const counted = new Set([...found.values()].map((f) => f.leadId));
   const statusOnly = new Set<string>(); // lead|day keys found only from a status change
   for (const c of changes) {
-    if (c.date_created < start || counted.has(c.lead_id)) continue;
+    if (c.date_created < start || counted.has(c.lead_id) || cameByEmail.has(c.lead_id)) continue;
     if (c.new_status_label === "RFQ Received") {
       const k = `${c.lead_id}|${localDay(tz, new Date(c.date_created)).day}`;
       if (!found.has(k)) statusOnly.add(k);
@@ -610,7 +621,7 @@ async function buildRfqTimeline(d: Deps): Promise<RfqTimeline> {
     firstToday: firsts.filter((x) => x === today).length, firstThisWeek: firsts.filter((x) => x >= weekAgo).length, companies: firstDay.size,
     newThisWeek: firsts.filter((x) => x >= monday).length, newLastWeek: firsts.filter((x) => x >= lastMonday && x < monday).length,
     newThisMonth: firsts.filter((x) => x.startsWith(month)).length, newLastMonth: firsts.filter((x) => x.startsWith(lastMonth)).length,
-    at: new Date().toISOString(),
+    at: new Date().toISOString(), inboxes: true,
   };
   timelineCache.set(key, { at: Date.now(), value });
   await store.cacheSet(`rfqline:${key}`, value, 3 * DAY_MS).catch(() => undefined);

@@ -107,3 +107,45 @@ test("periods start at midnight today, Monday, and the 1st, in the rep's time zo
   assert.equal(periodStart("month", tz, sat).toISOString(), "2026-09-01T07:00:00.000Z");
   assert.equal(periodStart("week", tz, new Date("2026-09-21T15:00:00Z")).toISOString(), "2026-09-21T07:00:00.000Z", "on a Monday, that Monday");
 });
+
+test("a status set on a lead whose RFQ came by email to someone's inbox isn't an RFQ of its own (11/10: EN-FAB scored for Chase)", async () => {
+  const { rfqTimeline } = await import("../src/stats.js");
+  const chase = "user_chase_status", walt = "user_walt_status";
+  const build = async (withEmail: boolean) => {
+    const close = new FakeClose();
+    close.names.set("lead_enfab_s", "EN-FAB, Inc.");
+    close.leadStatus.set("lead_enfab_s", "RFQ Received");
+    close.sentEmails = [
+      // Chase's line starts at his first line card, two days back.
+      { id: "em_card", lead_id: "lead_card_s", user_id: chase, direction: "outgoing", status: "sent", subject: "Westgate Supply", date_created: "2026-09-21T15:00:00Z", attachments: [{ filename: "Westgate_Supply_Line_Card.pdf", content_type: "application/pdf" }] },
+      // EN-FAB's RFQ came to Walt's inbox (Jameson sent them the card from Walt's account).
+      ...(withEmail ? [{ id: "em_rfq", lead_id: "lead_enfab_s", user_id: walt, direction: "incoming", status: "inbox", sender: "boris@en-fabinc.com", subject: "EN-FAB, Inc. RFQ Q-86084 - Piping Materials", body_text: "See attached.", date_created: "2026-09-23T20:00:00Z", attachments: [{ filename: "RFQ_Q-86084.pdf", content_type: "application/pdf" }] }] : []),
+    ];
+    // Three minutes later Chase's board set the lead to RFQ Received under his login (it's his by the hand-off rule).
+    close.statusChanges = [{ lead_id: "lead_enfab_s", date_created: "2026-09-23T20:03:00Z", old_status_label: "Sent Line Card", new_status_label: "RFQ Received" }];
+    const d: Deps = { close, llm: demoLlm, rep: { name: "Chase Bent", email: "chase@westgatesupply.com", closeUserId: chase, timeZone: "America/Chicago" }, now: () => NOW } as never;
+    const line = (await rfqTimeline(d, { fresh: true }))!;
+    return line.days.find((x) => x.day === "2026-09-23")?.accounts.filter((a) => a.leadId === "lead_enfab_s") ?? [];
+  };
+  assert.deepEqual(await build(true), [], "the RFQ is the email in Walt's inbox, not Chase's status");
+  assert.deepEqual((await build(false)).map((a) => a.how), ["marked"], "with no email anywhere, the status is the RFQ (a phone one)");
+});
+
+test("two emails from a company the same day: the earlier one's inbox is the RFQ's (11/10: Helen's second Global Welding list went to Jacob)", async () => {
+  const { rfqTimeline } = await import("../src/stats.js");
+  const walt = "user_walt_inbox", jacob = "user_jacob_inbox";
+  const close = new FakeClose();
+  close.names.set("lead_gw_s", "Global Welding Services Inc.");
+  const rfq = (id: string, to: string, at: string) => ({ id, lead_id: "lead_gw_s", user_id: to, direction: "incoming", status: "inbox", sender: "helen@globalwelding.com", subject: "Parts list", body_text: "Please quote the attached.", date_created: at, attachments: [{ filename: "List.xlsx", content_type: "application/vnd.ms-excel" }] });
+  close.sentEmails = [
+    // Newest first, the way Close lists them: Helen's second list came to Jacob, her first to Walt.
+    rfq("em_second", jacob, "2026-09-23T18:50:00Z"),
+    rfq("em_first", walt, "2026-09-23T16:50:00Z"),
+    { id: "em_card", lead_id: "lead_gw_s", user_id: walt, direction: "outgoing", status: "sent", subject: "Westgate Supply", date_created: "2026-09-21T15:00:00Z", attachments: [{ filename: "Westgate_Supply_Line_Card.pdf", content_type: "application/pdf" }] },
+  ];
+  const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: walt, timeZone: "America/Chicago" }, now: () => NOW } as never;
+  const line = (await rfqTimeline(d, { fresh: true }))!;
+  const a = line.days.find((x) => x.day === "2026-09-23")!.accounts.find((x) => x.leadId === "lead_gw_s")!;
+  assert.deepEqual([a.how, a.to], ["file", walt], "Walt's inbox");
+  assert.ok(line.inboxes, "a line built now knows its inboxes");
+});

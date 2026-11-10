@@ -194,8 +194,12 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
         const m = marks.filter((l) => dayOf(l.outcomeAt) >= from && dayOf(l.outcomeAt) <= today);
         return { dials: m.length, reached: m.filter((l) => REACHED_OUTCOMES.has(l.outcome!)).length, lineCards: g.sends.filter((x) => dayOf(x.at) >= from && dayOf(x.at) <= today).length };
       };
-      const todays = (line?.days.find((x) => x.day === today)?.accounts ?? []).filter((a) => ids.has(a.leadId));
-      const weekMine = (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => ids.has(a.leadId)));
+      // Only what's still on the rep's lane once each RFQ has one owner (11/10: EN-FAB came off Walt's lane twice,
+      // once to Chase and once to Jameson, so Walt's count was one short of his list and it scored for both of them).
+      const kept = host && !host.lane.error ? new Set((host.lane.rfqFrom ?? []).map((c) => `${c.leadId}|${c.day}`)) : null;
+      const mineOn = (day: string, a: { leadId: string }) => ids.has(a.leadId) && (!kept || kept.has(`${a.leadId}|${day}`));
+      const todays = (line?.days.find((x) => x.day === today)?.accounts ?? []).filter((a) => mineOn(today, a));
+      const weekMine = (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => mineOn(x.day, a)));
       const weekRfqs = weekMine.length, weekFirst = weekMine.filter((a) => a.first).length;
       const base = { ...count(today), rfqs: todays.length, firstRfqs: todays.filter((a) => a.first).length };
       const wk = count(monday);
@@ -203,7 +207,7 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
       out.push({
         lane: { email, name: g.name, first: g.name.split(/\s+/)[0] || g.name, guest: true, ...base, points: scoreOf(base),
           week: weekOf(wk, base, weekRfqs, weekFirst), error: null,
-          rfqFrom: (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => ids.has(a.leadId)).map((a) => ({ leadId: a.leadId, company: a.company, day: x.day }))).sort((a, b) => b.day.localeCompare(a.day)) },
+          rfqFrom: (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => mineOn(x.day, a)).map((a) => ({ leadId: a.leadId, company: a.company, day: x.day }))).sort((a, b) => b.day.localeCompare(a.day)) },
         events: todays.map((a) => ({ id: `${a.leadId}:${today}`, email, name: g.name, company: a.company, first: a.first, day: today })),
       });
       // Their line cards went out from the rep's account: they count for the guest, not the rep.
@@ -263,6 +267,10 @@ async function oneOwnerPerRfq(results: RepResult[], ownerId: string, previous: R
     for (const l of previous.lanes) if (!l.email.startsWith("guest:")) for (const c of l.rfqFrom ?? []) if (c.day < today) decided[`${c.leadId}|${c.day}`] = { rep: l.email, at: new Date().toISOString(), why: "as it stood on the board when this started (11/10)" };
     Object.assign(credits, decided);
   }
+  // A line copied before 11/10 doesn't say which inbox an email came to. While any line on the board is such a copy,
+  // a tiebreak is shown but not written down, so a stale copy can't decide for good.
+  const stale = live.some((r) => !r.line!.inboxes);
+  const weak = new Set<string>();
   const lose = new Map<RepResult, Set<string>>(); // rep → lead|day keys they don't get
   const loseAll = (es: Entry[], keep: RepResult | null, k: string) => { for (const e of es) if (e.r !== keep) lose.set(e.r, new Set([...(lose.get(e.r) ?? []), k])); };
   // Lead owners, read once with any login that can see the leads, only for what nothing else settles.
@@ -297,8 +305,10 @@ async function oneOwnerPerRfq(results: RepResult[], ownerId: string, previous: R
     const keep = (es.find((e) => e.marked) ?? es.find((e) => e.card) ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0]).r;
     loseAll(es, keep, k);
     decided[k] = { rep: keep.t.rep.email.toLowerCase(), at: new Date().toISOString(), why: pick };
+    if (stale) weak.add(k);
   }
-  if (Object.keys(decided).length) await store.putSetting(ownerId, CREDITS_KEY, { ...credits, ...decided }).catch(() => undefined);
+  const written = Object.fromEntries(Object.entries(decided).filter(([k]) => !weak.has(k)));
+  if (Object.keys(written).length) await store.putSetting(ownerId, CREDITS_KEY, { ...credits, ...written }).catch(() => undefined);
   if (!lose.size) return;
   for (const [r, keys] of lose) {
     const l = r.lane;
