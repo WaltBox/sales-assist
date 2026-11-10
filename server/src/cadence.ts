@@ -1,4 +1,6 @@
 import type { Tier } from "./potential.js";
+import { SequenceSchema } from "./schemas.js";
+import { store } from "./store.js";
 
 /**
  * The email sequence (Walt 10/12). A bump only works on the day an RFQ is sitting on the buyer's desk, so the job is
@@ -15,6 +17,10 @@ import type { Tier } from "./potential.js";
  *
  * Gaps are business days since the last email of ours on the account. Counts are emails since the last real
  * conversation (a round), not ever.
+ *
+ * Since 11/9 the sequence is a record each rep can edit from the Automatic emails tab (the builder): the steps,
+ * their gaps and the one sentence each carries, the rhythm by tier, when it goes monthly, and the click hold.
+ * `DEFAULT_SEQUENCE` is the sequence as it was in code; a rep with nothing saved runs it.
  */
 export type Track = "talked" | "cold";
 export type Phase = "intro" | "rhythm" | "monthly";
@@ -29,40 +35,121 @@ export type Cadence = {
   why: string;
 };
 
+/** One intro email: how long after the last email it goes, and the sentence in it. */
+export type Step = { gap: number; line: string };
+export type TrackPlan = {
+  steps: Step[];
+  /** Once the intro is done, the emails rotate through these lines. */
+  after: string[];
+};
+/** The part of every email around the line. `{name}` is the buyer's first name (or "there"), `{url}` the link. */
+export type Wrap = { greeting: string; cardLine: string; siteLine: string; signoff: string };
+/** When they go out, their time, in minutes from midnight: a random minute in the window; Mondays have their own. */
+export type SendWindow = { from: number; to: number; mondayFrom: number; mondayTo: number };
+export type Sequence = {
+  /** The version's name, stamped on every email it sends, so the scoreboard can compare versions. */
+  name: string;
+  talked: TrackPlan;
+  cold: TrackPlan;
+  rhythm: {
+    /** Business days between emails once the intro is done, by how often they buy. */
+    gaps: Record<Tier, number>;
+    /** A shared mailbox, or someone you've never talked to: at least this many days apart. */
+    slowMinGap: number;
+  };
+  /** After this many emails since the last conversation with nothing back, one every `gap` business days. */
+  monthly: { after: number; gap: number };
+  /** A click on the line card or the site: no email for this long, it's a call. */
+  clickHoldDays: number;
+  wrap: Wrap;
+  send: SendWindow;
+};
+
 export const GENERIC = /^(info|sales|accounting|accounts|ap|ar|office|main|admin|purchasing|contact|hello|support|front ?desk|billing|estimating|estimator|reception|general|service ?sales|orders|shop|quotes?|bids?|inquiries|mail|team|dispatch)$/i;
 /** A mailbox nobody owns: the part before the @ is a department word. */
 export const isGenericAddress = (email: string | null | undefined) => !!email && GENERIC.test(email.split("@")[0].replace(/[^a-z ]/gi, ""));
 
-export const INTRO_GAPS: Record<Track, readonly number[]> = { talked: [1, 3, 5], cold: [2, 5] };
-export const RHYTHM_GAPS: Record<Tier, number> = { steady: 3, project: 5, occasional: 15, unknown: 5 };
-/** A shared mailbox, or someone you've never talked to: weekly at most. */
-export const SLOW_MIN_GAP = 5;
-export const QUIET_AFTER = 6;
-export const MONTHLY_GAP = 20;
-/** A click on the line card or the site: no email for this long, it's a call. */
-export const CLICK_HOLD_DAYS = 3;
+// The lines (Walt 10/12): eager salesman, full sentences like Walt typed them, and every one ends in the same plain
+// ask. Nothing self-aware about how many emails they've had.
+export const ASK = "Please send me over an RFQ and we'll get you a quote back.";
+export const HOPE_WEEK = `I hope your week's going good! ${ASK}`;
+/** The first talked email: `{when}` becomes "yesterday" or "the other day" when it goes out. */
+export const GREAT_TALKING = `It was great talking to you {when}! ${ASK}`;
+const BENCHMARK = "I have a quick ask for you. Send me the last RFQ you sent out, even if it's already been bought, and we'll quote it so you can see where we land.";
+export const RHYTHM_LINES = [
+  `I wanted to get back in front of you so I'm on top of the pile the day one comes across your desk. Please send it over and we'll get you a quote back.`,
+  `I'm bumping this back up for you. If you have an RFQ going out this week, please send it over and we'll get you a quote back.`,
+  HOPE_WEEK,
+];
+const COLD_LINES = [
+  `I wanted to bump this back up in case it got buried. ${ASK}`,
+  `I'm checking in on this one more time. ${ASK}`,
+];
 
-const TIER_WORDS: Record<Tier, string> = {
+export const DEFAULT_WRAP: Wrap = {
+  greeting: "Hi {name}!",
+  // Said in every bump (10/6): the PDF rides along each time, and the hosted copy is one click away.
+  cardLine: "Line card's attached too, or you can grab it here: {url}",
+  // Someone you haven't talked to gets the site too (Walt 10/12): a click tells us the address works.
+  siteLine: "Our site is here if that's easier: {url}",
+  signoff: "Thanks,",
+};
+// Around their 8am (Walt 10/8), a random minute so a wave isn't a block; Monday morning is a pile of mail (10/12),
+// so Monday's go out after 10.
+export const DEFAULT_SEND: SendWindow = { from: 7 * 60 + 50, to: 8 * 60 + 35, mondayFrom: 10 * 60, mondayTo: 10 * 60 + 45 };
+export const DEFAULT_SEQUENCE: Sequence = {
+  name: "Standard",
+  talked: { steps: [{ gap: 1, line: GREAT_TALKING }, { gap: 3, line: BENCHMARK }, { gap: 5, line: HOPE_WEEK }], after: RHYTHM_LINES },
+  cold: { steps: [{ gap: 2, line: COLD_LINES[0] }, { gap: 5, line: COLD_LINES[1] }], after: [HOPE_WEEK, ...COLD_LINES] },
+  rhythm: { gaps: { steady: 3, project: 5, occasional: 15, unknown: 5 }, slowMinGap: 5 },
+  monthly: { after: 6, gap: 20 },
+  clickHoldDays: 3,
+  wrap: DEFAULT_WRAP,
+  send: DEFAULT_SEND,
+};
+/** A deep copy, so an edit never touches the default. */
+export const cloneSequence = (s: Sequence): Sequence => JSON.parse(JSON.stringify(s)) as Sequence;
+export const isDefaultSequence = (s: Sequence) => JSON.stringify(s) === JSON.stringify(DEFAULT_SEQUENCE);
+
+// The old constants, now the default's numbers: nothing that reads them changes.
+export const INTRO_GAPS: Record<Track, readonly number[]> = { talked: DEFAULT_SEQUENCE.talked.steps.map((s) => s.gap), cold: DEFAULT_SEQUENCE.cold.steps.map((s) => s.gap) };
+export const RHYTHM_GAPS: Record<Tier, number> = DEFAULT_SEQUENCE.rhythm.gaps;
+export const SLOW_MIN_GAP = DEFAULT_SEQUENCE.rhythm.slowMinGap;
+export const QUIET_AFTER = DEFAULT_SEQUENCE.monthly.after;
+export const MONTHLY_GAP = DEFAULT_SEQUENCE.monthly.gap;
+export const CLICK_HOLD_DAYS = DEFAULT_SEQUENCE.clickHoldDays;
+
+/** The rep's sequence: what they saved in the builder, or the default. Anything saved that no longer parses runs the default. */
+export async function sequenceFor(repId: string): Promise<Sequence> {
+  const saved = await store.getSetting<unknown>(repId, "sequence").catch(() => null);
+  if (!saved) return DEFAULT_SEQUENCE;
+  const r = SequenceSchema.safeParse(saved);
+  if (!r.success) { console.warn(`[sequence] ${repId}: the saved sequence doesn't parse; running the default`); return DEFAULT_SEQUENCE; }
+  return r.data;
+}
+
+export const TIER_WORDS: Record<Tier, string> = {
   steady: "they get several RFQs a week", project: "they buy by the project", occasional: "they only buy a few times a year", unknown: "we don't know how often they buy yet",
 };
 
-export function cadenceFor(x: { track: Track; round: number; nth: number; tier?: Tier | null; generic?: boolean; heardBack?: boolean }): Cadence {
+export function cadenceFor(x: { track: Track; round: number; nth: number; tier?: Tier | null; generic?: boolean; heardBack?: boolean }, seq: Sequence = DEFAULT_SEQUENCE): Cadence {
   const { track, round, nth } = x;
-  const intro = INTRO_GAPS[track];
+  const intro = seq[track].steps;
   const base = { track, round, nth };
   if (nth < intro.length) {
-    const gap = intro[nth];
+    const gap = intro[nth].gap;
     return { ...base, phase: "intro", gap, callFlag: false, why: `${track === "cold" ? "Cold" : `Round ${round}`} intro, email ${nth + 1} of ${intro.length}: ${gap} business day${gap === 1 ? "" : "s"} after the last one.` };
   }
-  if (nth >= QUIET_AFTER && !x.heardBack) {
-    return { ...base, phase: "monthly", gap: MONTHLY_GAP, callFlag: true, why: `${nth} emails since you last talked and nothing back: once a month until you connect.` };
+  if (nth >= seq.monthly.after && !x.heardBack) {
+    const gap = seq.monthly.gap;
+    return { ...base, phase: "monthly", gap, callFlag: true, why: `${nth} emails since you last talked and nothing back: ${gap === 20 ? "once a month" : `every ${gap} business days`} until you connect.` };
   }
   const tier: Tier = x.tier ?? "unknown";
-  let gap = RHYTHM_GAPS[tier];
+  let gap = seq.rhythm.gaps[tier];
   let why = `Every ${gap} business days: ${TIER_WORDS[tier]}.`;
-  if ((x.generic || track === "cold") && gap < SLOW_MIN_GAP) {
-    gap = SLOW_MIN_GAP;
-    why = `Every ${gap} business days: ${x.generic ? "a shared mailbox" : "you haven't talked to them yet"}, so weekly at most.`;
+  if ((x.generic || track === "cold") && gap < seq.rhythm.slowMinGap) {
+    gap = seq.rhythm.slowMinGap;
+    why = `Every ${gap} business days: ${x.generic ? "a shared mailbox" : "you haven't talked to them yet"}, so ${gap === 5 ? "weekly" : `every ${gap} days`} at most.`;
   }
   return { ...base, phase: "rhythm", gap, callFlag: true, why: `${why} Call to start the next round.` };
 }

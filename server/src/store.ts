@@ -35,6 +35,8 @@ export type Automation = {
   meme?: string | null;
   /** The tracking token for the meme image and link in this bump (10/6), to read loads and clicks back. */
   track?: string | null;
+  /** The sequence version that wrote it (the builder's name, 11/9), so the scoreboard can compare versions. */
+  seq?: string | null;
 };
 
 export interface Store {

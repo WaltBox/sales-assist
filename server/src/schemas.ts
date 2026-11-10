@@ -185,3 +185,32 @@ export const ApplyRequest = z.object({
 });
 
 export const LineCardFormatRequest = z.object({ format: z.enum(["standard", "full_text", "niche", "contact_card", "vendor_row", "gatekeeper", "setup_packet", "pdf_only"]) });
+
+// The email sequence a rep edits in the builder (11/9). The numbers are business days. Lines are one paragraph each;
+// what they may say is checked in validate.ts (the same no-hedging rule every generated email gets).
+const Gap = z.number().int().min(1).max(30);
+const Line = z.string().trim().min(15, "A line needs a full sentence (15 characters at least).").max(300, "Keep a line under 300 characters.").refine((s) => !/\n/.test(s), "One paragraph per line.");
+const TrackPlanSchema = z.object({
+  steps: z.array(z.object({ gap: Gap, line: Line })).min(1, "At least one intro email.").max(6, "Six intro emails at most."),
+  after: z.array(Line).min(1, "At least one line to rotate through after the intro.").max(6, "Six lines at most."),
+});
+const Minute = z.number().int().min(0).max(23 * 60 + 59);
+export const SequenceSchema = z.object({
+  name: z.string().trim().min(1, "Give this version a name.").max(40, "A name under 40 characters."),
+  talked: TrackPlanSchema,
+  cold: TrackPlanSchema,
+  rhythm: z.object({
+    gaps: z.object({ steady: Gap, project: Gap, occasional: Gap, unknown: Gap }),
+    slowMinGap: Gap,
+  }),
+  monthly: z.object({ after: z.number().int().min(1).max(20), gap: z.number().int().min(5).max(60) }),
+  clickHoldDays: z.number().int().min(0).max(10),
+  wrap: z.object({
+    greeting: z.string().trim().min(2).max(60).refine((s) => !/\n/.test(s), "One line."),
+    cardLine: z.string().trim().min(10).max(200).refine((s) => s.includes("{url}"), "The line card line needs {url}: that's the link they click."),
+    siteLine: z.string().trim().min(10).max(200).refine((s) => s.includes("{url}"), "The site line needs {url}."),
+    signoff: z.string().trim().min(2).max(40).refine((s) => !/\n/.test(s), "One line."),
+  }),
+  send: z.object({ from: Minute, to: Minute, mondayFrom: Minute, mondayTo: Minute })
+    .refine((w) => w.to - w.from >= 10 && w.mondayTo - w.mondayFrom >= 10, "Each window needs at least 10 minutes."),
+});

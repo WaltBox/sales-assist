@@ -3,7 +3,7 @@ import { classifyOpen, lineCardAttachments, RFQ_IN_TAG, RFQ_TAG, taskTitle, type
 import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
-import { cadenceFor, CLICK_HOLD_DAYS, isGenericAddress, type Cadence } from "./cadence.js";
+import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequenceFor, type Cadence, type Sequence } from "./cadence.js";
 import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
@@ -491,7 +491,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
   const ours = (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();
-  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles] = await Promise.all([
+  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles, seq] = await Promise.all([
     d.close.listSince<Email>("email", {
       since: new Date(since.getTime() - 14 * DAY).toISOString(), max: 5000,
       fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,opens,to,sender,attachments,thread_id,contact_id",
@@ -505,6 +505,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     // The follow-up test (10/2): the account's own gap between automatic emails, once it's been dealt one.
     store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
     loadProfiles(d.rep.closeUserId),
+    // The rep's own sequence from the builder (11/9), or the default.
+    sequenceFor(d.rep.closeUserId),
   ]);
   const clicks = await clicksFor(d.rep.closeUserId);
   const callSignals = await loadCallSignals(d.rep.closeUserId);
@@ -551,6 +553,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     profile: profiles[leadId] ?? null,
     clickedAt: clicks[leadId] ?? null,
     taps,
+    seq,
     nextEmailAt: nextEmail[leadId] ?? null,
     signals: callSignals[leadId] ?? [],
     bounceBodies,
@@ -612,6 +615,8 @@ export function buildAccount(x: {
   nextEmailAt?: string | null;
   /** Call id → what the rep tapped after it (reached_buyer, got_name, …). */
   taps?: Map<string, string>;
+  /** The rep's email sequence (the builder's, or the default): gaps, the monthly threshold, the click hold. */
+  seq?: Sequence | null;
   /** What each call on this lead said, saved by the after-call step (10/14). */
   signals?: CallSignal[];
 }): Account {
@@ -782,11 +787,13 @@ export function buildAccount(x: {
   ]);
   const sentAutos = [...sentIds];
   const clickedAt = x.clickedAt && x.clickedAt > (lastConvo ?? "") ? x.clickedAt : null;
+  const seq = x.seq ?? DEFAULT_SEQUENCE;
   const cad = cadenceFor({
     track: convos.length ? "talked" : "cold", round: Math.max(1, convos.length), nth: sentAutos.length,
     tier: potential?.tier ?? null, generic: isGenericAddress(toAddr), heardBack: replies.some((r) => at(r) > (lastConvo ?? "")) || !!clickedAt,
-  });
+  }, seq);
   // A click is a person reading it: a call today, and no email for a few business days.
+  const CLICK_HOLD_DAYS = seq.clickHoldDays;
   const clickHold = !!clickedAt && businessDaysBetween(new Date(clickedAt), now, tz) < CLICK_HOLD_DAYS;
   const eligible = !rfq && !bounce && seen !== "bounced" && !!toAddr && !(lastIn && lastIn >= lastOut);
   // "Next email in 3 days" from the call screen: nothing before that date (only if it was set after the last email).

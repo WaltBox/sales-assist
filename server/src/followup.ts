@@ -7,6 +7,7 @@ import { businessDaysBetween, isoWithOffset, localParts, nextWeekdayAt, zonedTim
 import { FollowUpSchema, type FollowUp } from "./schemas.js";
 import { logRejection, retryNote, ruleChecks, type Failure } from "./validate.js";
 import { bumpHtml, linkUrl, newToken, trackingOn, trackMeme, type Meme } from "./memes.js";
+import { ASK, DEFAULT_SEQUENCE, DEFAULT_SEND, HOPE_WEEK, RHYTHM_LINES, type SendWindow, type Sequence } from "./cadence.js";
 
 // "Write a follow-up" (Walt 9/25): one tap drafts a short bump in Close.
 // It replies in the lead's existing thread when there is one (only a lead with
@@ -28,8 +29,9 @@ export type FollowUpResult =
 export const SEND_WINDOW = { fromMinute: 7 * 60 + 50, toMinute: 8 * 60 + 35 };
 /** Monday morning is a pile of mail (10/12): Monday's go out after 10. */
 export const MONDAY_WINDOW = { fromMinute: 10 * 60, toMinute: 10 * 60 + 45 };
-const windowOn = (weekday: number) => (weekday === 1 ? MONDAY_WINDOW : SEND_WINDOW);
-export function sendSlot(tz: string, now: Date, stagger = 0, rand: () => number = Math.random): string {
+/** The rep's own window from the sequence builder (11/9), or the default. */
+export function sendSlot(tz: string, now: Date, stagger = 0, rand: () => number = Math.random, win: SendWindow = DEFAULT_SEND): string {
+  const windowOn = (weekday: number) => (weekday === 1 ? { fromMinute: win.mondayFrom, toMinute: win.mondayTo } : { fromMinute: win.from, toMinute: win.to });
   const p = localParts(now, tz);
   const mins = p.hour * 60 + p.minute;
   const weekday = p.weekday >= 1 && p.weekday <= 5;
@@ -107,25 +109,13 @@ function lastCallLine(c: { date_created: string; duration: number; recording_tra
 }
 
 // The automatic bumps (Walt 10/12): the job is to be on top of their inbox the day an RFQ is ready, not to sell.
-// Eager salesman, full sentences like Walt typed them, and every one ends in the same plain ask. Nothing self-aware
-// about how many emails they've had. The line depends on the track (talked to the buyer, or the email came from the
-// front desk), the round (how many real conversations), and where the account is in the sequence.
-export const ASK = "Please send me over an RFQ and we'll get you a quote back.";
-const BENCHMARK = "I have a quick ask for you. Send me the last RFQ you sent out, even if it's already been bought, and we'll quote it so you can see where we land.";
-const HOPE_WEEK = `I hope your week's going good! ${ASK}`;
-const RHYTHM = [
-  `I wanted to get back in front of you so I'm on top of the pile the day one comes across your desk. Please send it over and we'll get you a quote back.`,
-  `I'm bumping this back up for you. If you have an RFQ going out this week, please send it over and we'll get you a quote back.`,
-  HOPE_WEEK,
-];
-const COLD = [
-  `I wanted to bump this back up in case it got buried. ${ASK}`,
-  `I'm checking in on this one more time. ${ASK}`,
-  HOPE_WEEK,
-];
+// Since 11/9 the lines live in the sequence record (cadence.ts): each rep edits them in the builder, and the default
+// is what used to be here. The special cases stay code: "{when}" on the first talked email, round 2's "again", the
+// shared-mailbox question every other email, and the Friday variant.
+export { ASK };
 /** A shared mailbox (info@, estimating@): every other email asks who to send it to. */
 export const WHO_HANDLES = "I'm trying to reach whoever handles the pipe and fittings RFQs over there. If you can point me their way, or just send one over, we'll get you a quote back.";
-const BUMP_LINES = RHYTHM;
+const BUMP_LINES = RHYTHM_LINES;
 /**
  * The name to greet with, or null for "Hi there," (10/1): a nickname in brackets wins ("H.C. (Clifford) Provence"
  * → Clifford); an initial ("J. Waite") or a mailbox word ("frontdesk", "hello", "info") isn't a name.
@@ -181,33 +171,34 @@ export type BumpPlace = {
   /** Tracked links, when tracking is on. */
   cardUrl?: string | null;
   siteUrl?: string | null;
+  /** The rep's sequence (the lines); the default when absent. */
+  seq?: Sequence | null;
 };
 
 /** The one line in the bump: which depends on the track, the round and where they are in the sequence. */
 export function bumpLine(p: BumpPlace): string {
   const { nth } = p;
+  const seq = p.seq ?? DEFAULT_SEQUENCE;
   if (p.variant && VARIANTS[p.variant]) { const v = VARIANTS[p.variant]; return v[nth % v.length]; }
   if (p.generic && nth % 2 === 1) return WHO_HANDLES;
-  if ((p.track ?? "talked") === "cold") return COLD[nth % COLD.length];
-  const round = p.round ?? 1;
+  const plan = seq[(p.track ?? "talked") === "cold" ? "cold" : "talked"];
+  const line = nth < plan.steps.length ? plan.steps[nth].line : plan.after[(nth - plan.steps.length) % plan.after.length];
+  if (!/\{when\}/.test(line)) return line;
   // "Great talking to you" only while the call is fresh: more than a week later it reads wrong.
-  if (nth === 0 && (p.talkedDaysAgo == null || p.talkedDaysAgo <= 7)) {
-    if (round >= 2) return `It was good talking to you again! ${ASK}`;
-    const when = p.talkedDaysAgo != null && p.talkedDaysAgo <= 1 ? "yesterday" : "the other day";
-    return `It was great talking to you ${when}! ${ASK}`;
-  }
-  if (nth === 0) return HOPE_WEEK;
-  if (nth === 1) return BENCHMARK;
-  if (nth === 2) return HOPE_WEEK;
-  return RHYTHM[(nth - 3) % RHYTHM.length];
+  const fresh = p.talkedDaysAgo == null || p.talkedDaysAgo <= 7;
+  if (!fresh) return HOPE_WEEK;
+  if ((p.round ?? 1) >= 2) return `It was good talking to you again! ${ASK}`;
+  return line.replace(/\{when\}/g, p.talkedDaysAgo != null && p.talkedDaysAgo <= 1 ? "yesterday" : "the other day");
 }
 
 export function bumpBodyFor(first: string | null, repName: string, place: BumpPlace = { nth: 0 }) {
   const line = fitDay(bumpLine(place), place.weekday);
-  const card = `Line card's attached too, or you can grab it here: ${place.cardUrl ?? LINE_CARD_URL}`;
+  const wrap = (place.seq ?? DEFAULT_SEQUENCE).wrap;
+  const greeting = wrap.greeting.replace(/\{name\}/g, first ?? "there");
+  const card = wrap.cardLine.replace(/\{url\}/g, place.cardUrl ?? LINE_CARD_URL);
   // Someone you haven't talked to gets the site too (Walt 10/12): a click tells us the address works.
-  const site = place.track === "cold" ? `\n\nOur site is here if that's easier: ${place.siteUrl ?? SITE_URL}` : "";
-  return `Hi ${first ?? "there"}!\n\n${line}\n\n${card}${site}\n\nThanks,\n${repName}`;
+  const site = place.track === "cold" ? `\n\n${wrap.siteLine.replace(/\{url\}/g, place.siteUrl ?? SITE_URL)}` : "";
+  return `${greeting}\n\n${line}\n\n${card}${site}\n\n${wrap.signoff}\n${repName}`;
 }
 
 export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boolean; schedule?: { stagger: number; now?: boolean }; template?: { meme: Meme | null; place: BumpPlace }; onlyTo?: string } = {}): Promise<FollowUpResult> {
@@ -270,7 +261,7 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
   const tz = ctx.facts.prospectTz ?? d.rep.timeZone;
   const scheduledFor = !opts.schedule ? null
     : opts.schedule.now ? isoWithOffset(new Date(now.getTime() + (2 + opts.schedule.stagger) * 60 * 1000), tz)
-    : sendSlot(tz, now, opts.schedule.stagger);
+    : sendSlot(tz, now, opts.schedule.stagger, Math.random, opts.template?.place.seq?.send ?? DEFAULT_SEND);
   const sendDay = localParts(new Date(scheduledFor ?? now.toISOString()), tz).weekday;
   // Automatic bump in the thread: the template, no AI.
   // Every automatic bump is tracked when tracking is on (10/12): the meme, and the line card and site links, so a

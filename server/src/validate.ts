@@ -32,6 +32,40 @@ export const IDENTITY = [
  */
 export const HEDGE = /\bno strings\b|\bno pressure\b|\bno obligation\b|\bno rush\b|\btotally optional\b|\bstack up\b|\bhow (we|our (numbers|prices|pricing)) compare\b|\bsee how we compare\b|\bcomparison on hand\b|\b(get|have|turn) (the )?(quotes?|pricing|numbers|prices) (back )?(to you )?(fast|quick(ly)?|in no time)\b|\b(if|when|whenever) (something|anything) comes up\b/i;
 
+/** Junk-folder talk never goes in a line (memory rule): it reads as spam fishing for a reply. */
+const JUNK = /\b(junk|spam)\b|\bpromotions? (tab|folder)\b|\bdidn'?t (make|get) (it )?(through|past)\b/i;
+export type SequenceProblem = { path: string; problem: string };
+/**
+ * What a line in the sequence builder may say (11/9): the same no-hedging rule every generated email gets, no
+ * junk-folder talk, no "{when}" outside the first talked email, and a sentence that ends. The shape (gaps, counts,
+ * lengths) is the schema's job; this is the wording.
+ */
+export function sequenceProblems(seq: { talked: { steps: Array<{ line: string }>; after: string[] }; cold: { steps: Array<{ line: string }>; after: string[] }; wrap?: { greeting: string; cardLine: string; siteLine: string; signoff: string } }): SequenceProblem[] {
+  const out: SequenceProblem[] = [];
+  const check = (path: string, line: string, whenOk = false) => {
+    if (HEDGE.test(line)) out.push({ path, problem: "Hedges the ask (no strings, no pressure, see how we compare, quotes back fast, if something comes up). Just ask for their RFQ." });
+    if (JUNK.test(line)) out.push({ path, problem: "No junk-folder talk; it reads as spam." });
+    if (/\{when\}/.test(line) && !whenOk) out.push({ path, problem: "{when} only works in the first email after you talked." });
+    if (/\{(?!when\})[^}]*\}/.test(line)) out.push({ path, problem: "The only fill-in is {when}." });
+    if (!/[.!?]$/.test(line.trim())) out.push({ path, problem: "End the line with a period, a question mark or an exclamation point." });
+    if (/[\u2014\u2013]/.test(line)) out.push({ path, problem: "No dashes; write it as two sentences." });
+  };
+  for (const track of ["talked", "cold"] as const) {
+    seq[track].steps.forEach((s, i) => check(`${track}.steps.${i}.line`, s.line, track === "talked" && i === 0));
+    seq[track].after.forEach((l, i) => check(`${track}.after.${i}`, l));
+  }
+  if (seq.wrap) {
+    for (const k of ["cardLine", "siteLine"] as const) {
+      const v = seq.wrap[k];
+      if (HEDGE.test(v) || JUNK.test(v)) out.push({ path: `wrap.${k}`, problem: "No hedging or junk-folder talk here either." });
+      if (/\{(?!url\})[^}]*\}/.test(v)) out.push({ path: `wrap.${k}`, problem: "The only fill-in here is {url}." });
+    }
+    if (/\{(?!name\})[^}]*\}/.test(seq.wrap.greeting)) out.push({ path: "wrap.greeting", problem: "The only fill-in here is {name}." });
+    if (/\{[^}]*\}/.test(seq.wrap.signoff)) out.push({ path: "wrap.signoff", problem: "No fill-ins in the sign-off." });
+  }
+  return out;
+}
+
 const sentences = (body: string) => body.split(/\n\s*\n|(?<=[.!?])\s+(?=[A-Z"'])/).map((s) => s.trim()).filter(Boolean);
 const first = (name: string) => name.trim().split(/\s+/)[0].replace(/[^A-Za-z'-]/g, "").toLowerCase();
 const GREETING = /^(?:hi|hello|hey|good (?:morning|afternoon|evening)|dear)\s+([A-Z][A-Za-z'-]+)/i;

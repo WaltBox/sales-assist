@@ -799,6 +799,31 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .pacebox { border: 1px solid var(--ink-line, rgba(17,17,20,.2)); background: #fff; padding: 12px 14px; margin: 10px 0 14px; }
 .pacebox p { margin: 0 0 10px; }
 .pacechips { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The sequence builder (11/9) */
+.seqbox { border: 1px solid var(--ink); background: #fff; padding: 14px 16px 12px; margin: 10px 0 14px; }
+.seqbox h2 { margin: 0 0 4px; font-size: 18px; }
+.seqbox h3 { margin: 0 0 4px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; }
+.seqhead p { max-width: 820px; }
+.seqsec { border-top: 1px solid var(--ink-line); padding: 12px 0; }
+.seqsec > p { margin: 0 0 8px; }
+.seqstep { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; max-width: 820px; }
+.seqwhen { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seqrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.seqrow label { font-size: 13px; }
+.seqafter { margin-top: 6px; }
+.seqnum, .seqtime, .seqtext, .seqline { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--ink); background: #fff; }
+.seqnum { width: 64px; }
+.seqtime { width: 110px; }
+.seqtext { flex: 1; min-width: 260px; max-width: 640px; }
+.seqline { width: 100%; max-width: 820px; resize: vertical; line-height: 1.35; }
+.seqerr { color: var(--red); font-size: 12.5px; }
+.seqerr.big { font-size: 14px; margin: 0 0 8px; }
+.seqacts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.seqpreview { border-top: 1px solid var(--ink-line); margin-top: 12px; padding-top: 10px; }
+.seqpreview p { margin: 0 0 6px; }
+.seqsample { margin: 0 0 6px; max-width: 820px; }
+.seqsample summary { cursor: pointer; font-size: 13.5px; }
+.seqsample pre { white-space: pre-wrap; font: inherit; font-size: 13.5px; line-height: 1.4; background: rgba(17, 17, 20, .04); padding: 10px 12px; margin: 6px 0 0; }
 .btn.slowon { border-color: var(--amber, #8a5a00); color: var(--amber, #8a5a00); }
 
 /* Team (10/19). */

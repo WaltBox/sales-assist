@@ -1611,13 +1611,13 @@ function memeLibrary() {
 
 // Is the sequence working (10/12)? Emails sent, RFQs that came in within a week of one, and stop requests, by where
 // the account was in the sequence. The number that matters is RFQs per 100 emails.
-function scoreboardTable(rows) {
+function scoreboardTable(rows, title) {
   const per = (r) => (r.sent ? `${((r.rfqs / r.sent) * 100).toFixed(1)}` : "–");
   const tot = rows.reduce((t, r) => ({ sent: t.sent + r.sent, rfqs: t.rfqs + r.rfqs, stops: t.stops + r.stops }), { sent: 0, rfqs: 0, stops: 0 });
   return el("details", { class: "rfqtable scoreboard", open: true }, [
-    el("summary", { text: `Scoreboard, last 60 days: ${tot.rfqs} RFQ${tot.rfqs === 1 ? "" : "s"} from ${tot.sent} automatic emails` }),
+    el("summary", { text: title ? `${title}, last 60 days` : `Scoreboard, last 60 days: ${tot.rfqs} RFQ${tot.rfqs === 1 ? "" : "s"} from ${tot.sent} automatic emails` }),
     el("table", {}, [
-      el("thead", {}, [el("tr", {}, ["Where they were", "Emails", "RFQs within a week", "RFQs per 100", "Asked to stop or slow down"].map((h) => el("th", { text: h })))]),
+      el("thead", {}, [el("tr", {}, [title ? "Version" : "Where they were", "Emails", "RFQs within a week", "RFQs per 100", "Asked to stop or slow down"].map((h) => el("th", { text: h })))]),
       el("tbody", {}, rows.map((r) => el("tr", {}, [
         el("td", { text: r.label }), el("td", { class: "mono", text: r.sent }), el("td", { class: "mono", text: r.rfqs }), el("td", { class: "mono", text: per(r) }), el("td", { class: "mono", text: r.stops }),
       ]))),
@@ -1630,12 +1630,13 @@ function scoreboardTable(rows) {
 // producing RFQs. The full list of emails is under that.
 
 // Where an account is in the sequence, one stage each, in the order the sequence moves them.
+// The subs read from the rep's own sequence (the builder, 11/9).
 const MAIL_STAGES = [
-  { k: "intro", label: "Intro emails", sub: "Talked to the buyer: 3 emails", tone: "navy" },
-  { k: "cold", label: "Cold intro", sub: "Email from the front desk: 2 emails", tone: "navy" },
-  { k: "call", label: "Call them", sub: "Clicked, intro done, or 3 days quiet", tone: "red" },
-  { k: "rhythm", label: "Rhythm", sub: "Every few days to 3 weeks, by how much they buy", tone: "ink" },
-  { k: "monthly", label: "Monthly", sub: "6 emails, nothing back", tone: "muted" },
+  { k: "intro", label: "Intro emails", sub: (q) => `Talked to the buyer: ${q.talked.steps.length} email${q.talked.steps.length === 1 ? "" : "s"}`, tone: "navy" },
+  { k: "cold", label: "Cold intro", sub: (q) => `Email from the front desk: ${q.cold.steps.length} email${q.cold.steps.length === 1 ? "" : "s"}`, tone: "navy" },
+  { k: "call", label: "Call them", sub: () => "Clicked, intro done, or 3 days quiet", tone: "red" },
+  { k: "rhythm", label: "Rhythm", sub: (q) => { const g = Object.values(q.rhythm.gaps); return `Every ${Math.min(...g)} to ${Math.max(...g)} business days, by how much they buy`; }, tone: "ink" },
+  { k: "monthly", label: "Monthly", sub: (q) => `${q.monthly.after} emails, nothing back: every ${q.monthly.gap} business days`, tone: "muted" },
 ];
 const MAIL_SIDE = [
   { k: "you", label: "Waiting on you", sub: "A reply to answer, or a bad address", tone: "red" },
@@ -1699,8 +1700,9 @@ function mailDashboard(au) {
   const counts = {};
   const members = {};
   for (const a of accounts) { const k = mailStageOf(a, held); counts[k] = (counts[k] || 0) + 1; (members[k] = members[k] || []).push(a); }
+  const seq = au.sequence || null;
   const stageCard = (st, arrow) => el("button", { class: `stage s-${st.tone}${state.mailStage === st.k ? " on" : ""}`, onclick: () => { state.mailStage = state.mailStage === st.k ? null : st.k; render(); } }, [
-    el("b", { class: "mono", text: counts[st.k] || 0 }), el("span", { class: "tl", text: st.label }), el("span", { class: "sub2", text: st.sub }),
+    el("b", { class: "mono", text: counts[st.k] || 0 }), el("span", { class: "tl", text: st.label }), el("span", { class: "sub2", text: typeof st.sub === "function" ? (seq ? st.sub(seq) : "") : st.sub }),
     arrow ? el("i", { class: "arrow", "aria-hidden": "true", text: "→" }) : null,
   ]);
   const picked = state.mailStage && (members[state.mailStage] || []);
@@ -1768,18 +1770,21 @@ function mailDashboard(au) {
     ]))),
   ]);
 
+  const bdays = (n) => `${n} business day${n === 1 ? "" : "s"}`;
+  const gapsOf = (steps) => steps.map((st, i) => (i === 0 ? (st.gap === 1 ? "the next morning" : `${bdays(st.gap)} later`) : bdays(st.gap))).join(", then ");
+  const clock = (m) => `${((m / 60 | 0) + 11) % 12 + 1}:${String(m % 60).padStart(2, "0")}${m < 720 ? "am" : "pm"}`;
   const how = el("details", { class: "mhow" }, [
-    el("summary", { text: "How the sequence works" }),
-    el("ol", {}, [
+    el("summary", { text: seq && au.sequenceCustom ? `How the sequence works (your version: ${seq.name})` : "How the sequence works" }),
+    el("ol", {}, (seq ? [
       "You reach the buyer, or the front desk gives you their email. The line card goes out.",
-      "Talked to the buyer: 3 emails (next morning, then 3 and 5 business days later). Email from the front desk: 2 emails (2 and 5 business days later).",
-      "Then the app flags a call. The emails keep going while it waits: every 3 business days for steady buyers, weekly for project buyers and anyone you haven't talked to, every 3 weeks for occasional ones. After 6 with nothing back, monthly.",
-      "Nobody goes more than 3 business days without hearing from you (occasional buyers: 2 weeks). When no email is due, they're on Calls to make. No daily limit on calls; the list is in priority order. Emails go at most 80 a day; extras go the next morning.",
+      `Talked to the buyer: ${seq.talked.steps.length} email${seq.talked.steps.length === 1 ? "" : "s"} (${gapsOf(seq.talked.steps)}). Email from the front desk: ${seq.cold.steps.length} email${seq.cold.steps.length === 1 ? "" : "s"} (${gapsOf(seq.cold.steps)}).`,
+      `Then the app flags a call. The emails keep going while it waits: every ${bdays(seq.rhythm.gaps.steady)} for steady buyers, every ${bdays(seq.rhythm.gaps.project)} for project buyers, every ${bdays(seq.rhythm.gaps.occasional)} for occasional ones, every ${bdays(seq.rhythm.gaps.unknown)} when we don't know yet. A shared mailbox or someone you haven't talked to: at least ${bdays(seq.rhythm.slowMinGap)} apart. After ${seq.monthly.after} with nothing back, every ${bdays(seq.monthly.gap)}.`,
+      `Nobody goes more than 3 business days without hearing from you (occasional buyers: 2 weeks). When no email is due, they're on Calls to make. No daily limit on calls; the list is in priority order. Emails go at most ${au.fullCap} a day; extras go the next morning.`,
       "After you reach someone, pick Next email in the side panel (tomorrow to 2 weeks) if you want a different start for the next round.",
       "Reach the buyer again and the next round starts from the top.",
-      "Any time: a reply pauses it, a click on your email makes it a call today, an RFQ takes them out for good, and \"no\" or \"stop\" ends it.",
-      "Every email ends with the same ask: please send me over an RFQ and we'll get you a quote back. They go out around 8am their time, Mondays after 10.",
-    ].map((t) => el("li", { text: t }))),
+      `Any time: a reply pauses it, a click on your email makes it a call today and holds the emails ${bdays(seq.clickHoldDays)}, an RFQ takes them out for good, and "no" or "stop" ends it.`,
+      `They go out between ${clock(seq.send.from)} and ${clock(seq.send.to)} their time, Mondays ${clock(seq.send.mondayFrom)} to ${clock(seq.send.mondayTo)}. Edit any of this with Edit the sequence, up top.`,
+    ] : ["Loading…"]).map((t) => el("li", { text: t }))),
   ]);
   return [tiles, newCardCard(), addedCard, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
 }
@@ -2116,6 +2121,130 @@ function paceBox(au) {
   ]);
 }
 
+
+// ---------- the sequence builder (Walt 11/9: "they should be able to change the text of their emails, frequencies,
+// shit like that. Give us a lot so we can test for what works best") ----------
+// Edits a working copy; typing never re-renders (it would drop the cursor), only adding or removing a row does.
+// Save checks it on the server (the shape, then the no-hedging rule every email gets) and shows each problem under
+// its field. Every email the version sends carries its name, so the scoreboard compares versions.
+const TIER_LABELS = { steady: "Steady buyers (several RFQs a week)", project: "Project buyers", occasional: "Occasional (a few times a year)", unknown: "Don't know yet" };
+const toClock = (m) => `${String(m / 60 | 0).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const fromClock = (v) => { const [h, m] = String(v || "0:0").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+function seqBuilder(au) {
+  if (!state.seqDraft) state.seqDraft = JSON.parse(JSON.stringify(au.sequence));
+  const q = state.seqDraft;
+  const errs = state.seqErrors || {};
+  const err = (path) => (errs[path] ? el("span", { class: "seqerr", text: errs[path] }) : null);
+  const rerender = () => { state.seqPreview = null; render(); };
+  const num = (get, set, attrs = {}) => el("input", { type: "number", class: "seqnum", min: attrs.min ?? 1, max: attrs.max ?? 30, value: get(), oninput: (e) => set(Number(e.target.value)) });
+  const clockIn = (get, set) => el("input", { type: "time", class: "seqtime", value: toClock(get()), oninput: (e) => set(fromClock(e.target.value)) });
+  const text = (get, set, cls = "seqline") => el("textarea", { class: cls, rows: 2, oninput: (e) => set(e.target.value) }, [get()]);
+  const line1 = (get, set) => el("input", { type: "text", class: "seqtext", value: get(), oninput: (e) => set(e.target.value) });
+
+  const trackBox = (k, title, intro) => {
+    const t = q[k];
+    return el("div", { class: "seqsec" }, [
+      el("h3", { text: title }), el("p", { class: "muted small3", text: intro }),
+      ...t.steps.map((st, i) => el("div", { class: "seqstep" }, [
+        el("div", { class: "seqwhen" }, [
+          el("b", { text: `Email ${i + 1}` }),
+          num(() => st.gap, (v) => { st.gap = v; }), el("span", { class: "sub2", text: i === 0 ? "business days after the line card" : "business days after the last one" }),
+          err(`${k}.steps.${i}.gap`),
+        ]),
+        text(() => st.line, (v) => { st.line = v; }), err(`${k}.steps.${i}.line`),
+        t.steps.length > 1 ? el("button", { class: "linkbtn small3", text: "Remove this email", onclick: () => { t.steps.splice(i, 1); rerender(); } }) : null,
+      ])),
+      t.steps.length < 6 ? el("button", { class: "btn small", text: "Add an email", onclick: () => { t.steps.push({ gap: 5, line: "" }); rerender(); } }) : null,
+      err(`${k}.steps`),
+      el("p", { class: "muted small3 seqafter", text: "After those, the emails keep going at the rhythm below and rotate through these lines:" }),
+      ...t.after.map((l, i) => el("div", { class: "seqstep" }, [
+        text(() => l, (v) => { t.after[i] = v; }), err(`${k}.after.${i}`),
+        t.after.length > 1 ? el("button", { class: "linkbtn small3", text: "Remove this line", onclick: () => { t.after.splice(i, 1); rerender(); } }) : null,
+      ])),
+      t.after.length < 6 ? el("button", { class: "btn small", text: "Add a line", onclick: () => { t.after.push(""); rerender(); } }) : null,
+      err(`${k}.after`),
+    ]);
+  };
+
+  const run = async (save) => {
+    state.mailBusy = true; state.seqErrors = {}; render();
+    try {
+      const r = await api("/api/automations/sequence", { sequence: q, dry_run: !save });
+      if (!r.ok) {
+        state.seqErrors = Object.fromEntries(r.errors.map((x) => [x.path, x.problem]));
+        state.seqPreview = null;
+        state.seqMsg = `${r.errors.length} thing${r.errors.length === 1 ? "" : "s"} to fix, marked below.`;
+      } else if (save) {
+        state.seqOpen = false; state.seqDraft = null; state.seqPreview = null; state.seqMsg = null;
+        state.paceMsg = `Saved: ${q.name}. ${r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves. ` : ""}Anything already scheduled for today goes as is; the new sequence starts with the next plan.`;
+      } else {
+        state.seqPreview = r; state.seqMsg = null;
+      }
+    } catch (e) { alert(e.message); }
+    state.mailBusy = false;
+    if (save) await reloadAutos(); else render();
+  };
+  const reset = async () => {
+    if (!confirm("Back to the standard sequence? Your version stays in the scoreboard under its name, but nothing new sends from it.")) return;
+    state.mailBusy = true; render();
+    try { await api("/api/automations/sequence/reset", {}); state.seqOpen = false; state.seqDraft = null; state.seqPreview = null; state.paceMsg = "Back to the standard sequence."; } catch (e) { alert(e.message); }
+    state.mailBusy = false; await reloadAutos();
+  };
+  const cancel = () => { state.seqOpen = false; state.seqDraft = null; state.seqErrors = {}; state.seqPreview = null; state.seqMsg = null; render(); };
+
+  const pv = state.seqPreview;
+  return el("div", { class: "seqbox" }, [
+    el("div", { class: "seqhead" }, [
+      el("h2", { text: "Edit the sequence" }),
+      el("p", { class: "muted small3", text: "Everything here is yours to change: how many emails, how far apart, and what each one says. Give the version a name; every email it sends carries it, so the scoreboard shows which version brings in RFQs. Fill-ins: {name} is their first name, {url} is the link, and {when} in the first talked email becomes \"yesterday\" or \"the other day\". The rest of the email (the meme, the attached PDF, your name) stays." }),
+    ]),
+    el("div", { class: "seqsec seqrow" }, [el("label", { text: "Version name" }), line1(() => q.name, (v) => { q.name = v; }), err("name")]),
+    trackBox("talked", "Talked to the buyer", "You reached them and the line card went out. Then:"),
+    trackBox("cold", "Email from the front desk", "The front desk gave you their email, or you asked for it instead of leaving a voicemail. The line card went out. Then:"),
+    el("div", { class: "seqsec" }, [
+      el("h3", { text: "Then the rhythm" }), el("p", { class: "muted small3", text: "Once the intro's done, how often an email goes, by how much they buy (business days between emails):" }),
+      ...Object.keys(TIER_LABELS).map((tier) => el("div", { class: "seqrow" }, [el("label", { text: TIER_LABELS[tier] }), num(() => q.rhythm.gaps[tier], (v) => { q.rhythm.gaps[tier] = v; }), err(`rhythm.gaps.${tier}`)])),
+      el("div", { class: "seqrow" }, [el("label", { text: "A shared mailbox (info@, estimating@), or someone you've never talked to: at least" }), num(() => q.rhythm.slowMinGap, (v) => { q.rhythm.slowMinGap = v; }), el("span", { class: "sub2", text: "business days apart" }), err("rhythm.slowMinGap")]),
+    ]),
+    el("div", { class: "seqsec" }, [
+      el("h3", { text: "Going quiet" }),
+      el("div", { class: "seqrow" }, [el("label", { text: "After" }), num(() => q.monthly.after, (v) => { q.monthly.after = v; }, { max: 20 }), el("label", { text: "emails since you last talked with nothing back, one every" }), num(() => q.monthly.gap, (v) => { q.monthly.gap = v; }, { min: 5, max: 60 }), el("span", { class: "sub2", text: "business days" }), err("monthly.after"), err("monthly.gap")]),
+    ]),
+    el("div", { class: "seqsec" }, [
+      el("h3", { text: "A click" }),
+      el("div", { class: "seqrow" }, [el("label", { text: "Someone clicks the line card or the site: it's a call today, and no email for" }), num(() => q.clickHoldDays, (v) => { q.clickHoldDays = v; }, { min: 0, max: 10 }), el("span", { class: "sub2", text: "business days" }), err("clickHoldDays")]),
+    ]),
+    el("div", { class: "seqsec" }, [
+      el("h3", { text: "Around the line" }), el("p", { class: "muted small3", text: "The same in every email." }),
+      el("div", { class: "seqrow" }, [el("label", { text: "Greeting" }), line1(() => q.wrap.greeting, (v) => { q.wrap.greeting = v; }), err("wrap.greeting")]),
+      el("div", { class: "seqrow" }, [el("label", { text: "Line card line" }), line1(() => q.wrap.cardLine, (v) => { q.wrap.cardLine = v; }), err("wrap.cardLine")]),
+      el("div", { class: "seqrow" }, [el("label", { text: "Site line (front-desk track only)" }), line1(() => q.wrap.siteLine, (v) => { q.wrap.siteLine = v; }), err("wrap.siteLine")]),
+      el("div", { class: "seqrow" }, [el("label", { text: "Sign-off (your name goes under it)" }), line1(() => q.wrap.signoff, (v) => { q.wrap.signoff = v; }), err("wrap.signoff")]),
+    ]),
+    el("div", { class: "seqsec" }, [
+      el("h3", { text: "When they go out" }), el("p", { class: "muted small3", text: "Their time. A random minute in the window, so a wave isn't a block." }),
+      el("div", { class: "seqrow" }, [el("label", { text: "Tuesday to Friday" }), clockIn(() => q.send.from, (v) => { q.send.from = v; }), el("span", { class: "sub2", text: "to" }), clockIn(() => q.send.to, (v) => { q.send.to = v; })]),
+      el("div", { class: "seqrow" }, [el("label", { text: "Monday" }), clockIn(() => q.send.mondayFrom, (v) => { q.send.mondayFrom = v; }), el("span", { class: "sub2", text: "to" }), clockIn(() => q.send.mondayTo, (v) => { q.send.mondayTo = v; }), err("send")]),
+    ]),
+    el("p", { class: "muted small3", text: "Saving changes the timing from the next plan. Anything already scheduled for today goes as is." }),
+    state.seqMsg ? el("p", { class: "seqerr big", text: state.seqMsg }) : null,
+    el("div", { class: "acts seqacts" }, [
+      el("button", { class: "btn small", disabled: state.mailBusy, text: "Preview the emails", onclick: () => run(false) }),
+      el("button", { class: "btn small primary", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Save", onclick: () => run(true) }),
+      au.sequenceCustom ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Back to the standard sequence", onclick: reset }) : null,
+      el("button", { class: "linkbtn small3", text: "Cancel", onclick: cancel }),
+    ]),
+    pv ? el("div", { class: "seqpreview" }, [
+      el("p", {}, [el("strong", { text: "Looks good. " }), pv.moved ? `${pv.moved} account${pv.moved === 1 ? "'s" : "s'"} next email date moves if you save.` : "Nobody's next email date moves."]),
+      el("p", { class: "muted small3", text: "What each one reads like, for a buyer called Sam, on a Wednesday:" }),
+      ...pv.previews.map((x) => el("details", { class: "seqsample" }, [
+        el("summary", { text: x.gap ? `${x.label} · ${x.gap} business day${x.gap === 1 ? "" : "s"} after the last one` : x.label }),
+        el("pre", { text: x.body }),
+      ])),
+    ]) : null,
+  ]);
+}
+
 function emailsSection() {
   const au = state.autos;
   const toggle = async () => {
@@ -2147,10 +2276,12 @@ function emailsSection() {
         el("span", { class: `switch${au.enabled ? " on" : ""}` }, [el("i"), au.enabled ? "On" : "Off"]),
         el("button", { class: "btn small", disabled: state.mailBusy, text: au.enabled ? "Turn off" : "Turn on", onclick: toggle }),
         el("button", { class: `btn small${au.dailyCap < au.fullCap ? " slowon" : ""}`, disabled: state.mailBusy, text: au.dailyCap < au.fullCap ? `Slowed: ${au.dailyCap} a day` : "Slow down", onclick: () => { state.paceOpen = !state.paceOpen; render(); } }),
+        au.sequence ? el("button", { class: `btn small${au.sequenceCustom ? " slowon" : ""}`, disabled: state.mailBusy, text: au.sequenceCustom ? `Sequence: ${au.sequence.name}` : "Edit the sequence", onclick: () => { state.seqOpen = !state.seqOpen; if (!state.seqOpen) state.seqDraft = null; state.paceOpen = false; render(); } }) : null,
         el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today's emails now", onclick: planNow }),
       ]) : null,
     ]),
     au && state.paceOpen ? paceBox(au) : null,
+    au && state.seqOpen && au.sequence ? seqBuilder(au) : null,
     state.paceMsg ? el("p", { class: "muted small3", text: state.paceMsg }) : null,
     au && !au.enabled ? el("p", { class: "offnote", text: "Automatic emails are off. Everything below shows what would go out; nothing sends until you turn them on." }) : null,
     // Test mode (10/1): only Test Lead Fabrication gets them until it's turned off.
@@ -2165,6 +2296,7 @@ function emailsSection() {
     ]) : null,
     ...(au ? mailDashboard(au) : [el("p", { class: "loading", text: "Loading…" })]),
     au && au.scoreboard && au.scoreboard.length ? scoreboardTable(au.scoreboard) : null,
+    au && au.versions && au.versions.length > 1 ? scoreboardTable(au.versions, "By sequence version") : null,
     el("div", { class: "mlist" }, [
       el("div", { class: "mhead" }, [el("h2", { text: "Every email" }), state.mailDay && state.mailTab === "upcoming" ? el("button", { class: "linkbtn small3", text: `Showing ${dayOf(`${state.mailDay}T12:00:00`)} · show all`, onclick: () => { state.mailDay = null; render(); } }) : null]),
       el("div", { class: "tabs" }, MAIL_TABS.map(([k, label]) => el("button", {
