@@ -14,7 +14,7 @@
 // All server text is rendered with textContent, never as HTML.
 
 const PREVIEW = typeof chrome === "undefined" || !chrome.tabs;
-const POLL_MS = 3000;
+const POLL_MS = 5000; // was 3s (11/10: every open panel was a database read every 3 seconds)
 const EMPTY = () => ({ note: null, contacts: [], contact_updates: [], tasks: [], email: null, status: null });
 
 let settings = { server: "", token: "", theme: "light" };
@@ -2702,7 +2702,7 @@ async function init() {
   syncStats(true);
   loadMe();
   setInterval(poll, POLL_MS);
-  setInterval(refreshQueue, 15_000);
+  setInterval(refreshQueue, 30_000);
   startGame();
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60_000);

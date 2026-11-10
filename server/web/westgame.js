@@ -811,7 +811,7 @@
 
     load(false);
     setInterval(() => load(false), opts.pollMs || 20_000);
-    if (opts.live) setInterval(live, 3000);
+    if (opts.live) setInterval(live, 8000); // was 3s (11/10: the live check is a server call per open screen)
     return { render, load, celebrate, playNow, get race() { return g.race; } };
   }
 

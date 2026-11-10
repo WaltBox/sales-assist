@@ -126,7 +126,7 @@ export function createApp(appDeps: AppDeps) {
       process.env.VERCEL && !config.sessionSecret ? "SESSION_SECRET" : null,
       process.env.VERCEL && !config.cronSecret ? "CRON_SECRET" : null,
     ].filter(Boolean);
-    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", reps: appDeps.reps.size, provider: config.provider === "openai" && process.env.OPENAI_API_KEY ? `openai (${config.openaiModel}, fast: ${config.openaiFastModel})` : `claude (${config.model})`, backup: config.provider === "openai" ? (process.env.ANTHROPIC_API_KEY ? "claude" : null) : (process.env.OPENAI_API_KEY ? config.openaiModel : null), missing });
+    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", storeReads: hosted ? (store as unknown as { counts: { remembered: number; fetched: number } }).counts : null, reps: appDeps.reps.size, provider: config.provider === "openai" && process.env.OPENAI_API_KEY ? `openai (${config.openaiModel}, fast: ${config.openaiFastModel})` : `claude (${config.model})`, backup: config.provider === "openai" ? (process.env.ANTHROPIC_API_KEY ? "claude" : null) : (process.env.OPENAI_API_KEY ? config.openaiModel : null), missing });
   });
 
   // Reps: reps.json (local) plus whoever signed up (the store: a file locally, Supabase when hosted).
@@ -1014,11 +1014,18 @@ export function createApp(appDeps: AppDeps) {
   let lastAutoCheck = 0;
   let lastUntapped = 0;
   const rfqLineAt = new Map<string, number>();
+  // A time budget (11/10): on Vercel the run is one request that dies at five minutes, and it died there every
+  // morning since 10/15, part way through the reps, with nothing to show. Now it stops itself at four and the next
+  // run (35 minutes later, or 15 seconds locally) picks up where it left off.
+  const BUDGET_MS = Number(process.env.CATCH_UP_BUDGET_MS) || 240_000;
   const catchUp = async () => {
+    const deadline = Date.now() + BUDGET_MS;
+    const outOfTime = (where: string) => { const out = Date.now() > deadline; if (out) console.warn(`[catch-up] out of time at ${where}; the rest waits for the next run`); return out; };
     // Automatic emails: plan the morning's bumps, and re-check the ones about to go (every few minutes).
     if (Date.now() - lastAutoCheck > 3 * 60_000) {
       lastAutoCheck = Date.now();
       for (const rep of await allReps().catch(() => [])) {
+        if (outOfTime(rep.email)) { lastAutoCheck = 0; break; }
         const d = await depsFor(rep).catch(() => null);
         if (!d) continue;
         // Only the hosted server plans the morning (10/8: the Mac copy planned too, 90 seconds after it, and 80 leads
@@ -1059,6 +1066,7 @@ export function createApp(appDeps: AppDeps) {
     }
     const waiting = await waitingFor(null);
     for (const it of waiting) {
+      if (outOfTime(`review ${it.id}`)) break;
       const d = await depsForUser(it.repId);
       if (d) await advance(d, it.id).catch((err) => console.error(`catch-up ${it.id}:`, (err as Error).message));
     }

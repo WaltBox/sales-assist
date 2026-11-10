@@ -177,12 +177,46 @@ export class FileStore implements Store {
  * Tables are in supabase/schema.sql; row-level security is on with no policies,
  * so nothing but this server can read them.
  */
+// A short memory for reads (11/10). Every open screen polls the server every few seconds, and each poll was a
+// handful of database reads: 70,000 in three hours, against a small Postgres that answered in half a second and
+// then not at all. The same read asked again within a few seconds is answered from here instead. A write to a
+// table forgets that table's reads, so a copy of the server never serves what it just changed as old news; another
+// copy can be behind by at most the table's few seconds. Reads in flight are shared, so a burst of the same read
+// is one request.
+const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 3_000, reviews: 5_000, automations: 5_000, users: 10_000 };
+/** Timestamps in a query rounded down to ten seconds, so "since now" asked twice in a row is the same read. */
+const readKey = (pathAndQuery: string) => pathAndQuery.replace(/(\d{4}-\d{2}-\d{2}T\d{2}(?::|%3A)\d{2}(?::|%3A))(\d)\d(?:\.\d{1,3})?Z/g, "$10.000Z");
+
 export class SupabaseStore implements Store {
   /** How long one store call may take. Without a limit (11/9) a slow afternoon at Supabase held every request open
    * until Vercel killed it at five minutes, and the pile of hung requests kept the store slow. */
   constructor(private url: string, private key: string, private timeoutMs = Number(process.env.STORE_TIMEOUT_MS) || 10_000) {}
 
+  private reads = new Map<string, { at: number; value: Promise<unknown> }>();
+  /** How many reads the memory answered, and how many went to Supabase (for the health line and the tests). */
+  readonly counts = { remembered: 0, fetched: 0 };
+
   private async req<T>(method: string, pathAndQuery: string, body?: unknown, prefer?: string): Promise<T> {
+    const table = pathAndQuery.split("?")[0];
+    const ttl = READ_TTL_MS[table] ?? 0;
+    if (method !== "GET") {
+      for (const k of this.reads.keys()) if (k.startsWith(`${table}?`) || k === table) this.reads.delete(k);
+      return this.fetchJson<T>(method, pathAndQuery, body, prefer);
+    }
+    if (!ttl) { this.counts.fetched++; return this.fetchJson<T>(method, pathAndQuery, body, prefer); }
+    const key = readKey(pathAndQuery);
+    const hit = this.reads.get(key);
+    if (hit && Date.now() - hit.at < ttl) { this.counts.remembered++; return hit.value as Promise<T>; }
+    this.counts.fetched++;
+    const value = this.fetchJson<T>(method, pathAndQuery, body, prefer);
+    this.reads.set(key, { at: Date.now(), value });
+    // A failed read isn't remembered: the next asker tries again.
+    value.catch(() => { if (this.reads.get(key)?.value === value) this.reads.delete(key); });
+    if (this.reads.size > 2000) { const oldest = this.reads.keys().next().value; if (oldest !== undefined) this.reads.delete(oldest); }
+    return value;
+  }
+
+  private async fetchJson<T>(method: string, pathAndQuery: string, body?: unknown, prefer?: string): Promise<T> {
     const what = `Supabase ${method} ${pathAndQuery.split("?")[0]}`;
     let res: Response;
     try {
