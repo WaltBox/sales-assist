@@ -31,10 +31,10 @@ import { myLeads } from "./myleads.js";
 import { EXTENSION_ZIP, packedFiles, packedVersion } from "./extension.js";
 import { guardSending, SendingError, sendingAccount, sendThrough } from "./sending.js";
 import { FollowUpError, SITE_URL, writeFollowUp } from "./followup.js";
-import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc } from "./guests.js";
+import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc, type Guest } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
 import { NEW_CARD_SENDERS, newCardPlan, newCardMorning, newCardSummary, planNewCard, sendNewCard } from "./newcard.js";
-import { postChat, raceLive, raceRoster, recordRfqTap, rfqScanDue, scanForRfqs, setRaceRoster, teamRace, withLiveLanes } from "./race.js";
+import { postChat, raceLive, raceRoster, raceWithLive, recordRfqTap, rfqScanDue, scanForRfqs, setRaceRoster, teamRace } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
 export type AppDeps = {
@@ -109,11 +109,23 @@ export function createApp(appDeps: AppDeps) {
 
   // Reps: reps.json (local) plus whoever signed up (the store: a file locally, Supabase when hosted).
   const asRep = (r: StoredRep): Rep => ({ token: `email:${r.email}`, name: r.name, email: r.email, close_api_key: r.close_api_key, timezone: r.timezone ?? "America/Los_Angeles" });
+  // Who's signed in and who's on the team are read from the store once a minute per server, not once per request
+  // (11/9: every West Game check looked the rep up again, a few hundred store reads a minute on their own).
+  const REPS_MS = 60_000;
+  const emailReps = new Map<string, { at: number; rep: Rep }>();
+  let repsList: { at: number; reps: Rep[] } | null = null;
+  const forgetReps = () => { emailReps.clear(); repsList = null; };
+  /** A rep saved (signed up, new Close key): the next request reads the fresh row. */
+  const saveRep = async (r: StoredRep) => { await store.putRep(r); forgetReps(); };
   const repByEmail = async (email: string): Promise<Rep | null> => {
     const local = [...appDeps.reps.values()].find((r) => normalizeEmail(r.email) === email);
     if (local) return local;
+    const hit = emailReps.get(email);
+    if (hit && Date.now() - hit.at < REPS_MS) return hit.rep;
     const stored = await store.getRep(email);
-    return stored ? asRep(stored) : null;
+    const rep = stored ? asRep(stored) : null;
+    if (rep) emailReps.set(email, { at: Date.now(), rep });
+    return rep;
   };
   const tokenReps = new Map<string, { at: number; rep: Rep | null }>();
   /** A signed-in session (email + password), or the side panel's older per-rep token. */
@@ -131,9 +143,12 @@ export function createApp(appDeps: AppDeps) {
     return rep;
   };
   const allReps = async (): Promise<Rep[]> => {
+    if (repsList && Date.now() - repsList.at < REPS_MS) return repsList.reps;
     const local = [...appDeps.reps.values()];
     const seen = new Set(local.map((r) => normalizeEmail(r.email)));
-    return [...local, ...(await store.listReps()).filter((r) => !seen.has(r.email)).map(asRep)];
+    const reps = [...local, ...(await store.listReps()).filter((r) => !seen.has(r.email)).map(asRep)];
+    repsList = { at: Date.now(), reps };
+    return reps;
   };
 
   // ---------- sign-in ----------
@@ -174,7 +189,7 @@ export function createApp(appDeps: AppDeps) {
         const me = await appDeps.closeFor({ token: "signup", name: "", email, close_api_key: key, timezone: "America/Los_Angeles" }).me()
           .catch(() => { throw new AuthError(400, "Close didn't accept that API key. Copy it from Close → Settings → API Keys."); });
         if (normalizeEmail(me.email) !== email) throw new AuthError(400, `That API key belongs to ${me.email}, not ${email}.`);
-        await store.putRep({ email, name: `${me.first_name} ${me.last_name}`.trim() || email, close_api_key: key, timezone: me.last_used_timezone ?? null });
+        await saveRep({ email, name: `${me.first_name} ${me.last_name}`.trim() || email, close_api_key: key, timezone: me.last_used_timezone ?? null });
       }
       await store.putUser({ email, passwordHash: await hashPassword(body.password), createdAt: new Date().toISOString(), lastLogin: null });
       res.json(await signedIn(email));
@@ -202,7 +217,7 @@ export function createApp(appDeps: AppDeps) {
       // A new key made for this (10/19) becomes the one the app uses, so the old one can be deleted in Close.
       const stored = await store.getRep(email);
       if (stored && stored.close_api_key !== key) {
-        await store.putRep({ ...stored, close_api_key: key });
+        await saveRep({ ...stored, close_api_key: key });
         for (const k of [...repInfoCache.keys()]) if (k === `email:${email}`) repInfoCache.delete(k);
       }
       res.json(await signedIn(email));
@@ -310,12 +325,22 @@ export function createApp(appDeps: AppDeps) {
 
   // ---------- guest links (Walt 10/15): one page that sends line cards from the rep's account, nothing else ----------
   const repIdCache = new Map<string, { repId: string; rep: Rep }>();
-  const guestFromToken = async (token: string) => {
+  type GuestHit = { repId: string; guest: Guest; rep: Rep };
+  // West Game's checks from a guest's screen come every few seconds; the link is looked up once a minute per server
+  // for those (11/9), and every time for anything that sends or changes the list.
+  const guestHits = new Map<string, { at: number; g: GuestHit }>();
+  const guestFromToken = async (token: string, opts: { quick?: boolean } = {}): Promise<GuestHit | null> => {
+    const hit = opts.quick ? guestHits.get(token) : undefined;
+    if (hit && Date.now() - hit.at < 60_000) return hit.g;
     for (const rep of await allReps()) {
-      let hit = repIdCache.get(rep.email);
-      if (!hit) { const d = await depsFor(rep).catch(() => null); if (!d) continue; hit = { repId: d.rep.closeUserId, rep }; repIdCache.set(rep.email, hit); }
-      const found = await guestFor(token, [hit.repId]);
-      if (found) return { ...found, rep: hit.rep };
+      let known = repIdCache.get(rep.email);
+      if (!known) { const d = await depsFor(rep).catch(() => null); if (!d) continue; known = { repId: d.rep.closeUserId, rep }; repIdCache.set(rep.email, known); }
+      const found = await guestFor(token, [known.repId]);
+      if (found) {
+        const g = { ...found, rep: known.rep };
+        guestHits.set(token, { at: Date.now(), g });
+        return g;
+      }
     }
     return null;
   };
@@ -337,9 +362,9 @@ export function createApp(appDeps: AppDeps) {
     } catch (err) { next(err); }
   });
   // The call list: the guest uploads their sheet, then marks each call.
-  const guestRoute = (fn: (req: Request, g: NonNullable<Awaited<ReturnType<typeof guestFromToken>>>) => Promise<unknown>) => async (req: Request, res: Response, next: NextFunction) => {
+  const guestRoute = (fn: (req: Request, g: GuestHit) => Promise<unknown>, opts: { quick?: boolean } = {}) => async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const g = await guestFromToken(String(req.params.token));
+      const g = await guestFromToken(String(req.params.token), opts);
       if (!g) throw new GuestError(403, "This link isn't active. Ask whoever sent it to you for a new one.");
       res.json(await fn(req, g));
     } catch (err) { next(err); }
@@ -395,6 +420,7 @@ export function createApp(appDeps: AppDeps) {
   }));
   app.post("/api/guests/:id/active", authed, route(async (req, d) => {
     const { tokenHash: _h, ...g } = await setGuestActive(d.rep.closeUserId, String(req.params.id), req.body?.active !== false);
+    guestHits.clear(); // a link switched off stops answering now, not in a minute
     return { guest: g };
   }));
 
@@ -481,12 +507,16 @@ export function createApp(appDeps: AppDeps) {
   };
   app.get("/api/race", authed, route(async (req, d) => {
     const { team, ownerId } = await raceTeam(d);
-    const race = await withLiveLanes(await teamRace(team, ownerId), { ownerId });
+    const race = await raceWithLive(await teamRace(team, ownerId), ownerId, d.rep.timeZone);
     const isOwner = normalizeEmail(d.rep.email) === config.ownerEmail;
     return { ...race, you: normalizeEmail(d.rep.email), owner: isOwner, everyone: isOwner ? team.map((t) => ({ email: normalizeEmail(t.rep.email), name: t.rep.name })) : undefined };
   }));
   // Every live check, from anyone, can be the one that looks at new email (once every 30s for the whole team).
+  // Whether it's time is a store read: this server asks at most every 10s, not on every check (11/9).
+  let scanAsked = 0;
   const scanSoon = () => {
+    if (Date.now() - scanAsked < 10_000) return;
+    scanAsked = Date.now();
     void rfqScanDue().then((due) => {
       if (!due) return;
       background((async () => {
@@ -502,15 +532,15 @@ export function createApp(appDeps: AppDeps) {
     const o = await liveOwnerInfo();
     scanSoon();
     return raceLive(o.id, o.tz);
-  }));
+  }, { quick: true }));
   // West Game on a guest's page (10/25): guests play while their link is on. Same shared copy the panels read.
   app.get("/api/guest/:token/race", guestRoute(async (req, g) => {
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
     const owner = team.find((t) => normalizeEmail(t.rep.email) === config.ownerEmail) ?? team[0];
     if (!owner) throw new GuestError(503, "West Game isn't available right now.");
-    const race = await withLiveLanes(await teamRace(team, owner.rep.closeUserId), { ownerId: owner.rep.closeUserId });
+    const race = await raceWithLive(await teamRace(team, owner.rep.closeUserId), owner.rep.closeUserId, owner.rep.timeZone);
     return { ...race, you: `guest:${g.guest.id}`, owner: false, roster: { excluded: [] } };
-  }));
+  }, { quick: true }));
   // The day's RFQs with the moment each one plays, read every few seconds by every screen so they celebrate together.
   app.get("/api/race/live", authed, route(async (_req, d) => {
     const o = await liveOwnerInfo();
@@ -556,7 +586,7 @@ export function createApp(appDeps: AppDeps) {
     if (normalizeEmail(me.email) !== email) throw new BadRequest(`That API key belongs to ${me.email}, not ${email}.`);
     if ([...appDeps.reps.values()].some((r) => normalizeEmail(r.email) === email)) throw new BadRequest("Your Close key is set in the server's reps file. Ask Walt to change it there.");
     const stored = await store.getRep(email);
-    await store.putRep({ ...(stored ?? { email, name: `${me.first_name} ${me.last_name}`.trim() || email, timezone: me.last_used_timezone ?? null }), close_api_key: key });
+    await saveRep({ ...(stored ?? { email, name: `${me.first_name} ${me.last_name}`.trim() || email, timezone: me.last_used_timezone ?? null }), close_api_key: key });
     for (const k of [...repInfoCache.keys()]) if (k === `email:${email}`) repInfoCache.delete(k);
     for (const [k, v] of tokenReps) if (v.rep && normalizeEmail(v.rep.email) === email) tokenReps.delete(k);
     return { ok: true, name: `${me.first_name} ${me.last_name}`.trim() };
