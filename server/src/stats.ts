@@ -437,6 +437,8 @@ export async function periodDetail(d: Deps, period: Period, metric: Metric): Pro
  * Robin's question ("Do you handle LF 350 LF 2 and 420 WPL6?"); the RFQ itself came Tuesday. It counts Tuesday.
  */
 export const NOT_AN_RFQ: Array<{ leadId: string; day: string }> = [
+  // Halgo Power (Walt 11/10): a tap meant for Global Welding landed on the lead the panel was showing, a company that had just said no.
+  { leadId: "lead_4NboLOLyvqftNTR0ybACNXfid9iRWHwGdvM2pcg3LSh", day: "2026-11-10" },
   { leadId: "lead_4FZxpuH8LEfjwgG2mfIL4uqwJex1SyUSGGlB2t0SbMO", day: "2026-10-26" },
 ];
 export const ADMIN_DOC = /w-?9|tax|exempt|resale|credit|application|certificate|\bcoc\b|\bmtr|invoice|statement|insurance|\bcoi\b|packing|remit|\bp\.?o\b|purchase.?order/i;
