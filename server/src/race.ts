@@ -235,8 +235,14 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
 /** Whose an RFQ is, written down the first time the game decides (11/10), so a rebuild never moves it. */
 const CREDITS_KEY = "rfqCredits";
 type RfqCredit = { rep: string; at: string; why: string };
+/** Decisions set by hand, over whatever the ledger says (11/10: the first run read Helen's parts list as no RFQ and
+ *  wrote Global Welding down as Jacob's; Novus came to an inbox that never wrote to them and was written as Berni's). */
+const SET_BY_HAND: Record<string, RfqCredit> = {
+  "lead_a9LHOU4YlgVxpCF4fwjc3Z2vs1kOMyaT002z0vtndii|2026-11-10": { rep: "walt@westgatesupply.com", at: "2026-11-10T23:00:00.000Z", why: "came to their inbox (Helen's first list, set by hand 11/10)" },
+  "lead_5vBzUbakl2qwvWzD3gwNmevc6PyCTO2bz0BmLnlNf81|2026-11-10": { rep: "jacob@westgatesupply.com", at: "2026-11-10T23:00:00.000Z", why: "tapped it (set by hand 11/10)" },
+};
 export async function rfqCredits(ownerId: string): Promise<Record<string, RfqCredit>> {
-  return (await store.getSetting<Record<string, RfqCredit>>(ownerId, CREDITS_KEY).catch(() => null)) ?? {};
+  return { ...((await store.getSetting<Record<string, RfqCredit>>(ownerId, CREDITS_KEY).catch(() => null)) ?? {}), ...SET_BY_HAND };
 }
 
 /**
@@ -262,7 +268,7 @@ async function oneOwnerPerRfq(results: RepResult[], ownerId: string, previous: R
   const credits = await rfqCredits(ownerId);
   const decided: Record<string, RfqCredit> = {};
   // The first time (11/10): the days already on the board stay exactly as they stood; only today is decided anew.
-  if (!Object.keys(credits).length && previous) {
+  if (!Object.keys(credits).some((k) => !SET_BY_HAND[k]) && previous) {
     const today = live[0].today;
     for (const l of previous.lanes) if (!l.email.startsWith("guest:")) for (const c of l.rfqFrom ?? []) if (c.day < today) decided[`${c.leadId}|${c.day}`] = { rep: l.email, at: new Date().toISOString(), why: "as it stood on the board when this started (11/10)" };
     Object.assign(credits, decided);
