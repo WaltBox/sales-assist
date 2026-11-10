@@ -9,3 +9,4 @@ server/reps.json
 westgate/
 .swc/
 .claude/settings.local.json
+server/memes/renders/

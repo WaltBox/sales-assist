@@ -1013,7 +1013,7 @@ export async function prepareRescue(d: Deps, leadId: string, opts: { meme?: Meme
     html: meme ? bumpHtml(body, d.rep.name, meme, token) : null,
   });
   if (meme) await rememberMeme(d, leadId, meme.name);
-  if (meme && token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme.name, emailId: draft.id });
+  if (meme && token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme.name, emailId: draft.id, fills: { first: greet, company: lead?.display_name ?? lead?.name ?? null } });
   return { draftId: draft.id, to, subject, body, attachedLineCard: attachments.length > 0, meme: meme?.name ?? null };
 }
 

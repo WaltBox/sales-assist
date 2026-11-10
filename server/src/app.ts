@@ -20,7 +20,7 @@ import { queueUntapped,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
+import { checkSpots, deleteMeme, memesFor, fillsOf, logLinkClick, logMemeEvent, memeCounts, MemeError, memeImage, memeLanding, memesSeen, memeStats, memeTrack, memeUrl, MEMES_DIR, pickMeme, renameMeme, SAMPLE_FILLS, setMemeGeneral, setMemeSpots, spotsFor, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, resetSequence, sequencePreview, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
@@ -76,20 +76,42 @@ export function createApp(appDeps: AppDeps) {
     // The card is the current one kept here (10/27: the website's copy was the old one-pager).
     res.redirect(302, kind === "card" ? "/brand/westgate-line-card.pdf" : SITE_URL);
   });
+  // A dynamic meme (11/10) is drawn here instead: the text spots filled with the buyer's name and the rep's, from
+  // what was saved against the token at send time. The render is kept, so each distinct text is drawn once.
   app.get("/m/:token/:name", async (req, res) => {
     const name = String(req.params.name);
     if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
-    await logMemeEvent(String(req.params.token), "shown", req.header("user-agent") ?? null).catch(() => null);
+    const token = String(req.params.token);
+    const t = await logMemeEvent(token, "shown", req.header("user-agent") ?? null).catch(() => null);
+    try {
+      const spots = await spotsFor(name).catch(() => null);
+      if (spots?.length) {
+        const bytes = await memeImage(name, fillsOf(t ?? (await memeTrack(token))));
+        if (bytes) {
+          res.setHeader("Cache-Control", "private, max-age=31536000");
+          res.type("image/jpeg").send(bytes);
+          return;
+        }
+      }
+    } catch (err) {
+      // Drawing failed: the base image still gets through, so the email never shows a broken picture.
+      console.error(`[memes] couldn't draw ${name}:`, (err as Error).message);
+    }
     res.setHeader("Cache-Control", "private, max-age=0, no-store");
     res.redirect(302, memeUrl(name));
   });
   app.get("/m/:token/:name/view", async (req, res) => {
     const name = String(req.params.name);
     if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(name)) { res.status(404).end(); return; }
-    const t = await logMemeEvent(String(req.params.token), "clicked", req.header("user-agent") ?? null).catch(() => null);
+    const token = String(req.params.token);
+    const t = await logMemeEvent(token, "clicked", req.header("user-agent") ?? null).catch(() => null);
     res.setHeader("Cache-Control", "private, max-age=0, no-store");
-    res.type("html").send(memeLanding({ name, url: memeUrl(name) }, t?.repName ?? "Westgate Supply", t?.repEmail ?? "sales@westgatesupply.com"));
+    // A dynamic meme on the page is the same drawing the email had (the image route fills it from the token).
+    const dynamic = !!(await spotsFor(name).catch(() => null))?.length;
+    res.type("html").send(memeLanding({ name, url: dynamic ? `/m/${encodeURIComponent(token)}/${encodeURIComponent(name)}` : memeUrl(name) }, t?.repName ?? "Westgate Supply", t?.repEmail ?? "sales@westgatesupply.com"));
   });
+  // Without a bucket (the demo), the local folder is the library and this serves its files.
+  if (config.demo && !config.supabaseUrl) app.use("/memes", express.static(MEMES_DIR, { setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") }));
   // The web app (the morning view); the side panel is the other half.
   // Always revalidate the web app's files: a stale app.js or app.css after a deploy is worse than one extra round trip.
   app.use(express.static(path.resolve(ROOT, "web"), { index: "index.html", setHeaders: (res) => res.setHeader("Cache-Control", "no-cache") }));
@@ -765,10 +787,29 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/memes/upload", authed, express.raw({ type: () => true, limit: "26mb" }), route(async (req, d) => {
     const filename = typeof req.query.name === "string" ? req.query.name : "upload.zip";
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw new BadRequest("Send the file as the request body.");
-    return { added: await uploadMemes(d, filename, req.body) };
+    return { added: await uploadMemes(d, filename, req.body, { general: req.query.general === "1" }) };
   }));
-  app.post("/api/memes/rename", authed, route(async (req, d) => ({ name: await renameMeme(d, z.string().min(1).max(200).parse(req.body?.from), z.string().min(1).max(200).parse(req.body?.to)) })));
+  // A general meme (11/10) is in every rep's records, so a rename carries the whole team's along.
+  app.post("/api/memes/rename", authed, route(async (req, d) => ({ name: await renameMeme(d, z.string().min(1).max(200).parse(req.body?.from), z.string().min(1).max(200).parse(req.body?.to), { reps: (await teammates(d)).map((t) => t.rep.closeUserId) }) })));
   app.post("/api/memes/delete", authed, route(async (req, d) => { await deleteMeme(d, z.string().min(1).max(200).parse(req.body?.name)); return { ok: true }; }));
+  // Dynamic memes (Walt 11/10): the text spots on a meme, and a preview of them drawn with sample fill-ins (a
+  // sample buyer, the signed-in rep). The preview takes the spots as they're being edited, before they're saved.
+  const memeName = (req: Request) => { const n = String(req.params.name); if (!/^[a-z0-9-]+\.(jpe?g|png|gif|webp)$/i.test(n)) throw new BadRequest("That isn't a meme name."); return n; };
+  const sampleFills = (d: Deps) => ({ ...SAMPLE_FILLS, repfull: d.rep.name });
+  app.post("/api/memes/:name/spots", authed, route(async (req, d) => ({ spots: await setMemeSpots(d, memeName(req), req.body?.spots ?? []) })));
+  // General memes (11/10): share one of yours with the team, or take it back.
+  app.post("/api/memes/:name/general", authed, route(async (req, d) => ({ general: await setMemeGeneral(d, memeName(req), !!req.body?.on) })));
+  app.post("/api/memes/:name/render", authed, async (req, res, next) => {
+    try {
+      const d = res.locals.deps as Deps;
+      const name = memeName(req);
+      if (!(await memesFor(d, { sync: false })).some((m) => m.name === name)) throw new MemeError(`You don't have a meme called "${name}".`);
+      const bytes = await memeImage(name, sampleFills(d), { spots: Array.isArray(req.body?.spots) ? checkSpots(req.body.spots) : [], keep: false });
+      if (!bytes) { res.redirect(302, memeUrl(name)); return; }
+      res.setHeader("Cache-Control", "no-store");
+      res.type("image/jpeg").send(bytes);
+    } catch (err) { next(err); }
+  });
   app.post("/api/automations/meme", authed, route((req, d) => pickMeme(d, z.string().min(3).max(100).parse(req.body?.lead_id), req.body?.meme === null ? null : z.string().min(1).max(200).parse(req.body?.meme))));
   app.post("/api/automations/:id/skip", authed, route((req, d) => skipAutomation(d, z.string().min(3).max(100).parse(req.params.id))));
   // "Send line card now": the email is ready on the call screen; it goes out while they're on the phone.

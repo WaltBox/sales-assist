@@ -103,3 +103,33 @@ test("tracked memes (10/6): the image and the link go through our server; loads 
   const page = memeLanding(meme, "Walt Boxwell", "walt@westgatesupply.com");
   assert.ok(page.includes(meme.url) && page.includes("Send an RFQ") && page.includes("mailto:walt@westgatesupply.com"));
 });
+
+test("general memes (11/10): shared ones join every rep's rotation; only who shared them (or Walt) can change them", async () => {
+  const { memesFor, setMemeGeneral, setMemeSpots, renameMeme } = await import("../src/memes.js");
+  const { config } = await import("../src/config.js");
+  (config as { ownerEmail: string }).ownerEmail = "walt@westgatesupply.com";
+  const a = { rep: { closeUserId: "user_gen_a", email: "a@westgatesupply.com" } };
+  const b = { rep: { closeUserId: "user_gen_b", email: "b@westgatesupply.com" } };
+  const walt = { rep: { closeUserId: "user_gen_walt", email: "walt@westgatesupply.com" } };
+  // ron.png is A's upload; the rest of the local folder has no owner on record, so it's Walt's.
+  await store.putSetting("team", "memeOwners", { "ron.png": "user_gen_a" });
+  await store.putSetting("team", "memeGeneral", {});
+  const names = async (d: typeof a) => (await memesFor(d)).map((m) => m.name);
+  assert.deepEqual(await names(a), ["ron.png"]);
+  assert.deepEqual(await names(b), []);
+  assert.ok((await names(walt)).includes("tv-show.png") && !(await names(walt)).includes("ron.png"));
+  // A shares it: B gets it in the rotation, but not the controls; A and Walt keep them.
+  await setMemeGeneral(a, "ron.png", true);
+  const forB = (await memesFor(b)).find((m) => m.name === "ron.png")!;
+  assert.deepEqual([forB.mine, forB.general], [false, true]);
+  assert.deepEqual((await memesFor(a)).map((m) => [m.name, m.mine, !!m.general]), [["ron.png", true, true]]);
+  assert.equal((await memesFor(walt)).find((m) => m.name === "ron.png")?.mine, true);
+  await assert.rejects(setMemeGeneral(b, "ron.png", false), /team meme/);
+  await assert.rejects(setMemeSpots(b, "ron.png", [{ x: 0, y: 0, w: 0.5, h: 0.5, text: "hi", style: "meme" }]), /team meme/);
+  await assert.rejects(renameMeme(b, "ron.png", "bob"), /team meme/);
+  // Taking it back: B's rotation loses it.
+  await setMemeGeneral(a, "ron.png", false);
+  assert.deepEqual(await names(b), []);
+  await assert.rejects(setMemeGeneral(b, "ron.png", true), /isn't one of your memes/);
+  await store.putSetting("team", "memeOwners", {});
+});

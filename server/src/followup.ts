@@ -299,6 +299,6 @@ export async function writeFollowUp(d: Deps, leadId: string, opts: { force?: boo
     inReplyToId: latest?.id ?? null, threadId: latest?.thread_id ?? null, scheduleAt: scheduledFor,
     html: opts.template && threaded ? bumpHtml(body, d.rep.name, meme, token) : null,
   });
-  if (token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme?.name ?? "", emailId: created.id });
+  if (token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: meme?.name ?? "", emailId: created.id, fills: { first, company: ctx.facts.company } });
   return { status: "drafted", draftId: created.id, to: to.email, subject, body, threaded, attachedLineCard: attachments.length > 0, warnings, scheduledFor, meme: meme?.name ?? null, track: token };
 }

@@ -1,11 +1,13 @@
 import { isSignatureLine } from "./content/lineCard.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { unzipSync } from "fflate";
 import type { Deps } from "./assistant.js";
 import { config, ROOT } from "./config.js";
+import { fillText, renderMeme, SAMPLE_FILLS, type Fills, type Spot } from "./memerender.js";
 import { store } from "./store.js";
+export { SAMPLE_FILLS, type Fills, type Spot } from "./memerender.js";
 
 // Memes in the automatic bumps (Walt 9/30): one inline image per bump, never the same one twice to a company.
 // The files live in server/memes; the server copies new ones to a public Supabase Storage bucket so email
@@ -17,8 +19,11 @@ const IMAGE = /\.(jpe?g|png|gif|webp)$/i;
 const TYPES: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp" };
 export class MemeError extends Error {}
 
-export type Meme = { name: string; url: string };
+/** A meme: the file, and, when it's dynamic (11/10), the text spots drawn in when the image loads. */
+/** A meme in the library. `mine`: the signed-in rep can change it; `general` (11/10): it's on the team list, in every rep's rotation. */
+export type Meme = { name: string; url: string; spots?: Spot[]; mine?: boolean; general?: boolean };
 
+const hasStorage = () => !!(config.supabaseUrl && config.supabaseKey);
 function storage() {
   if (!config.supabaseUrl || !config.supabaseKey) throw new MemeError("Memes need Supabase Storage (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) so the images have a public link.");
   const base = config.supabaseUrl.replace(/\/$/, "");
@@ -26,11 +31,47 @@ function storage() {
   return { base, headers };
 }
 
-export const memeUrl = (name: string) => `${storage().base}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(name)}`;
+/** The file's public link. Without Supabase (the demo, 11/10) it's the local folder, served by the app at /memes. */
+export const memeUrl = (name: string) => hasStorage() ? `${storage().base}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(name)}` : `${config.publicUrl ?? ""}/memes/${encodeURIComponent(name)}`;
+
+// ---------- the bucket's objects, or the local folder when there's no bucket (11/10) ----------
+// Sidecars, base images and cached renders go through these three; the uploads, renames and retires above them
+// keep talking to the bucket directly as they did.
+async function readObject(key: string): Promise<Buffer | null> {
+  if (!hasStorage()) {
+    const file = path.join(MEMES_DIR, key);
+    return fs.existsSync(file) ? fs.readFileSync(file) : null;
+  }
+  const { base, headers } = storage();
+  const res = await fetch(`${base}/storage/v1/object/${BUCKET}/${key.split("/").map(encodeURIComponent).join("/")}`, { headers }).catch(() => null);
+  if (!res || !res.ok) return null;
+  return Buffer.from(await res.arrayBuffer());
+}
+async function writeObject(key: string, data: Buffer, type: string) {
+  if (!hasStorage()) {
+    const file = path.join(MEMES_DIR, key);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, data);
+    return;
+  }
+  const { base, headers } = storage();
+  const res = await fetch(`${base}/storage/v1/object/${BUCKET}/${key.split("/").map(encodeURIComponent).join("/")}`, { method: "POST", headers: { ...headers, "content-type": type, "x-upsert": "true" }, body: data });
+  if (!res.ok) throw new MemeError(`Couldn't save ${key}: ${res.status} ${(await res.text()).slice(0, 120)}`);
+}
+async function removeObject(key: string) {
+  if (!hasStorage()) { try { fs.unlinkSync(path.join(MEMES_DIR, key)); } catch { /* wasn't there */ } return; }
+  const { base, headers } = storage();
+  await fetch(`${base}/storage/v1/object/${BUCKET}`, { method: "DELETE", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ prefixes: [key] }) }).catch(() => null);
+}
 
 let synced = 0;
 /** Copy new files from server/memes to the public bucket (made on first use), then list what's there. */
 export async function listMemes(opts: { sync?: boolean } = {}): Promise<Meme[]> {
+  if (!hasStorage()) {
+    // No bucket (the demo): the local folder is the library.
+    const names = fs.existsSync(MEMES_DIR) ? fs.readdirSync(MEMES_DIR).filter((f) => IMAGE.test(f)).sort() : [];
+    return withSpots(names.map((name) => ({ name, url: memeUrl(name) })), new Set(names.filter((n) => fs.existsSync(path.join(MEMES_DIR, `${n}.json`))).map((n) => `${n}.json`)));
+  }
   const { base, headers } = storage();
   if (opts.sync !== false && Date.now() - synced > 60_000) {
     synced = Date.now();
@@ -49,28 +90,138 @@ export async function listMemes(opts: { sync?: boolean } = {}): Promise<Meme[]> 
   return bucketFiles(base, headers);
 }
 
-// ---------- whose memes (10/19): each rep has their own library; nothing is shared ----------
+// ---------- whose memes (10/19): each rep has their own library, plus the team's general ones (11/10) ----------
 // One bucket holds every file; this records who uploaded each. The memes from before (no owner on record) are the
 // first rep's (config.ownerEmail, Walt). A rep with no memes sends plain emails.
+// General memes (11/10): a rep shares one of their own with everyone, and it joins every rep's rotation. The rep who
+// brought it in, and Walt, can still edit, rename, retire or un-share it; the others just use it.
 const OWNERS_KEY = "memeOwners";
+const GENERAL_KEY = "memeGeneral";
 const TEAM = "team";
 const legacyOwner = () => config.ownerEmail;
 type Owners = Record<string, string>; // meme name → the Close user id of the rep who owns it
+type General = Record<string, string>; // meme name → the Close user id of the rep who shared it
 const ownersOf = async () => (await store.getSetting<Owners>(TEAM, OWNERS_KEY).catch(() => null)) ?? {};
+const generalOf = async () => (await store.getSetting<General>(TEAM, GENERAL_KEY).catch(() => null)) ?? {};
 type Who = { closeUserId: string; email: string };
-const owns = (owners: Owners, who: Who, name: string) => (owners[name] ? owners[name] === who.closeUserId : who.email.toLowerCase() === legacyOwner());
-
-/** This rep's memes: only those, never anyone else's. */
-export async function memesFor(d: { rep: Who }, opts: { sync?: boolean } = {}): Promise<Meme[]> {
-  const [all, owners] = await Promise.all([listMemes(opts), ownersOf()]);
-  return all.filter((m) => owns(owners, d.rep, m.name));
+const isOwner = (who: Who) => who.email.toLowerCase() === legacyOwner();
+const owns = (owners: Owners, who: Who, name: string) => (owners[name] ? owners[name] === who.closeUserId : isOwner(who));
+/** May this rep change the meme (text, name, retire, share)? Their own, or any general one when they're Walt. */
+const mayEdit = (owners: Owners, general: General, who: Who, name: string) => owns(owners, who, name) || (name in general && isOwner(who));
+async function editable(d: { rep: Who }, name: string): Promise<{ owners: Owners; general: General }> {
+  const [owners, general] = await Promise.all([ownersOf(), generalOf()]);
+  if (!mayEdit(owners, general, d.rep, name)) throw new MemeError(name in general ? `${name} is a team meme; only whoever shared it (or Walt) can change it.` : `${name} isn't one of your memes.`);
+  return { owners, general };
 }
 
-async function bucketFiles(base: string, headers: Record<string, string>): Promise<Meme[]> {
+/** This rep's memes: their own, and the team's general ones. `mine` says which they can change. */
+export async function memesFor(d: { rep: Who }, opts: { sync?: boolean } = {}): Promise<Meme[]> {
+  const [all, owners, general] = await Promise.all([listMemes(opts), ownersOf(), generalOf()]);
+  return all.filter((m) => owns(owners, d.rep, m.name) || m.name in general)
+    .map((m) => ({ ...m, mine: mayEdit(owners, general, d.rep, m.name), ...(m.name in general ? { general: true } : {}) }));
+}
+
+/** Share one of your memes with the whole team, or take it back (it leaves the others' rotations; what's sent stays on record). */
+export async function setMemeGeneral(d: { rep: Who }, name: string, on: boolean): Promise<boolean> {
+  const { general } = await editable(d, name);
+  if (!(await listMemes({ sync: false })).some((m) => m.name === name)) throw new MemeError(`${name} isn't in the library.`);
+  if (on) general[name] = d.rep.closeUserId; else delete general[name];
+  await store.putSetting(TEAM, GENERAL_KEY, general);
+  return on;
+}
+
+/** Every object at the top of the bucket: the images, their sidecars, and the renders folder. */
+async function bucketNames(base: string, headers: Record<string, string>): Promise<string[]> {
   const res = await fetch(`${base}/storage/v1/object/list/${BUCKET}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ prefix: "", limit: 1000, sortBy: { column: "name", order: "asc" } }) });
   if (!res.ok) return [];
-  const rows = (await res.json()) as Array<{ name: string }>;
-  return rows.filter((r) => IMAGE.test(r.name)).map((r) => ({ name: r.name, url: `${base}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(r.name)}` }));
+  return ((await res.json()) as Array<{ name: string }>).map((r) => r.name);
+}
+async function bucketFiles(base: string, headers: Record<string, string>): Promise<Meme[]> {
+  const names = await bucketNames(base, headers);
+  const memes = names.filter((n) => IMAGE.test(n)).map((n) => ({ name: n, url: `${base}/storage/v1/object/public/${BUCKET}/${encodeURIComponent(n)}` }));
+  return withSpots(memes, new Set(names.filter((n) => n.endsWith(".json"))));
+}
+
+// ---------- dynamic memes (Walt 11/10): one or two text spots per meme, kept in a sidecar `<name>.json` beside the file ----------
+const SIDECAR_TTL = 60_000;
+const sidecars = new Map<string, { at: number; spots: Spot[] | null }>(); // meme name → its spots (null: none), read at most once a minute
+/** The spots on a meme, from the sidecar (cached a minute). Null when the meme is plain. */
+export async function spotsFor(name: string): Promise<Spot[] | null> {
+  const hit = sidecars.get(name);
+  if (hit && Date.now() - hit.at < SIDECAR_TTL) return hit.spots;
+  const raw = await readObject(`${name}.json`).catch(() => null);
+  let spots: Spot[] | null = null;
+  if (raw) { try { spots = checkSpots(JSON.parse(raw.toString("utf8"))); } catch { spots = null; } }
+  sidecars.set(name, { at: Date.now(), spots: spots?.length ? spots : null });
+  return sidecars.get(name)!.spots;
+}
+/** The memes with their spots attached; only the ones with a sidecar in the listing are read. */
+async function withSpots(memes: Meme[], sidecarNames: Set<string>): Promise<Meme[]> {
+  return Promise.all(memes.map(async (m) => {
+    if (!sidecarNames.has(`${m.name}.json`)) { sidecars.set(m.name, { at: Date.now(), spots: null }); return m; }
+    const spots = await spotsFor(m.name);
+    return spots ? { ...m, spots } : m;
+  }));
+}
+export const MAX_SPOTS = 2;
+/** A sound list of spots: at most two, boxes inside the image, a style we draw, text of a sane length. */
+export function checkSpots(raw: unknown): Spot[] {
+  if (!Array.isArray(raw)) throw new MemeError("Spots must be a list.");
+  if (raw.length > MAX_SPOTS) throw new MemeError(`A meme can have ${MAX_SPOTS} text spots at most.`);
+  const frac = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+  return raw.map((s: Record<string, unknown>) => {
+    if (!s || typeof s !== "object") throw new MemeError("Each spot needs a box, a text and a style.");
+    if (!frac(s.x, 0, 1) || !frac(s.y, 0, 1) || !frac(s.w, 0.02, 1) || !frac(s.h, 0.02, 1) || (s.x as number) + (s.w as number) > 1.001 || (s.y as number) + (s.h as number) > 1.001) throw new MemeError("A spot's box has to sit inside the image.");
+    if (typeof s.text !== "string" || !s.text.trim()) throw new MemeError("A spot needs some text.");
+    if (s.text.length > 160) throw new MemeError("Keep a spot's text under 160 characters.");
+    if (s.style !== "meme" && s.style !== "plain") throw new MemeError("A spot's style is meme or plain.");
+    if (s.align !== undefined && s.align !== "center" && s.align !== "left") throw new MemeError("A spot lines up center or left.");
+    const spot: Spot = { x: s.x as number, y: s.y as number, w: Math.min(s.w as number, 1 - (s.x as number)), h: Math.min(s.h as number, 1 - (s.y as number)), text: s.text.trim(), style: s.style };
+    if (s.align === "left") spot.align = "left";
+    return spot;
+  });
+}
+/** Save a meme's text spots (an empty list makes it plain again). Writes the sidecar; the next render draws the new text. */
+export async function setMemeSpots(d: { rep: Who }, name: string, raw: unknown): Promise<Spot[]> {
+  await editable(d, name);
+  if (!(await listMemes({ sync: false })).some((m) => m.name === name)) throw new MemeError(`${name} isn't in the library.`);
+  const spots = checkSpots(raw);
+  if (spots.length) await writeObject(`${name}.json`, Buffer.from(JSON.stringify(spots)), "application/json");
+  else await removeObject(`${name}.json`);
+  sidecars.set(name, { at: Date.now(), spots: spots.length ? spots : null });
+  for (const k of [...renders.keys()]) if (k.startsWith(`renders/${name}/`)) renders.delete(k);
+  return spots;
+}
+
+/** The fill-ins for a tracked email: the buyer's name and company saved at send time, the rep from the track. */
+export function fillsOf(t: MemeTrack | null): Fills {
+  return { first: t?.fills?.first ?? null, company: t?.fills?.company ?? null, repfull: t?.repName || "Westgate Supply" };
+}
+const renders = new Map<string, Buffer>(); // this process's recent renders, by bucket key
+const RENDERS_KEPT = 40;
+/**
+ * The meme drawn for these fills, as JPEG bytes; null when the meme has no spots (then the file itself is the
+ * image). Each distinct text is drawn once: the render is kept in the bucket under renders/<name>/<hash>.jpg
+ * (the hash covers the filled texts and the boxes, so a moved spot is a new render), and the last few in memory.
+ */
+export async function memeImage(name: string, fills: Fills, opts: { spots?: Spot[]; keep?: boolean } = {}): Promise<Buffer | null> {
+  const spots = opts.spots ?? await spotsFor(name);
+  if (!spots?.length) return null;
+  const keep = opts.keep ?? true; // a one-off render (the editor's preview of unsaved spots) isn't kept
+  const filled = spots.map((s) => ({ ...s, text: fillText(s.text, fills) }));
+  const key = `renders/${name}/${createHash("sha1").update(JSON.stringify(filled)).digest("hex")}.jpg`;
+  const hit = renders.get(key);
+  if (hit) return hit;
+  let bytes = keep ? await readObject(key).catch(() => null) : null;
+  if (!bytes) {
+    const base = await readObject(name);
+    if (!base) throw new MemeError(`${name} isn't in the library.`);
+    bytes = await renderMeme(base, filled, {});
+    if (keep) await writeObject(key, bytes, "image/jpeg").catch((err) => console.error(`[memes] couldn't keep the render ${key}:`, (err as Error).message));
+  }
+  renders.set(key, bytes);
+  if (renders.size > RENDERS_KEPT) renders.delete(renders.keys().next().value!);
+  return bytes;
 }
 
 /** A meme that went out by hand (a rescue draft, or the call screen's bump): remembered per lead so they never get it twice. */
@@ -150,7 +301,7 @@ export async function clearPick(d: Deps, leadId: string) {
 // ---------- tracked memes (Walt 10/6): the image and the link go through our server, so a load or a click is logged ----------
 
 /** One tracked email: who it went to and which meme; `emailId` is filled in once Close has created the email. */
-export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[]; links?: Partial<Record<LinkKind, string[]>> };
+export type MemeTrack = { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; createdAt: string; shown: string[]; clicked: string[]; agents: string[]; links?: Partial<Record<LinkKind, string[]>>; fills?: { first: string | null; company: string | null } };
 const VIEWS_REP = "memeviews"; // the store's settings table, keyed by token under this fixed "rep"
 export const newToken = () => randomUUID().replace(/-/g, "");
 /** Tracking is on only when PUBLIC_URL is set (a domain of ours). */
@@ -168,8 +319,10 @@ export async function clicksFor(repId: string): Promise<Record<string, string>> 
 /** Mail filters follow links within seconds of delivery to scan them; a click that fast isn't a person. */
 const SCANNER = /bot|crawler|spider|preview|scan|safelinks|proofpoint|mimecast|barracuda|urldefense|python|curl|wget|go-http|java\//i;
 
-export async function trackMeme(t: { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null }) {
-  const row: MemeTrack = { ...t, createdAt: new Date().toISOString(), shown: [], clicked: [], agents: [] };
+/** `fills` (11/10): the buyer's first name and company, so a dynamic meme draws them when the image loads. */
+export async function trackMeme(t: { token: string; repId: string; repName: string; repEmail: string; leadId: string; meme: string; emailId: string | null; fills?: { first?: string | null; company?: string | null } }) {
+  const { fills, ...rest } = t;
+  const row: MemeTrack = { ...rest, createdAt: new Date().toISOString(), shown: [], clicked: [], agents: [], fills: { first: fills?.first?.trim() || null, company: fills?.company?.trim() || null } };
   await store.putSetting(VIEWS_REP, t.token, row).catch(() => undefined);
 }
 /** The image loaded ("shown") or the link was followed ("clicked"). Unknown tokens are ignored. */
@@ -283,7 +436,7 @@ async function putObject(name: string, data: Buffer) {
 }
 
 /** Upload one image or a zip of them. Returns the names that went in (existing names are overwritten). */
-export async function uploadMemes(d: { rep: Who }, filename: string, body: Buffer): Promise<string[]> {
+export async function uploadMemes(d: { rep: Who }, filename: string, body: Buffer, opts: { general?: boolean } = {}): Promise<string[]> {
   if (body.length > 25 * 1024 * 1024) throw new MemeError("That upload is over 25 MB.");
   const files = unpackUpload(filename, body);
   for (const f of files) if (f.data.length > 5 * 1024 * 1024) throw new MemeError(`${f.name} is over 5 MB; email apps won't load it.`);
@@ -301,27 +454,39 @@ export async function uploadMemes(d: { rep: Who }, filename: string, body: Buffe
     out.push(name);
   }
   await store.putSetting(TEAM, OWNERS_KEY, owners);
+  // Brought in for everyone (11/10): straight onto the team list.
+  if (opts.general && out.length) {
+    const general = await generalOf();
+    for (const name of out) general[name] = d.rep.closeUserId;
+    await store.putSetting(TEAM, GENERAL_KEY, general);
+  }
   synced = Date.now();
   return out;
 }
 
 /** Rename a meme: the file in the bucket, the local copy, and every place its name is remembered (sent bumps, picks, rescue sends). */
-export async function renameMeme(d: { rep: Who }, from: string, to: string): Promise<string> {
+export async function renameMeme(d: { rep: Who }, from: string, to: string, opts: { reps?: string[] } = {}): Promise<string> {
   const repId = d.rep.closeUserId;
-  const owners = await ownersOf();
-  if (!owns(owners, d.rep, from)) throw new MemeError(`${from} isn't one of your memes.`);
+  const { owners, general } = await editable(d, from);
   const { base, headers } = storage();
   const next = memeName(to.includes(".") ? to : `${to}.${from.split(".").pop()}`);
   if (next === from) return from;
-  const have = new Set((await bucketFiles(base, headers)).map((m) => m.name));
+  const have = new Set(await bucketNames(base, headers));
   if (!have.has(from)) throw new MemeError(`${from} isn't in the library.`);
   if (have.has(next)) throw new MemeError(`There's already a meme called ${next}.`);
   const res = await fetch(`${base}/storage/v1/object/move`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ bucketId: BUCKET, sourceKey: from, destinationKey: next }) });
   if (!res.ok) throw new MemeError(`Couldn't rename: ${res.status} ${(await res.text()).slice(0, 120)}`);
   try { if (fs.existsSync(path.join(MEMES_DIR, from))) fs.renameSync(path.join(MEMES_DIR, from), path.join(MEMES_DIR, next)); } catch { /* read-only host */ }
-  await moveMemeRefs(repId, from, next);
-  delete owners[from]; owners[next] = repId;
+  // The text spots follow the file (11/10).
+  if (have.has(`${from}.json`)) {
+    await fetch(`${base}/storage/v1/object/move`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ bucketId: BUCKET, sourceKey: `${from}.json`, destinationKey: `${next}.json` }) }).catch(() => null);
+    sidecars.delete(from); sidecars.delete(next);
+  }
+  // A general meme (11/10) is in every rep's records, so each rep's follow the rename; `opts.reps` is the team.
+  for (const id of new Set([repId, owners[from] ?? repId, ...(from in general ? opts.reps ?? [] : [])])) await moveMemeRefs(id, from, next);
+  owners[next] = owners[from] ?? repId; delete owners[from];
   await store.putSetting(TEAM, OWNERS_KEY, owners);
+  if (from in general) { general[next] = general[from]; delete general[from]; await store.putSetting(TEAM, GENERAL_KEY, general); }
   return next;
 }
 
@@ -340,13 +505,15 @@ export async function moveMemeRefs(repId: string, from: string, to: string) {
 
 /** Take a meme out of the rotation. What was already sent stays on record. */
 export async function deleteMeme(d: { rep: Who }, name: string) {
-  const owners = await ownersOf();
-  if (!owns(owners, d.rep, name)) throw new MemeError(`${name} isn't one of your memes.`);
+  const { owners, general } = await editable(d, name);
   const { base, headers } = storage();
   const res = await fetch(`${base}/storage/v1/object/${BUCKET}`, { method: "DELETE", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ prefixes: [name] }) });
   if (!res.ok) throw new MemeError(`Couldn't delete ${name}: ${res.status}`);
   try { if (fs.existsSync(path.join(MEMES_DIR, name))) fs.unlinkSync(path.join(MEMES_DIR, name)); } catch { /* read-only host */ }
+  await removeObject(`${name}.json`);
+  sidecars.delete(name);
   if (name in owners) { delete owners[name]; await store.putSetting(TEAM, OWNERS_KEY, owners); }
+  if (name in general) { delete general[name]; await store.putSetting(TEAM, GENERAL_KEY, general); }
   synced = Date.now();
 }
 

@@ -4,7 +4,7 @@ import { siteEmails } from "./website.js";
 import { classifyOpen, lineCardAttachments, type Deps } from "./assistant.js";
 import { stripDashes } from "./benchmark.js";
 import { INTRO_SUBJECT } from "./validate.js";
-import { bumpHtml, memeFor, rememberMeme, type Meme } from "./memes.js";
+import { bumpHtml, memeFor, newToken, rememberMeme, trackingOn, trackMeme, type Meme } from "./memes.js";
 import { renderPlainText, renderShort, renderVendorRow } from "./content/lineCard.js";
 import { config } from "./config.js";
 import { callUsWhen, familiesFromText, lineCardSubject, withSignatureLine } from "./linecardflow.js";
@@ -156,9 +156,11 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
     // With a meme, like every other bump (10/2: Todd's went out plain from the call screen).
     const meme = opts.meme !== undefined ? opts.meme : await memeFor(d, leadId).catch(() => null);
     const body = bumpBody(first, d.rep.name);
+    // Tracked like a bump (11/10): a dynamic meme is drawn from what's saved against the token when it's sent.
+    const token = meme && trackingOn() ? newToken() : null;
     return {
       to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, attach: true, check, suggestions, nameGuessed,
-      body, html: meme ? bumpHtml(body, d.rep.name, meme) : null, meme: meme?.name ?? null,
+      body, html: meme ? bumpHtml(body, d.rep.name, meme, token) : null, meme: meme?.name ?? null, track: token, first, company: lead.display_name || lead.name,
       reply: { id: prior.id, threadId: prior.thread_id ?? null, subject: prior.subject ?? "" },
       alreadySent: { at: when(lastCard), opened: cardOpened },
     };
@@ -191,10 +193,12 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
     d.rep.name,
   ].join("\n\n")));
   if (!prior) subject = lineCardSubject({ words: buys, families, seed: leadId });
+  const token = opts.meme && trackingOn() ? newToken() : null;
   return {
     // A meme only when the rep picks one in the side panel (10/2), above the name; the PDF is still attached.
     to, name: typed ?? contact?.name ?? asked?.name ?? first, contactId: contact?.id ?? asked?.id ?? null, subject, body, format,
-    html: opts.meme ? bumpHtml(body, d.rep.name, opts.meme) : null as string | null, meme: opts.meme?.name ?? null as string | null, memeUrl: opts.meme?.url ?? null,
+    html: opts.meme ? bumpHtml(body, d.rep.name, opts.meme, token) : null as string | null, meme: opts.meme?.name ?? null as string | null, memeUrl: opts.meme?.url ?? null,
+    track: token, first, company: lead.display_name || lead.name,
     attach: true, check, suggestions, nameGuessed,
     reply: prior ? { id: prior.id, threadId: prior.thread_id ?? null, subject: prior.subject ?? "" } : null,
     alreadySent: lastCard ? { at: when(lastCard), opened: cardOpened } : null,
@@ -235,6 +239,8 @@ export async function sendLineCard(d: Deps, leadId: string, req: { to: string; n
   });
   await d.close.sendDraft(draft.id);
   if (email.meme) await rememberMeme(d, leadId, email.meme).catch(() => null);
+  // The token in the email's image link (11/10): who it went to, so a dynamic meme draws their name and company.
+  if (email.meme && email.track) await trackMeme({ token: email.track, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: email.meme, emailId: draft.id, fills: { first: email.first, company: email.company } }).catch(() => null);
   // A line card out moves the lead to "Sent Line Card" (forward only).
   if (email.attach) await advanceStatus(d, leadId, "Sent Line Card").catch(() => null);
   console.info(`${new Date().toISOString()} [line card ${leadId}] sent to ${to} (${draft.id})`);

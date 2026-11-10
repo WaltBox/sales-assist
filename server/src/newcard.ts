@@ -118,7 +118,7 @@ export async function writeNewCard(d: Deps, leadId: string, opts: { meme: Meme |
     sender: d.rep.sender ?? `"${d.rep.name.replaceAll('"', "")}" <${d.rep.email}>`, emailAccountId: d.rep.emailAccountId ?? null,
     scheduleAt: scheduledFor, html: bumpHtml(text, d.rep.name, opts.meme, token), cc,
   });
-  if (token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: opts.meme?.name ?? "", emailId: created.id });
+  if (token) await trackMeme({ token, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: opts.meme?.name ?? "", emailId: created.id, fills: { first, company: ctx.facts.company } });
   return { draftId: created.id, to: to.email, body: text, scheduledFor, meme: opts.meme?.name ?? null, track: token, cc };
 }
 

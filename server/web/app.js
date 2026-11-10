@@ -1480,10 +1480,177 @@ function newCardCard() {
 // ---------- the meme library (Walt 10/5): upload a file or a zip, rename, retire ----------
 async function loadLibrary() {
   state.lib = { ...(state.lib || {}), busy: true };
-  try { const r = await api("/api/memes"); state.lib = { memes: r.memes, tracking: !!r.tracking, busy: false, msg: state.lib.msg || null, rename: null }; }
-  catch (e) { state.lib = { memes: [], busy: false, msg: e.message, rename: null }; }
+  const keep = { edit: state.lib.edit || null, previews: state.lib.previews || {}, open: !!state.lib.open, staged: state.lib.staged || [], forAll: !!state.lib.forAll };
+  try { const r = await api("/api/memes"); state.lib = { memes: r.memes, tracking: !!r.tracking, busy: false, msg: state.lib.msg || null, rename: null, ...keep }; }
+  catch (e) { state.lib = { memes: [], busy: false, msg: e.message, rename: null, ...keep }; }
+  render();
+  loadMemePreviews();
+}
+
+// ---------- dynamic memes (Walt 11/10): text spots drawn in when the email's image loads ----------
+// The library's thumbnail of a meme with text shows it drawn with the sample fill-ins (Sam at Crest Mechanical, and
+// the signed-in rep), fetched once per meme; the editor below draws the same way as the spots change.
+const FILL_CHIPS = [["{first}", "buyer's first name"], ["{company}", "their company"], ["{rep}", "your first name"]];
+async function renderMemePreview(name, spots) {
+  const res = await fetch(`/api/memes/${encodeURIComponent(name)}/render`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ spots }) });
+  if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Error ${res.status}`); }
+  return URL.createObjectURL(await res.blob());
+}
+async function loadMemePreviews() {
+  const lib = state.lib;
+  for (const m of lib.memes) {
+    if (!m.spots || !m.spots.length) continue;
+    const key = `${m.name}:${JSON.stringify(m.spots)}`;
+    if (lib.previews[m.name] && lib.previews[m.name].key === key) continue;
+    try { lib.previews[m.name] = { key, url: await renderMemePreview(m.name, m.spots) }; render(); } catch { /* the thumbnail stays the plain file */ }
+  }
+}
+
+function openMemeEditor(m) {
+  const lib = state.lib;
+  lib.edit = { name: m.name, url: m.url, spots: (m.spots || []).map((s) => ({ ...s })), sel: m.spots && m.spots.length ? 0 : null, preview: null, busy: false, msg: null, timer: null, stale: true };
+  render();
+  previewSoon(0);
+}
+function closeMemeEditor() {
+  const ed = state.lib.edit;
+  if (!ed) return;
+  clearTimeout(ed.timer);
+  if (ed.preview) URL.revokeObjectURL(ed.preview);
+  state.lib.edit = null;
   render();
 }
+const MAX_SPOTS = 2;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+// The live preview, a beat after the last change so typing doesn't fire a render per keystroke.
+function previewSoon(ms = 350) {
+  const ed = state.lib.edit;
+  if (!ed) return;
+  clearTimeout(ed.timer);
+  ed.timer = setTimeout(async () => {
+    const drawn = ed.spots.filter((s) => s.text.trim());
+    try {
+      const url = await renderMemePreview(ed.name, drawn);
+      if (state.lib.edit !== ed) { URL.revokeObjectURL(url); return; }
+      if (ed.preview) URL.revokeObjectURL(ed.preview);
+      ed.preview = url; ed.msg = null;
+    } catch (e) { ed.msg = e.message; }
+    const img = document.querySelector(".memeedit .stage img");
+    if (img && ed.preview) img.src = ed.preview; else render();
+    const msg = document.querySelector(".memeedit .edmsg");
+    if (msg) msg.textContent = ed.msg || "";
+  }, ms);
+}
+async function saveMemeSpots() {
+  const lib = state.lib, ed = lib.edit;
+  const spots = ed.spots.filter((s) => s.text.trim()).map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h, text: s.text.trim(), style: s.style, ...(s.align === "left" ? { align: "left" } : {}) }));
+  ed.busy = true; render();
+  try {
+    await api(`/api/memes/${encodeURIComponent(ed.name)}/spots`, { spots });
+    lib.msg = spots.length ? `${ed.name}: text saved. It's drawn fresh for every buyer.` : `${ed.name}: text removed.`;
+    closeMemeEditor();
+    await loadLibrary();
+  } catch (e) { ed.busy = false; ed.msg = e.message; render(); }
+}
+
+/** The editor: the meme large, boxes dragged onto it, the text with fill-in chips, a live drawing. */
+function memeEditor(ed) {
+  const spot = ed.sel != null ? ed.spots[ed.sel] : null;
+  const stage = el("div", { class: "stage" }, [
+    el("img", { src: ed.preview || ed.url, alt: ed.name, draggable: false }),
+    ...ed.spots.map((s, i) => el("div", { class: `spotbox${i === ed.sel ? " on" : ""}`, "data-i": String(i), style: `left:${s.x * 100}%;top:${s.y * 100}%;width:${s.w * 100}%;height:${s.h * 100}%` }, [
+      el("span", { class: "tag", text: s.text.trim() ? `${i + 1}` : `${i + 1} · type the text` }),
+      el("span", { class: "grip" }),
+    ])),
+  ]);
+  // Pointer work on the stage: drag on the picture draws a new box; drag a box to move it; its corner to resize.
+  // The DOM is updated by hand during the drag and the state once on release, so the picture never re-renders mid-drag.
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || ed.busy) return;
+    const rect = stage.getBoundingClientRect();
+    const at = (ev) => ({ x: clamp01((ev.clientX - rect.left) / rect.width), y: clamp01((ev.clientY - rect.top) / rect.height) });
+    const start = at(e);
+    const boxEl = e.target.closest(".spotbox");
+    const grip = e.target.classList.contains("grip");
+    let mode, box, i;
+    if (boxEl) {
+      i = Number(boxEl.dataset.i); box = boxEl; mode = grip ? "size" : "move";
+      ed.sel = i;
+      for (const b of stage.querySelectorAll(".spotbox")) b.classList.toggle("on", b === boxEl);
+    } else {
+      if (ed.spots.length >= MAX_SPOTS) { ed.msg = `Two spots is the most. Remove one to draw another.`; render(); return; }
+      mode = "new"; i = ed.spots.length;
+      box = el("div", { class: "spotbox on", style: `left:${start.x * 100}%;top:${start.y * 100}%;width:0;height:0` });
+      stage.append(box);
+    }
+    const from = ed.spots[i] ? { ...ed.spots[i] } : { x: start.x, y: start.y, w: 0, h: 0 };
+    let cur = { ...from };
+    e.preventDefault();
+    stage.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const p = at(ev);
+      if (mode === "new") cur = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      else if (mode === "move") cur = { ...from, x: clamp01(Math.min(from.x + (p.x - start.x), 1 - from.w)), y: clamp01(Math.min(from.y + (p.y - start.y), 1 - from.h)) };
+      else cur = { ...from, w: Math.max(0.04, Math.min(p.x - from.x, 1 - from.x)), h: Math.max(0.04, Math.min(p.y - from.y, 1 - from.y)) };
+      box.style.left = `${cur.x * 100}%`; box.style.top = `${cur.y * 100}%`; box.style.width = `${cur.w * 100}%`; box.style.height = `${cur.h * 100}%`;
+    };
+    const up = () => {
+      stage.removeEventListener("pointermove", move);
+      stage.removeEventListener("pointerup", up);
+      stage.removeEventListener("pointercancel", up);
+      if (mode === "new") {
+        if (cur.w < 0.04 || cur.h < 0.04) { box.remove(); ed.sel = ed.spots.length ? ed.sel : null; render(); return; } // a click, not a box
+        ed.spots.push({ ...cur, text: "", style: "meme" });
+        ed.sel = ed.spots.length - 1;
+      } else Object.assign(ed.spots[i], cur);
+      ed.msg = null;
+      render();
+      if (ed.spots[ed.sel] && ed.spots[ed.sel].text.trim()) previewSoon(0);
+      const ta = document.querySelector(".memeedit textarea");
+      if (ta && mode === "new") ta.focus();
+    };
+    stage.addEventListener("pointermove", move);
+    stage.addEventListener("pointerup", up);
+    stage.addEventListener("pointercancel", up);
+  });
+  let ta = null;
+  const insertChip = (chip) => {
+    if (!spot) return;
+    const s = ta ? ta.selectionStart : spot.text.length, e2 = ta ? ta.selectionEnd : spot.text.length;
+    spot.text = spot.text.slice(0, s) + chip + spot.text.slice(e2);
+    if (ta) { ta.value = spot.text; ta.focus(); ta.setSelectionRange(s + chip.length, s + chip.length); }
+    previewSoon();
+  };
+  const seg = (value, choices, set) => el("div", { class: "seg" }, choices.map(([k, label]) => el("button", { class: k === value ? "on" : "", type: "button", text: label, onclick: () => { set(k); render(); previewSoon(0); } })));
+  const side = el("div", { class: "side" }, [
+    el("p", { class: "label", text: spot ? `Spot ${ed.sel + 1} of ${ed.spots.length}` : "Where the text goes" }),
+    spot ? [
+      ta = el("textarea", { rows: 3, placeholder: "WHEN {first} FINALLY SENDS THE RFQ", oninput: (e) => { spot.text = e.target.value; const tag = document.querySelector(".memeedit .spotbox.on .tag"); if (tag) tag.textContent = spot.text.trim() ? `${ed.sel + 1}` : `${ed.sel + 1} · type the text`; previewSoon(); } }),
+      el("div", { class: "chips" }, FILL_CHIPS.map(([chip, hint]) => el("button", { class: "chip3", type: "button", title: hint, text: chip, onclick: () => insertChip(chip) }))),
+      el("p", { class: "label", text: "Style" }),
+      seg(spot.style, [["meme", "Meme"], ["plain", "Plain"]], (k) => { spot.style = k; }),
+      el("p", { class: "label", text: "Lines up" }),
+      seg(spot.align === "left" ? "left" : "center", [["center", "Center"], ["left", "Left"]], (k) => { if (k === "left") spot.align = "left"; else delete spot.align; }),
+      el("p", { class: "muted small3 wrap", text: "Meme is big white capitals with a black edge, sized to fill the box. Plain is the app's reading font. Drag the box to move it, its corner to resize." }),
+      el("button", { class: "linkbtn small3", type: "button", text: "Remove this spot", onclick: () => { ed.spots.splice(ed.sel, 1); ed.sel = ed.spots.length ? Math.min(ed.sel, ed.spots.length - 1) : null; render(); previewSoon(0); } }),
+    ] : el("p", { class: "muted small3 wrap", text: ed.spots.length ? "Click a box to edit its text." : "Drag a box on the picture where the text should go. Up to two spots, each with its own text." }),
+    ed.spots.length < MAX_SPOTS && spot ? el("p", { class: "muted small3 wrap", text: "Drag on an empty part of the picture for a second spot." }) : null,
+    el("p", { class: "muted small3 wrap", text: `The preview reads "Sam" at "Crest Mechanical" with your name; each buyer sees their own. ${lib_tracking() ? "" : "Text shows in emails once PUBLIC_URL is set (the image goes through the server)."}` }),
+    el("p", { class: "edmsg libmsg small3", text: ed.msg || "" }),
+    el("div", { class: "row" }, [
+      el("button", { class: "btn small primary", disabled: ed.busy, text: ed.busy ? "Saving…" : "Save", onclick: saveMemeSpots }),
+      el("button", { class: "btn small", disabled: ed.busy, text: "Cancel", onclick: closeMemeEditor }),
+    ]),
+  ]);
+  if (ta) ta.value = spot.text;
+  return el("div", { class: "memeedit-back", onclick: (e) => { if (e.target === e.currentTarget) closeMemeEditor(); } }, [
+    el("div", { class: "memeedit", role: "dialog" }, [
+      el("div", { class: "head" }, [el("h3", { text: `Text on ${ed.name.replace(/\.[a-z0-9]+$/i, "")}` }), el("button", { class: "linkbtn small3", type: "button", text: "Close", onclick: closeMemeEditor })]),
+      el("div", { class: "body" }, [stage, side]),
+    ]),
+  ]);
+}
+const lib_tracking = () => !!(state.lib && state.lib.tracking);
 
 // Picked files land in a staging list first: a zip is unpacked right here, each image gets a preview, a name you
 // can change, and a Remove. Nothing reaches the bucket until "Upload these".
@@ -1522,7 +1689,7 @@ async function uploadStaged() {
   try {
     for (const st of files) {
       const name = `${st.stem}.${st.ext}`;
-      const res = await fetch(`/api/memes/upload?name=${encodeURIComponent(name)}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" }, body: st.blob });
+      const res = await fetch(`/api/memes/upload?name=${encodeURIComponent(name)}${lib.forAll ? "&general=1" : ""}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" }, body: st.blob });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(`${name}: ${data.error || `Error ${res.status}`}`);
       added.push(...data.added);
@@ -1548,6 +1715,8 @@ function stagingArea(lib) {
       ]),
     ]),
     el("p", { class: "muted small3", text: "Name each one (this is what you'll see when picking a meme), remove the ones you don't want, then upload." }),
+    // Yours, or everyone's (11/10): a general meme goes into every rep's rotation; you can still take it back later.
+    el("label", { class: "check small3" }, [el("input", { type: "checkbox", checked: !!lib.forAll, onchange: (e) => { lib.forAll = e.target.checked; } }), " For everyone: these go on the team list, in every rep's rotation"]),
     dupes.size ? el("p", { class: "small3 libmsg", text: `Two have the same name: ${[...dupes].join(", ")}. Change one.` }) : null,
     el("div", { class: "memegrid lib" }, staged.map((st) => el("div", { class: `memecard${dupes.has(`${st.stem}.${st.ext}`) ? " dupe" : ""}` }, [
       el("img", { src: st.url, alt: st.stem }),
@@ -1561,7 +1730,7 @@ function stagingArea(lib) {
 }
 
 function memeLibrary() {
-  if (!state.lib) { state.lib = { memes: [], busy: true, msg: null, rename: null }; loadLibrary(); }
+  if (!state.lib) { state.lib = { memes: [], busy: true, msg: null, rename: null, previews: {}, open: false }; loadLibrary(); }
   const lib = state.lib;
   const pick = () => {
     const input = el("input", { type: "file", accept: ".zip,image/*", multiple: true, style: "display:none", onchange: (e) => { if (e.target.files.length) stageMemeFiles([...e.target.files]); } });
@@ -1576,8 +1745,14 @@ function memeLibrary() {
     try { const r = await api("/api/memes/rename", { from: m.name, to }); lib.msg = `Renamed to ${r.name}`; } catch (e) { lib.msg = e.message; }
     await loadLibrary();
   };
+  const share = async (m) => {
+    if (m.general && !confirm(`Take ${m.name} off the team list? It leaves the other reps' rotations; what's already been sent stays on record.`)) return;
+    lib.busy = true; render();
+    try { await api(`/api/memes/${encodeURIComponent(m.name)}/general`, { on: !m.general }); lib.msg = m.general ? `${m.name} is just yours again` : `${m.name} is on the team list now`; } catch (e) { lib.msg = e.message; }
+    await loadLibrary();
+  };
   const retire = async (m) => {
-    if (!confirm(`Retire ${m.name}? It leaves the rotation; what's already been sent stays on record.`)) return;
+    if (!confirm(`Retire ${m.name}? It leaves ${m.general ? "everyone's" : "the"} rotation; what's already been sent stays on record.`)) return;
     lib.busy = true; render();
     try { await api("/api/memes/delete", { name: m.name }); lib.msg = `Retired ${m.name}`; } catch (e) { lib.msg = e.message; }
     await loadLibrary();
@@ -1589,24 +1764,48 @@ function memeLibrary() {
       el("button", { class: "btn small", disabled: lib.busy, text: lib.busy ? "Working…" : "Add images or a zip", onclick: pick }),
     ]),
     stagingArea(lib),
-    el("p", { class: "muted small3", text: "One per bump, never the same one twice to a company. Drop files here, or a zip and it unpacks. Click a name to rename it (everything that remembers the old name follows). Keep them under 5 MB." }),
+    el("p", { class: "muted small3", text: "One per bump, never the same one twice to a company. Drop files here, or a zip and it unpacks. Click a name to rename it (everything that remembers the old name follows). Keep them under 5 MB. Add text to a meme and it's drawn in fresh for every buyer: their name, their company, yours. Share a meme and it's on the team list, in every rep's rotation; the rest stay yours alone." }),
     lib.msg ? el("p", { class: "small3 libmsg", text: lib.msg }) : null,
-    !lib.memes.length && !lib.busy ? el("p", { class: "empty", text: "No memes yet. Upload a zip to start." }) : el("div", { class: "memegrid lib" }, lib.memes.map((m) => el("div", { class: "memecard" }, [
-      el("img", { src: m.url, alt: m.name, loading: "lazy" }),
+    lib.edit ? memeEditor(lib.edit) : null,
+    !lib.memes.length && !lib.busy ? el("p", { class: "empty", text: "No memes yet. Upload a zip to start." }) : el("div", { class: "memegrid lib" }, [
+      // Yours first, then the team's general ones (11/10). A general meme you brought in sits with the team's, still yours to change.
+      ...group("Yours", lib.memes.filter((m) => !m.general)),
+      ...group("Everyone's", lib.memes.filter((m) => m.general)),
+    ]),
+  ]);
+
+  function group(title, memes) {
+    if (!memes.length) return [];
+    return [el("h3", { class: "grouph", text: `${title} · ${memes.length}` }), ...memes.map(card)];
+  }
+  function card(m) {
+    return el("div", { class: `memecard${m.mine ? "" : " theirs"}` }, [
+      // A meme with text (11/10) shows drawn with the sample fill-ins, and wears a tag so you can tell.
+      el("div", { class: "pic" }, [
+        el("img", { src: (lib.previews[m.name] && lib.previews[m.name].url) || m.url, alt: m.name, loading: "lazy" }),
+        m.spots && m.spots.length ? el("span", { class: "pill", title: "The text is drawn in for each buyer", text: "Text" }) : null,
+        m.general ? el("span", { class: "pill team", title: m.mine ? "On the team list: every rep's rotation has it" : "A teammate shared this with everyone", text: "Team" }) : null,
+      ]),
       lib.rename && lib.rename.name === m.name
         ? el("input", { class: "rename", value: lib.rename.value, autofocus: true, oninput: (e) => { lib.rename.value = e.target.value; },
           onkeydown: (e) => { if (e.key === "Enter") commitRename(m); if (e.key === "Escape") { lib.rename = null; render(); } }, onblur: () => commitRename(m) })
-        : el("button", { class: "name", title: "Rename", text: stem(m.name), onclick: () => { lib.rename = { name: m.name, value: stem(m.name) }; render(); } }),
+        : m.mine
+          ? el("button", { class: "name", title: "Rename", text: stem(m.name), onclick: () => { lib.rename = { name: m.name, value: stem(m.name) }; render(); } })
+          : el("span", { class: "name", title: "A teammate's; they or Walt can rename it", text: stem(m.name) }),
       el("div", { class: "meta" }, [
-        el("span", { class: "mono muted", title: "Sent: Close has sent it. Queued: scheduled in Close, not out yet.", text: [m.sent ? `sent ${m.sent}` : null, m.queued ? `queued ${m.queued}` : null].filter(Boolean).join(" · ") || "not used yet" }),
-        el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
+        el("span", { class: "mono muted", title: "Sent: Close has sent it. Queued: scheduled in Close, not out yet. Your sends only.", text: [m.sent ? `sent ${m.sent}` : null, m.queued ? `queued ${m.queued}` : null].filter(Boolean).join(" · ") || "not used yet" }),
+        m.mine ? el("span", { class: "acts" }, [
+          el("button", { class: "linkbtn small3", text: m.spots && m.spots.length ? "Edit text" : "Add text", onclick: () => openMemeEditor(m) }),
+          el("button", { class: "linkbtn small3", title: m.general ? "Take it off the team list; it leaves the others' rotations" : "Put it on the team list, in every rep's rotation", text: m.general ? "Unshare" : "Share", onclick: () => share(m) }),
+          el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
+        ]) : el("span", { class: "muted small3", text: "a teammate's" }),
       ]),
-      m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump: opened the email, wrote back, sent an RFQ, within 2 weeks. Seen: the meme image loaded in their mail app. Clicked: they followed the link under it." }, [
+      m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump from you: opened the email, wrote back, sent an RFQ, within 2 weeks. Seen: the meme image loaded in their mail app. Clicked: they followed the link under it." }, [
         // Seen and clicked only once tracking is on (a Westgate domain): until then they'd read 0% and crowd the card.
         ["opened", m.stats.opened], ["replied", m.stats.replied], ["RFQ", m.stats.rfq], ...(lib.tracking && m.stats.tracked ? [["seen", m.stats.shown], ["clicked", m.stats.clicked]] : []),
       ].map(([k, v]) => el("span", { class: v ? "good" : "" }, [el("b", { class: "mono", text: `${Math.round((v / (k === "seen" || k === "clicked" ? m.stats.tracked : m.stats.sent)) * 100)}%` }), ` ${k}`]))) : null,
-    ]))),
-  ]);
+    ]);
+  }
 }
 
 // Is the sequence working (10/12)? Emails sent, RFQs that came in within a week of one, and stop requests, by where
@@ -2309,7 +2508,8 @@ function emailsSection() {
             ...rows.flatMap(mailRow),
           ]),
     ]),
-    au ? el("details", { class: "mhow" }, [el("summary", { text: "Memes" }), memeLibrary()]) : null,
+    // Stays open across renders (11/10): editing a meme re-renders the page, and the library has to stay in view.
+    au ? el("details", { class: "mhow", open: !!(state.lib && state.lib.open), ontoggle: (e) => { if (state.lib) state.lib.open = e.currentTarget.open; } }, [el("summary", { text: "Memes" }), memeLibrary()]) : null,
   ]);
 }
 
