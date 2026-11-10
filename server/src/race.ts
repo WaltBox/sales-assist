@@ -123,6 +123,8 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       return { lane, events, line, today, t };
     } catch (e) {
       const msg = (e as Error).message;
+      // Said in the log (11/10): a whole board of "couldn't read their numbers" had nothing to go on.
+      console.warn(`[race] ${t.rep.email}: ${msg}`);
       return {
         lane: { email: t.rep.email.toLowerCase(), name: t.rep.name, first, dials: 0, reached: 0, lineCards: 0, rfqs: 0, firstRfqs: 0, points: 0, week: null,
           error: /403|no access/i.test(msg) ? "Close login needs fixing" : "Couldn't read their numbers" },

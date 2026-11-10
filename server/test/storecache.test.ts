@@ -41,6 +41,10 @@ test("the same read within a few seconds comes from memory; a write forgets the 
     await s.cacheSet("race:live:a", 1, 1000);
     await s.cacheGet("race:live:a"); await s.cacheGet("race:team");
     assert.equal(f.calls.filter((c) => c.url.includes("/brief_cache?")).length, 4, "two reads, the write, and one read again");
+    // Each asker gets its own copy: changing what you read doesn't change what the next asker reads.
+    const a = (await s.getSetting<{ pace: number }>("user_1", "pace"))!;
+    a.pace = 999;
+    assert.equal((await s.getSetting<{ pace: number }>("user_1", "pace"))!.pace, 20, "the remembered copy is untouched");
     // Two askers at once share one trip.
     await Promise.all([s.getSetting("user_2", "pace"), s.getSetting("user_2", "pace")]);
     assert.equal(f.calls.filter((c) => c.url.includes("user_2")).length, 1);

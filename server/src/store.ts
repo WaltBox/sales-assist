@@ -211,16 +211,18 @@ export class SupabaseStore implements Store {
       return this.fetchJson<T>(method, pathAndQuery, body, prefer);
     }
     if (!ttl) { this.counts.fetched++; return this.fetchJson<T>(method, pathAndQuery, body, prefer); }
+    // Every asker gets its own copy: callers change what they read (a list's rows, a setting) before saving it
+    // back, and a shared object would carry one caller's half-done edits into another's.
     const key = readKey(pathAndQuery);
     const hit = this.reads.get(key);
-    if (hit && Date.now() - hit.at < ttl) { this.counts.remembered++; return hit.value as Promise<T>; }
+    if (hit && Date.now() - hit.at < ttl) { this.counts.remembered++; return (hit.value as Promise<T>).then((v) => structuredClone(v)); }
     this.counts.fetched++;
     const value = this.fetchJson<T>(method, pathAndQuery, body, prefer);
     this.reads.set(key, { at: Date.now(), value });
     // A failed read isn't remembered: the next asker tries again.
     value.catch(() => { if (this.reads.get(key)?.value === value) this.reads.delete(key); });
     if (this.reads.size > 2000) { const oldest = this.reads.keys().next().value; if (oldest !== undefined) this.reads.delete(oldest); }
-    return value;
+    return value.then((v) => structuredClone(v));
   }
 
   private async fetchJson<T>(method: string, pathAndQuery: string, body?: unknown, prefer?: string): Promise<T> {
