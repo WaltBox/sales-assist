@@ -9,7 +9,8 @@ import { bumpBodyFor, FollowUpError, greetName, writeFollowUp, type BumpPlace } 
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { clearPick, memeFor, memesFor, memesSeen, memeTrack, type Meme } from "./memes.js";
-import { cadenceFor, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, isGenericAddress, sequenceFor, type Sequence } from "./cadence.js";
+import { cadenceFor, campaignBook, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, isGenericAddress, liveCampaign, saveBook, sequenceFor, STANDARD_ID, standardCampaign, type Campaign, type Sequence } from "./cadence.js";
+import { randomUUID } from "node:crypto";
 import { SequenceSchema } from "./schemas.js";
 import { sequenceProblems, type SequenceProblem } from "./validate.js";
 import { z } from "zod/v4";
@@ -105,10 +106,38 @@ export function checkSequence(input: unknown): { seq: Sequence | null; errors: S
   const errors = sequenceProblems(r.data);
   return { seq: errors.length ? null : r.data, errors };
 }
-export async function sequencePreview(d: Deps, input: unknown, opts: { save?: boolean } = {}): Promise<SequenceCheck> {
-  const { seq, errors } = checkSequence(input);
-  if (!seq) return { ok: false, errors, previews: [], moved: 0, saved: false };
-  const now = d.now?.() ?? new Date();
+// ---------- Sequences (Walt 11/10): several a rep, one live ----------
+export type CampaignStats = { sent: number; rfqs: number; stops: number; steps: Record<string, { sent: number; rfqs: number; stops: number }> };
+export type CampaignView = Campaign & { live: boolean; readOnly: boolean; stats: CampaignStats };
+const noStats = (): CampaignStats => ({ sent: 0, rfqs: 0, stops: 0, steps: {} });
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const asSequence = (c: Campaign): Sequence => SequenceSchema.parse(c);
+export async function listCampaigns(d: Deps, now: Date = d.now?.() ?? new Date()): Promise<{ campaigns: CampaignView[]; standard: Sequence }> {
+  const book = await campaignBook(d.rep.closeUserId);
+  const stats = await campaignStats(d, now).catch(() => ({} as Record<string, CampaignStats>));
+  const liveId = book.campaigns.some((c) => c.id === book.liveId) ? book.liveId : STANDARD_ID;
+  return {
+    campaigns: [standardCampaign(), ...book.campaigns].map((c) => ({ ...c, live: c.id === liveId, readOnly: c.id === STANDARD_ID, stats: stats[c.name] ?? noStats() })),
+    standard: DEFAULT_SEQUENCE,
+  };
+}
+/** A new sequence: a copy of Standard, or of one of yours, under a name nobody else has. */
+export async function createCampaign(d: Deps, opts: { from?: string | null; name: string }): Promise<Campaign> {
+  const name = String(opts.name ?? "").trim();
+  if (!name) throw new FollowUpError("Give the sequence a name.");
+  if (name.length > 40) throw new FollowUpError("A name under 40 characters.");
+  const book = await campaignBook(d.rep.closeUserId);
+  if ([standardCampaign(), ...book.campaigns].some((c) => sameName(c.name, name))) throw new FollowUpError(`There's already a sequence called "${name}".`);
+  const from = !opts.from || opts.from === STANDARD_ID ? standardCampaign() : book.campaigns.find((c) => c.id === opts.from);
+  if (!from) throw new FollowUpError("That sequence isn't there anymore.");
+  const at = (d.now?.() ?? new Date()).toISOString();
+  const c: Campaign = { ...cloneSequence(asSequence(from)), name, id: randomUUID(), createdAt: at, updatedAt: at };
+  book.campaigns.push(c);
+  await saveBook(d.rep.closeUserId, book);
+  return c;
+}
+/** What each email reads like, for a buyer called Sam, on a Wednesday: one per intro step and rotating line. */
+function samplesFor(d: Deps, seq: Sequence, now: Date): SequenceCheck["previews"] {
   const previews: SequenceCheck["previews"] = [];
   const sample = (track: "talked" | "cold", nth: number, gap: number, label: string) => {
     const cad = { track, round: 1, nth, lastConvo: track === "talked" ? new Date(now.getTime() - DAY).toISOString() : null } as unknown as Account["cadence"];
@@ -119,25 +148,96 @@ export async function sequencePreview(d: Deps, input: unknown, opts: { save?: bo
     seq[track].steps.forEach((st, i) => sample(track, i, st.gap, `${track === "talked" ? "Talked" : "Cold"} intro, email ${i + 1}`));
     seq[track].after.forEach((_, i) => sample(track, seq[track].steps.length + i, 0, `${track === "talked" ? "Talked" : "Cold"}, after the intro, line ${i + 1}`));
   }
-  // Whose next email moves: the saved board's accounts, old cadence against new.
-  const old = await sequenceFor(d.rep.closeUserId);
-  const board = await cachedBoard(d).catch(() => null);
-  let moved = 0;
-  for (const a of board?.accounts ?? []) {
-    if (!a.cadence?.eligible) continue;
-    const x = { track: a.cadence.track, round: a.cadence.round, nth: a.cadence.nth, tier: a.potential?.tier ?? null, generic: isGenericAddress(a.contact.email), heardBack: a.seen === "replied" || !!a.cadence.clickedAt };
-    if (cadenceFor(x, old).gap !== cadenceFor(x, seq).gap) moved++;
-  }
-  if (opts.save) {
-    await store.putSetting(d.rep.closeUserId, "sequence", isDefaultSequence(seq) ? null : cloneSequence(seq));
-    forgetBoard(d.rep.closeUserId);
-  }
-  return { ok: true, errors: [], previews, moved, saved: !!opts.save };
+  return previews;
 }
-export async function resetSequence(d: Deps) {
-  await store.putSetting(d.rep.closeUserId, "sequence", null);
+/** A sequence that isn't saved yet (the editor's New, 11/10): checked and sampled like a save, nothing written. */
+export async function previewCampaign(d: Deps, input: unknown): Promise<SequenceCheck> {
+  const book = await campaignBook(d.rep.closeUserId);
+  const { seq, errors } = checkSequence(input);
+  if (seq && [standardCampaign(), ...book.campaigns].some((c) => sameName(c.name, seq.name))) errors.push({ path: "name", problem: `There's already a sequence called "${seq.name}".` });
+  if (!seq || errors.length) return { ok: false, errors, previews: [], moved: 0, saved: false };
+  return { ok: true, errors: [], previews: samplesFor(d, seq, d.now?.() ?? new Date()), moved: 0, saved: false };
+}
+/** New from the editor (11/10): the whole record arrives at once, checked like a save; it's created only if it passes. */
+export async function createCampaignFrom(d: Deps, input: unknown): Promise<SequenceCheck & { campaign?: Campaign }> {
+  const checked = await previewCampaign(d, input);
+  if (!checked.ok) return checked;
+  const seq = checkSequence(input).seq!;
+  const book = await campaignBook(d.rep.closeUserId);
+  const at = (d.now?.() ?? new Date()).toISOString();
+  const c: Campaign = { ...cloneSequence(seq), id: randomUUID(), createdAt: at, updatedAt: at };
+  book.campaigns.push(c);
+  await saveBook(d.rep.closeUserId, book);
+  return { ...checked, saved: true, campaign: c };
+}
+/** The editor's save: the shape, then the wording; a dry run only checks and shows what each email reads like. */
+export async function saveCampaign(d: Deps, id: string, input: unknown, opts: { dryRun?: boolean } = {}): Promise<SequenceCheck> {
+  if (id === STANDARD_ID) throw new FollowUpError("The standard sequence can't change. Duplicate it and edit the copy.");
+  const book = await campaignBook(d.rep.closeUserId);
+  const cur = book.campaigns.find((c) => c.id === id);
+  if (!cur) throw new FollowUpError("That sequence isn't there anymore.");
+  const { seq, errors } = checkSequence(input);
+  if (seq && [standardCampaign(), ...book.campaigns].some((c) => c.id !== id && sameName(c.name, seq.name))) errors.push({ path: "name", problem: `There's already a sequence called "${seq.name}".` });
+  if (!seq || errors.length) return { ok: false, errors, previews: [], moved: 0, saved: false };
+  const now = d.now?.() ?? new Date();
+  const previews = samplesFor(d, seq, now);
+  // Whose next email moves (only the live one moves anybody): the saved board's accounts, old timing against new.
+  const live = book.liveId === id;
+  let moved = 0;
+  if (live) {
+    const old = asSequence(cur);
+    const board = await cachedBoard(d).catch(() => null);
+    for (const a of board?.accounts ?? []) {
+      if (!a.cadence?.eligible) continue;
+      const x = { track: a.cadence.track, round: a.cadence.round, nth: a.cadence.nth, tier: a.potential?.tier ?? null, generic: isGenericAddress(a.contact.email), heardBack: a.seen === "replied" || !!a.cadence.clickedAt };
+      if (cadenceFor(x, old).gap !== cadenceFor(x, seq).gap) moved++;
+    }
+  }
+  if (!opts.dryRun) {
+    Object.assign(cur, cloneSequence(seq), { updatedAt: now.toISOString() });
+    await saveBook(d.rep.closeUserId, book);
+    if (live) forgetBoard(d.rep.closeUserId);
+  }
+  return { ok: true, errors: [], previews, moved, saved: !opts.dryRun };
+}
+export async function setLiveCampaign(d: Deps, id: string) {
+  const book = await campaignBook(d.rep.closeUserId);
+  if (id !== STANDARD_ID && !book.campaigns.some((c) => c.id === id)) throw new FollowUpError("That sequence isn't there anymore.");
+  book.liveId = id === STANDARD_ID ? null : id;
+  await saveBook(d.rep.closeUserId, book);
   forgetBoard(d.rep.closeUserId);
-  return { sequence: DEFAULT_SEQUENCE };
+  return listCampaigns(d);
+}
+export async function deleteCampaign(d: Deps, id: string) {
+  if (id === STANDARD_ID) throw new FollowUpError("The standard sequence stays.");
+  const book = await campaignBook(d.rep.closeUserId);
+  const cur = book.campaigns.find((c) => c.id === id);
+  if (!cur) throw new FollowUpError("That sequence isn't there anymore.");
+  if (book.liveId === id) throw new FollowUpError(`"${cur.name}" is live. Set another sequence live first.`);
+  book.campaigns = book.campaigns.filter((c) => c.id !== id);
+  await saveBook(d.rep.closeUserId, book);
+  return listCampaigns(d);
+}
+/** Which step an account is on, kept on each row it writes (11/10), so a sequence's numbers show per step. */
+export const stepOf = (a: Pick<Account, "cadence">, seq: Sequence) => {
+  const t = a.cadence.track, n = a.cadence.nth, plan = seq[t];
+  return n < plan.steps.length ? `${t}:${n}` : `${t}:after:${plan.after.length ? (n - plan.steps.length) % plan.after.length : 0}`;
+};
+/** Each sequence's numbers, by name and by step: sent, RFQs within a week, asked to stop (the scoreboard's rules). */
+export async function campaignStats(d: Deps, now: Date): Promise<Record<string, CampaignStats>> {
+  const nameOf = (r: Automation) => r.seq || "Standard";
+  const [totals, steps] = await Promise.all([
+    scoreRows(d, now, nameOf, (k) => k),
+    scoreRows(d, now, (r) => `${nameOf(r)}\u0000${r.step ?? ""}`, (k) => k),
+  ]);
+  const out: Record<string, CampaignStats> = {};
+  for (const t of totals) out[t.key] = { sent: t.sent, rfqs: t.rfqs, stops: t.stops, steps: {} };
+  for (const s of steps) {
+    const [name, step] = s.key.split("\u0000");
+    if (!step) continue;
+    (out[name] ??= noStats()).steps[step] = { sent: s.sent, rfqs: s.rfqs, stops: s.stops };
+  }
+  return out;
 }
 
 /**
@@ -358,7 +458,7 @@ async function planDay(d: Deps, now: Date) {
         skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") });
         continue;
       }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: seqTag(a), arm: a.cadence.gap, seq: seq.name };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: seqTag(a), arm: a.cadence.gap, seq: seq.name, step: stepOf(a, seq) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -427,7 +527,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
       const meme = await memeFor(d, a.leadId, { memes, seen, picks });
       const r = await writeFollowUp(d, a.leadId, { force: true, schedule: { stagger: i * stagger, now: true }, template: { meme, place: { ...placeOf(a, now, seq), variant: opts.variant ?? null } } });
       if (r.status === "warn") { skipped.push({ company: a.company, why: r.warning.replace(/ Send anyway\?$/, "") }); continue; }
-      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? seqTag(a), arm: a.cadence.gap, seq: seq.name };
+      const row: Automation = { ...base, id: r.draftId, to: r.to, subject: r.subject, body: r.body, scheduledFor: r.scheduledFor, status: "scheduled", statusAt: now.toISOString(), note: r.warnings.join(" ") || null, meme: r.meme ?? null, track: r.track ?? null, variant: opts.variant ?? seqTag(a), arm: a.cadence.gap, seq: seq.name, step: stepOf(a, seq) };
       await store.putAutomation(row);
       await dropRescueDraft(d, a.leadId);
       if (r.meme) { seen.set(a.leadId, (seen.get(a.leadId) ?? new Set()).add(r.meme)); delete picks[a.leadId]; await clearPick(d, a.leadId); }
@@ -789,6 +889,44 @@ async function scoreRows(d: Deps, now: Date, keyOf: (r: Automation) => string, l
   return [...out.values()].sort((x, y) => order(x.key) - order(y.key) || x.key.localeCompare(y.key));
 }
 
+export type SeriesWeek = { week: string; sent: number; rfqs: number; replies: number; stops: number };
+/**
+ * The sequence over the last weeks (11/10), Monday to Sunday in the rep's time: emails sent, the RFQs they brought
+ * in (an RFQ within a week of an email, the scoreboard's rule), replies within a week of an email, and asked to stop.
+ */
+export async function sequenceSeries(d: Deps, now: Date, weeks = 12): Promise<SeriesWeek[]> {
+  const tz = d.rep.timeZone;
+  const dayOf = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: tz });
+  const mondayOf = (iso: string) => {
+    const day = dayOf(iso);
+    const dow = new Date(`${day}T12:00:00Z`).getUTCDay();
+    const monday = new Date(Date.parse(`${day}T12:00:00Z`) - ((dow + 6) % 7) * DAY);
+    return monday.toISOString().slice(0, 10);
+  };
+  const thisMonday = mondayOf(now.toISOString());
+  const keys = Array.from({ length: weeks }, (_, i) => new Date(Date.parse(`${thisMonday}T12:00:00Z`) - (weeks - 1 - i) * 7 * DAY).toISOString().slice(0, 10));
+  const out = new Map<string, SeriesWeek>(keys.map((week) => [week, { week, sent: 0, rfqs: 0, replies: 0, stops: 0 }]));
+  const since = new Date(Date.parse(`${keys[0]}T00:00:00Z`) - 8 * DAY);
+  const [rows, board] = await Promise.all([
+    store.listAutomations(d.rep.closeUserId, since.toISOString()),
+    accountsBoard(d, { maxAgeMs: 10 * 60_000 }).catch(() => ({ accounts: [] as Account[] })),
+  ]);
+  const sent = rows.filter((r) => r.status === "sent");
+  const at = (r: Automation) => r.statusAt ?? r.scheduledFor ?? r.createdAt;
+  const bump = (iso: string, k: "sent" | "rfqs" | "replies" | "stops") => { const w = out.get(mondayOf(iso)); if (w) w[k]++; };
+  const emailBefore = (leadId: string, iso: string) => sent.some((r) => r.leadId === leadId && at(r) <= iso && Date.parse(iso) - Date.parse(at(r)) <= 7 * DAY);
+  for (const r of sent) bump(at(r), "sent");
+  for (const a of board.accounts) {
+    if (a.rfq && emailBefore(a.leadId, a.rfq.at)) bump(a.rfq.at, "rfqs");
+    if (a.lastReplyAt && emailBefore(a.leadId, a.lastReplyAt)) {
+      bump(a.lastReplyAt, "replies");
+      const p = a.warmth?.paused;
+      if (p && ["out", "no_emails", "later"].includes(p.kind)) bump(a.lastReplyAt, "stops");
+    }
+  }
+  return keys.map((k) => out.get(k)!);
+}
+
 export async function automationsView(d: Deps) {
   // The checks against Close run behind the page, not in front of it (10/8: this list took 61 seconds and every
   // page waited on it). The catch-up job runs the same checks on its own schedule.
@@ -813,9 +951,11 @@ export async function automationsView(d: Deps) {
   const future = await forecast(d).catch(() => [] as Forecast[]);
   const scoreboard = await sequenceScoreboard(d, now).catch(() => [] as ScoreRow[]);
   const versions = await versionScoreboard(d, now).catch(() => [] as ScoreRow[]);
+  const series = await sequenceSeries(d, now).catch(() => [] as SeriesWeek[]);
   return {
     scoreboard,
     versions,
+    series,
     enabled: await automationsOn(d),
     testMode: await testMode(d),
     future: future.filter((f) => !f.held),
@@ -827,6 +967,7 @@ export async function automationsView(d: Deps) {
     sequence: await sequenceFor(d.rep.closeUserId),
     sequenceDefault: DEFAULT_SEQUENCE,
     sequenceCustom: !isDefaultSequence(await sequenceFor(d.rep.closeUserId)),
+    campaignLive: await liveCampaign(d.rep.closeUserId).then((c) => ({ id: c.id, name: c.name })),
     upcoming: withBody.filter((a) => a.status === "scheduled").sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? "")),
     sent: withBody.filter((a) => a.status === "sent").sort((a, b) => (b.statusAt ?? "").localeCompare(a.statusAt ?? "")),
     other: withBody.filter((a) => ["skipped", "stopped", "failed"].includes(a.status)),
