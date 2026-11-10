@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Tier } from "./potential.js";
 import { SequenceSchema } from "./schemas.js";
 import { store } from "./store.js";
@@ -108,8 +109,6 @@ export const DEFAULT_SEQUENCE: Sequence = {
   send: DEFAULT_SEND,
 };
 /** A deep copy, so an edit never touches the default. */
-export const cloneSequence = (s: Sequence): Sequence => JSON.parse(JSON.stringify(s)) as Sequence;
-export const isDefaultSequence = (s: Sequence) => JSON.stringify(s) === JSON.stringify(DEFAULT_SEQUENCE);
 
 // The old constants, now the default's numbers: nothing that reads them changes.
 export const INTRO_GAPS: Record<Track, readonly number[]> = { talked: DEFAULT_SEQUENCE.talked.steps.map((s) => s.gap), cold: DEFAULT_SEQUENCE.cold.steps.map((s) => s.gap) };
@@ -120,12 +119,46 @@ export const MONTHLY_GAP = DEFAULT_SEQUENCE.monthly.gap;
 export const CLICK_HOLD_DAYS = DEFAULT_SEQUENCE.clickHoldDays;
 
 /** The rep's sequence: what they saved in the builder, or the default. Anything saved that no longer parses runs the default. */
+export const cloneSequence = (s: Sequence): Sequence => JSON.parse(JSON.stringify(s)) as Sequence;
+export const isDefaultSequence = (s: Sequence) => JSON.stringify(s) === JSON.stringify(DEFAULT_SEQUENCE);
+
+// Several sequences a rep, one live (Walt 11/10: "more of a campaign builder"). Saved as one setting, "campaigns";
+// the built-in Standard is never stored and is live when nothing else is. The builder's earlier single "sequence"
+// setting (11/9) becomes the first saved one, live, the first time the book is read.
+export type Campaign = Sequence & { id: string; createdAt: string; updatedAt: string };
+export type CampaignBook = { campaigns: Campaign[]; liveId: string | null };
+export const STANDARD_ID = "standard";
+const BOOK_KEY = "campaigns";
+export const standardCampaign = (): Campaign => ({ ...cloneSequence(DEFAULT_SEQUENCE), id: STANDARD_ID, createdAt: "", updatedAt: "" });
+const parses = (c: unknown): c is Campaign => !!c && typeof c === "object" && typeof (c as Campaign).id === "string" && SequenceSchema.safeParse(c).success;
+export async function campaignBook(repId: string): Promise<CampaignBook> {
+  const saved = await store.getSetting<CampaignBook>(repId, BOOK_KEY).catch(() => null);
+  if (saved && Array.isArray(saved.campaigns)) {
+    const campaigns = saved.campaigns.filter(parses);
+    if (campaigns.length < saved.campaigns.length) console.warn(`[sequence] ${repId}: a saved sequence doesn't parse; skipping it`);
+    return { campaigns, liveId: typeof saved.liveId === "string" ? saved.liveId : null };
+  }
+  const old = await store.getSetting<unknown>(repId, "sequence").catch(() => null);
+  const r = old ? SequenceSchema.safeParse(old) : null;
+  if (!r || !r.success) return { campaigns: [], liveId: null };
+  const at = new Date().toISOString();
+  const first: Campaign = { ...r.data, id: randomUUID(), createdAt: at, updatedAt: at };
+  const book: CampaignBook = { campaigns: [first], liveId: first.id };
+  await store.putSetting(repId, BOOK_KEY, book).catch(() => undefined);
+  return book;
+}
+export async function saveBook(repId: string, book: CampaignBook) {
+  await store.putSetting(repId, BOOK_KEY, book);
+}
+export async function liveCampaign(repId: string): Promise<Campaign> {
+  const book = await campaignBook(repId);
+  return book.campaigns.find((c) => c.id === book.liveId) ?? standardCampaign();
+}
+/** The live sequence: what the board, the morning plan and every bump read. */
 export async function sequenceFor(repId: string): Promise<Sequence> {
-  const saved = await store.getSetting<unknown>(repId, "sequence").catch(() => null);
-  if (!saved) return DEFAULT_SEQUENCE;
-  const r = SequenceSchema.safeParse(saved);
-  if (!r.success) { console.warn(`[sequence] ${repId}: the saved sequence doesn't parse; running the default`); return DEFAULT_SEQUENCE; }
-  return r.data;
+  const c = await liveCampaign(repId);
+  if (c.id === STANDARD_ID) return DEFAULT_SEQUENCE;
+  return SequenceSchema.parse(c);
 }
 
 export const TIER_WORDS: Record<Tier, string> = {

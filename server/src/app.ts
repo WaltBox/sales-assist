@@ -23,7 +23,7 @@ import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store
 import { deleteMeme, memesFor, logLinkClick, logMemeEvent, memeCounts, MemeError, memeLanding, memesSeen, memeStats, memeUrl, pickMeme, renameMeme, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, resetSequence, sequencePreview, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
+import { automationsView, createCampaign, createCampaignFrom, deleteCampaign, listCampaigns, previewCampaign, saveCampaign, setLiveCampaign, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
@@ -697,9 +697,15 @@ export function createApp(appDeps: AppDeps) {
     const today = req.body?.pull_back_today === true ? await slowToday(d, cap) : null;
     return { ...set, today };
   }));
-  // The sequence builder (11/9): dry_run checks the sequence and shows what each email reads like; without it, it saves.
-  app.post("/api/automations/sequence", authed, route((req, d) => sequencePreview(d, req.body?.sequence, { save: req.body?.dry_run !== true })));
-  app.post("/api/automations/sequence/reset", authed, route((_req, d) => resetSequence(d)));
+  // Sequences (11/10): several a rep, one live. The list, a new one (a copy of Standard or of yours), the editor's
+  // save (dry_run only checks it and shows what each email reads like), set live, delete.
+  app.get("/api/campaigns", authed, route((_req, d) => listCampaigns(d)));
+  // A new one: the editor sends the whole record (checked, created only if it passes); a name alone copies Standard or one of yours.
+  app.post("/api/campaigns", authed, route((req, d) => (req.body?.campaign ? createCampaignFrom(d, req.body.campaign) : createCampaign(d, { from: req.body?.from ?? null, name: String(req.body?.name ?? "") }))));
+  app.post("/api/campaigns/preview", authed, route((req, d) => previewCampaign(d, req.body?.campaign)));
+  app.post("/api/campaigns/:id", authed, route((req, d) => saveCampaign(d, String(req.params.id), req.body?.campaign, { dryRun: req.body?.dry_run === true })));
+  app.post("/api/campaigns/:id/live", authed, route((req, d) => setLiveCampaign(d, String(req.params.id))));
+  app.post("/api/campaigns/:id/delete", authed, route((req, d) => deleteCampaign(d, String(req.params.id))));
   app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));
   // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.

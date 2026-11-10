@@ -324,7 +324,7 @@ function topBar() {
       el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), el("span", { class: "brandtext" }, ["Westgate", el("span", { class: "sub", text: "Assistant" })])]),
       el("button", { class: "fold", title: sideFolded ? "Open the menu" : "Collapse the menu", "aria-label": sideFolded ? "Open the menu" : "Collapse the menu", text: sideFolded ? "»" : "«", onclick: foldSide }),
     ]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Automatic emails"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Email Sequence"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", title: label, onclick: () => go(k),
     }, [icon(k), el("span", { class: "navlabel", text: label }),
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
@@ -1611,39 +1611,7 @@ function memeLibrary() {
 
 // Is the sequence working (10/12)? Emails sent, RFQs that came in within a week of one, and stop requests, by where
 // the account was in the sequence. The number that matters is RFQs per 100 emails.
-function scoreboardTable(rows, title) {
-  const per = (r) => (r.sent ? `${((r.rfqs / r.sent) * 100).toFixed(1)}` : "–");
-  const tot = rows.reduce((t, r) => ({ sent: t.sent + r.sent, rfqs: t.rfqs + r.rfqs, stops: t.stops + r.stops }), { sent: 0, rfqs: 0, stops: 0 });
-  return el("details", { class: "rfqtable scoreboard", open: true }, [
-    el("summary", { text: title ? `${title}, last 60 days` : `Scoreboard, last 60 days: ${tot.rfqs} RFQ${tot.rfqs === 1 ? "" : "s"} from ${tot.sent} automatic emails` }),
-    el("table", {}, [
-      el("thead", {}, [el("tr", {}, [title ? "Version" : "Where they were", "Emails", "RFQs within a week", "RFQs per 100", "Asked to stop or slow down"].map((h) => el("th", { text: h })))]),
-      el("tbody", {}, rows.map((r) => el("tr", {}, [
-        el("td", { text: r.label }), el("td", { class: "mono", text: r.sent }), el("td", { class: "mono", text: r.rfqs }), el("td", { class: "mono", text: per(r) }), el("td", { class: "mono", text: r.stops }),
-      ]))),
-    ]),
-  ]);
-}
-
-// ---------- the Automatic emails dashboard (Walt 10/12: "make it super intuitive, I don't know what's going on") ----------
-// Four questions, top to bottom: what's going out, where every account is in the sequence, who to call, and is it
-// producing RFQs. The full list of emails is under that.
-
-// Where an account is in the sequence, one stage each, in the order the sequence moves them.
-// The subs read from the rep's own sequence (the builder, 11/9).
-const MAIL_STAGES = [
-  { k: "intro", label: "Intro emails", sub: (q) => `Talked to the buyer: ${q.talked.steps.length} email${q.talked.steps.length === 1 ? "" : "s"}`, tone: "navy" },
-  { k: "cold", label: "Cold intro", sub: (q) => `Email from the front desk: ${q.cold.steps.length} email${q.cold.steps.length === 1 ? "" : "s"}`, tone: "navy" },
-  { k: "call", label: "Call them", sub: () => "Clicked, intro done, or 3 days quiet", tone: "red" },
-  { k: "rhythm", label: "Rhythm", sub: (q) => { const g = Object.values(q.rhythm.gaps); return `Every ${Math.min(...g)} to ${Math.max(...g)} business days, by how much they buy`; }, tone: "ink" },
-  { k: "monthly", label: "Monthly", sub: (q) => `${q.monthly.after} emails, nothing back: every ${q.monthly.gap} business days`, tone: "muted" },
-];
-const MAIL_SIDE = [
-  { k: "you", label: "Waiting on you", sub: "A reply to answer, or a bad address", tone: "red" },
-  { k: "paused", label: "Paused", sub: "Replied, cooling off, or on hold", tone: "amber" },
-  { k: "rfq", label: "RFQ in", sub: "Out of the emails, into quoting", tone: "green" },
-  { k: "out", label: "Off for good", sub: "Said no or stop", tone: "muted" },
-];
+// Where an account is in the sequence (one stage each), the step a sent row was, and a local day: the leads list and the rows read these.
 function mailStageOf(a, held) {
   if (a.rfq) return "rfq";
   const p = a.warmth && a.warmth.paused;
@@ -1667,127 +1635,6 @@ function stepOf(m) {
   return m.status === "sent" ? "Old sequence" : m.label || "";
 }
 const localDay = (iso) => new Date(iso).toLocaleDateString("en-CA");
-
-function mailDashboard(au) {
-  const accounts = (state.board && state.board.accounts) || [];
-  const held = new Set((au.held || []).map((f) => f.leadId));
-  const upcoming = mailRows(au, "upcoming");
-  const today = localDay(new Date().toISOString());
-  const byDay = new Map();
-  for (const m of upcoming) { const d = localDay(m.sortAt); byDay.set(d, (byDay.get(d) || 0) + 1); }
-  const days = [...byDay.keys()].sort();
-  const nextDay = days.find((d) => d > today);
-  const tot = (au.scoreboard || []).reduce((t, r) => ({ sent: t.sent + r.sent, rfqs: t.rfqs + r.rfqs, stops: t.stops + r.stops }), { sent: 0, rfqs: 0, stops: 0 });
-  const tile = (n, label, sub, tone, onclick) => el(onclick ? "button" : "div", { class: `mtile t-${tone}${onclick ? " click" : ""}`, onclick }, [
-    el("b", { class: "mono", text: n }), el("span", { class: "tl", text: label }), sub ? el("span", { class: "sub2", text: sub }) : null,
-  ]);
-  const pickDay = (d) => { state.mailTab = "upcoming"; state.mailDay = state.mailDay === d ? null : d; render(); document.querySelector(".mlist")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
-
-  // 1. At a glance. The daily goal (Walt 10/12): every account in the sequence hears from you, email or phone, at
-  // least every 3 business days: about 50-100 a day.
-  const inSeq = accounts.filter((a) => ["intro", "cold", "call", "rhythm", "monthly"].includes(mailStageOf(a, held)));
-  const touched = inSeq.filter((a) => a.touchedToday).length;
-  const callsLeft = accounts.filter((a) => a.next.kind === "bump" && a.next.tag === "Call" && !a.touchedToday).length;
-  const tiles = el("div", { class: "mtiles" }, [
-    tile(touched, "Touched today", `of ${inSeq.length} in the sequence · ${callsLeft} call${callsLeft === 1 ? "" : "s"} to go`, touched ? "green" : "muted", () => { state.mailStage = "call"; render(); }),
-    tile(byDay.get(today) || 0, "Emails today", (byDay.get(today) || 0) ? "around 8am their time" : "nothing due today", "navy", () => pickDay(today)),
-    tile(nextDay ? byDay.get(nextDay) : 0, nextDay ? `Going out ${dayOf(`${nextDay}T12:00:00`).split(",")[0]}` : "Next run", nextDay ? shortDate(`${nextDay}T12:00:00`) : "", "navy", nextDay ? () => pickDay(nextDay) : null),
-    tile(tot.rfqs, "RFQs from emails", `last 60 days, from ${tot.sent} emails`, "green"),
-    tile(tot.stops, "Asked to stop or slow down", "they're off or paused", tot.stops ? "red" : "muted"),
-  ]);
-
-  // 2. Where everyone is: the sequence, left to right, and the ones off to the side.
-  const counts = {};
-  const members = {};
-  for (const a of accounts) { const k = mailStageOf(a, held); counts[k] = (counts[k] || 0) + 1; (members[k] = members[k] || []).push(a); }
-  const seq = au.sequence || null;
-  const stageCard = (st, arrow) => el("button", { class: `stage s-${st.tone}${state.mailStage === st.k ? " on" : ""}`, onclick: () => { state.mailStage = state.mailStage === st.k ? null : st.k; render(); } }, [
-    el("b", { class: "mono", text: counts[st.k] || 0 }), el("span", { class: "tl", text: st.label }), el("span", { class: "sub2", text: typeof st.sub === "function" ? (seq ? st.sub(seq) : "") : st.sub }),
-    arrow ? el("i", { class: "arrow", "aria-hidden": "true", text: "→" }) : null,
-  ]);
-  const picked = state.mailStage && (members[state.mailStage] || []);
-  const stageList = picked ? el("div", { class: "stagelist" }, [
-    el("div", { class: "head" }, [
-      el("h3", { text: `${[...MAIL_STAGES, ...MAIL_SIDE].find((x) => x.k === state.mailStage).label} · ${picked.length}` }),
-      el("button", { class: "linkbtn small3", text: "Close", onclick: () => { state.mailStage = null; render(); } }),
-    ]),
-    !picked.length ? el("p", { class: "empty", text: "Nobody here right now." }) : el("div", { class: "slrows" }, picked
-      .sort((x, y) => (x.cadence?.dueAt || "z").localeCompare(y.cadence?.dueAt || "z"))
-      .map((a) => el("div", { class: "slrow" }, [
-        el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
-        el("span", { class: "sub2", text: [a.contact.name, a.contact.email].filter(Boolean).join(" · ") }),
-        el("span", { class: "sl-step", text: state.mailStage === "call" || state.mailStage === "you" ? a.next.label
-          : a.cadence ? `${a.cadence.nth} email${a.cadence.nth === 1 ? "" : "s"} ${a.cadence.track === "cold" ? "so far, haven't talked yet" : "since you talked"}` : "" }),
-        el("span", { class: "sub2", text: ["intro", "cold", "rhythm", "monthly", "call"].includes(state.mailStage) && a.cadence?.dueAt ? `next email ${shortDate(a.cadence.dueAt)}` : a.warmth?.paused?.why || "" }),
-      ]))),
-  ]) : null;
-  const flow = el("section", { class: "mcard" }, [
-    el("div", { class: "mhead" }, [el("h2", { text: "Where everyone is" }), el("span", { class: "sub2", text: `${accounts.length} accounts with a line card. Click a box to see who.` })]),
-    el("div", { class: "stages" }, MAIL_STAGES.map((st, i) => stageCard(st, i < MAIL_STAGES.length - 1))),
-    el("div", { class: "stages side" }, MAIL_SIDE.map((st) => stageCard(st, false))),
-    stageList,
-  ]);
-
-  // 3. The next two weeks, a bar a day.
-  const max = Math.max(1, ...byDay.values());
-  const cal = el("section", { class: "mcard" }, [
-    el("div", { class: "mhead" }, [el("h2", { text: "Next two weeks" }), el("span", { class: "sub2", text: state.mailDay ? `Showing ${dayOf(`${state.mailDay}T12:00:00`)} below.` : "Click a day to see who." })]),
-    el("div", { class: "cal" }, days.slice(0, 12).map((d) => el("button", { class: `calday${state.mailDay === d ? " on" : ""}${d === today ? " today" : ""}`, title: `${byDay.get(d)} emails`, onclick: () => pickDay(d) }, [
-      el("span", { class: "mono n", text: byDay.get(d) }),
-      el("span", { class: "bar", style: `height:${Math.max(4, Math.round((byDay.get(d) / max) * 64))}px` }),
-      el("span", { class: "dl", text: d === today ? "Today" : new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: "short" }) }),
-      el("span", { class: "sub2", text: shortDate(`${d}T12:00:00`) }),
-    ]))),
-  ]);
-
-  // 4. Calls the sequence is asking for.
-  // In the board's priority order: clicks, then the intro-done flags, then the longest quiet.
-  const calls = (members.call || []).slice().sort((x, y) => ((x.callAsk && x.callAsk.rank) ?? 999) - ((y.callAsk && y.callAsk.rank) ?? 999));
-  const callCard = el("section", { class: "mcard" }, [
-    el("div", { class: "mhead" }, [el("h2", { text: `Calls to make · ${calls.length}` }), el("span", { class: "sub2", text: "Top first: clicked your email, intro done with nothing back, then quiet 3 business days. Work down; what's left is here tomorrow." })]),
-    !calls.length ? el("p", { class: "empty", text: "None right now." }) : el("div", { class: "slrows" }, calls.slice(0, 12).map((a) => el("div", { class: "slrow" }, [
-      el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
-      el("span", { class: "sub2", text: a.contact.phone || a.contact.email || "" }),
-      el("span", { class: `sl-step${/clicked/.test(a.next.label) ? " hot" : ""}`, text: a.next.label }),
-      el("span", { class: "sub2", text: a.cadence?.dueAt ? `emails keep going, next ${shortDate(a.cadence.dueAt)}` : "" }),
-    ]))),
-    calls.length > 12 ? el("p", { class: "sub2", text: `And ${calls.length - 12} more: click "Call them" above.` }) : null,
-  ]);
-
-  // 5. Added today (10/14): every account whose line card went out today, and where it starts.
-  const added = accounts.filter((a) => a.cardSentAt && localDay(a.cardSentAt) === today).sort((x, y) => x.cardSentAt.localeCompare(y.cardSentAt));
-  const talkedN = added.filter((a) => a.cadence && a.cadence.track === "talked").length;
-  const addedCard = el("section", { class: "mcard" }, [
-    el("div", { class: "mhead" }, [
-      el("h2", { text: `Added today · ${added.length}` }),
-      el("span", { class: "sub2", text: added.length ? `${talkedN} talked to the buyer, ${added.length - talkedN} from the front desk. Tap a result after every call so each one lands on the right track.` : "Line cards you send today show up here." }),
-    ]),
-    !added.length ? el("p", { class: "empty", text: "No new line cards yet today." }) : el("div", { class: "slrows" }, added.map((a) => el("div", { class: "slrow" }, [
-      el("a", { class: "co", href: closeLead(a.leadId), target: "_blank", rel: "noopener", text: a.company }),
-      el("span", { class: "sub2", text: [new Date(a.cardSentAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), a.contact.name].filter(Boolean).join(" · ") }),
-      el("span", { class: `sl-step${a.cadence && a.cadence.track === "talked" ? "" : " cold"}`, text: a.cadence && a.cadence.track === "talked" ? "Talked to the buyer" : "Email from the front desk" }),
-      el("span", { class: a.cadence && a.cadence.eligible ? "sub2" : "sub2 bad", text: a.cadence && a.cadence.eligible && a.cadence.dueAt ? `first email ${dayOf(a.cadence.dueAt).split(",")[0]} ${shortDate(a.cadence.dueAt)}` : `out: ${a.next.label}` }),
-    ]))),
-  ]);
-
-  const bdays = (n) => `${n} business day${n === 1 ? "" : "s"}`;
-  const gapsOf = (steps) => steps.map((st, i) => (i === 0 ? (st.gap === 1 ? "the next morning" : `${bdays(st.gap)} later`) : bdays(st.gap))).join(", then ");
-  const clock = (m) => `${((m / 60 | 0) + 11) % 12 + 1}:${String(m % 60).padStart(2, "0")}${m < 720 ? "am" : "pm"}`;
-  const how = el("details", { class: "mhow" }, [
-    el("summary", { text: seq && au.sequenceCustom ? `How the sequence works (your version: ${seq.name})` : "How the sequence works" }),
-    el("ol", {}, (seq ? [
-      "You reach the buyer, or the front desk gives you their email. The line card goes out.",
-      `Talked to the buyer: ${seq.talked.steps.length} email${seq.talked.steps.length === 1 ? "" : "s"} (${gapsOf(seq.talked.steps)}). Email from the front desk: ${seq.cold.steps.length} email${seq.cold.steps.length === 1 ? "" : "s"} (${gapsOf(seq.cold.steps)}).`,
-      `Then the app flags a call. The emails keep going while it waits: every ${bdays(seq.rhythm.gaps.steady)} for steady buyers, every ${bdays(seq.rhythm.gaps.project)} for project buyers, every ${bdays(seq.rhythm.gaps.occasional)} for occasional ones, every ${bdays(seq.rhythm.gaps.unknown)} when we don't know yet. A shared mailbox or someone you haven't talked to: at least ${bdays(seq.rhythm.slowMinGap)} apart. After ${seq.monthly.after} with nothing back, every ${bdays(seq.monthly.gap)}.`,
-      `Nobody goes more than 3 business days without hearing from you (occasional buyers: 2 weeks). When no email is due, they're on Calls to make. No daily limit on calls; the list is in priority order. Emails go at most ${au.fullCap} a day; extras go the next morning.`,
-      "After you reach someone, pick Next email in the side panel (tomorrow to 2 weeks) if you want a different start for the next round.",
-      "Reach the buyer again and the next round starts from the top.",
-      `Any time: a reply pauses it, a click on your email makes it a call today and holds the emails ${bdays(seq.clickHoldDays)}, an RFQ takes them out for good, and "no" or "stop" ends it.`,
-      `They go out between ${clock(seq.send.from)} and ${clock(seq.send.to)} their time, Mondays ${clock(seq.send.mondayFrom)} to ${clock(seq.send.mondayTo)}. Edit any of this with Edit the sequence, up top.`,
-    ] : ["Loading…"]).map((t) => el("li", { text: t }))),
-  ]);
-  return [tiles, newCardCard(), addedCard, flow, el("div", { class: "mcols" }, [cal, callCard]), how];
-}
 
 // ---------- Tasks (Walt 10/14: "why wouldn't you just create a new tasks section?") ----------
 // Your open Close tasks: today first, then the next 7 days, then the overdue pile, folded.
@@ -2122,129 +1969,451 @@ function paceBox(au) {
 }
 
 
-// ---------- the sequence builder (Walt 11/9: "they should be able to change the text of their emails, frequencies,
-// shit like that. Give us a lot so we can test for what works best") ----------
-// Edits a working copy; typing never re-renders (it would drop the cursor), only adding or removing a row does.
-// Save checks it on the server (the shape, then the no-hedging rule every email gets) and shows each problem under
-// its field. Every email the version sends carries its name, so the scoreboard compares versions.
+// ---------- Campaigns (Walt 11/10: "more of a campaign builder, the UI popular companies use") ----------
+// Several campaigns a rep, one live. The list is a card on the Automatic emails page; Edit opens a two-pane editor
+// in its place, Apollo-style: the steps down the left (wait rows between the emails, day numbers, each step's
+// numbers), the chosen email open on the right as the email itself. Typing never re-renders (it would drop the
+// cursor): selecting, adding, removing and tab switches do.
 const TIER_LABELS = { steady: "Steady buyers (several RFQs a week)", project: "Project buyers", occasional: "Occasional (a few times a year)", unknown: "Don't know yet" };
 const toClock = (m) => `${String(m / 60 | 0).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const fromClock = (v) => { const [h, m] = String(v || "0:0").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
-function seqBuilder(au) {
-  if (!state.seqDraft) state.seqDraft = JSON.parse(JSON.stringify(au.sequence));
-  const q = state.seqDraft;
-  const errs = state.seqErrors || {};
-  const err = (path) => (errs[path] ? el("span", { class: "seqerr", text: errs[path] }) : null);
-  const rerender = () => { state.seqPreview = null; render(); };
-  const num = (get, set, attrs = {}) => el("input", { type: "number", class: "seqnum", min: attrs.min ?? 1, max: attrs.max ?? 30, value: get(), oninput: (e) => set(Number(e.target.value)) });
-  const clockIn = (get, set) => el("input", { type: "time", class: "seqtime", value: toClock(get()), oninput: (e) => set(fromClock(e.target.value)) });
-  const text = (get, set, cls = "seqline") => el("textarea", { class: cls, rows: 2, oninput: (e) => set(e.target.value) }, [get()]);
-  const line1 = (get, set) => el("input", { type: "text", class: "seqtext", value: get(), oninput: (e) => set(e.target.value) });
+const bdaysOf = (n) => `${n} business day${n === 1 ? "" : "s"}`;
+const rhythmRangeOf = (q) => { const g = Object.values(q.rhythm.gaps).map(Number); return `${Math.min(...g)} to ${Math.max(...g)} business days`; };
+const campaignShape = (q) => `${q.talked.steps.length} + ${q.cold.steps.length} emails, then every ${rhythmRangeOf(q)}`;
+const firstWords = (s, n = 70) => { const t = String(s || "").trim(); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, "")}…` : t; };
 
-  const trackBox = (k, title, intro) => {
-    const t = q[k];
-    return el("div", { class: "seqsec" }, [
-      el("h3", { text: title }), el("p", { class: "muted small3", text: intro }),
-      ...t.steps.map((st, i) => el("div", { class: "seqstep" }, [
-        el("div", { class: "seqwhen" }, [
-          el("b", { text: `Email ${i + 1}` }),
-          num(() => st.gap, (v) => { st.gap = v; }), el("span", { class: "sub2", text: i === 0 ? "business days after the line card" : "business days after the last one" }),
-          err(`${k}.steps.${i}.gap`),
-        ]),
-        text(() => st.line, (v) => { st.line = v; }), err(`${k}.steps.${i}.line`),
-        t.steps.length > 1 ? el("button", { class: "linkbtn small3", text: "Remove this email", onclick: () => { t.steps.splice(i, 1); rerender(); } }) : null,
-      ])),
-      t.steps.length < 6 ? el("button", { class: "btn small", text: "Add an email", onclick: () => { t.steps.push({ gap: 5, line: "" }); rerender(); } }) : null,
-      err(`${k}.steps`),
-      el("p", { class: "muted small3 seqafter", text: "After those, the emails keep going at the rhythm below and rotate through these lines:" }),
-      ...t.after.map((l, i) => el("div", { class: "seqstep" }, [
-        text(() => l, (v) => { t.after[i] = v; }), err(`${k}.after.${i}`),
-        t.after.length > 1 ? el("button", { class: "linkbtn small3", text: "Remove this line", onclick: () => { t.after.splice(i, 1); rerender(); } }) : null,
-      ])),
-      t.after.length < 6 ? el("button", { class: "btn small", text: "Add a line", onclick: () => { t.after.push(""); rerender(); } }) : null,
-      err(`${k}.after`),
-    ]);
-  };
+async function loadCampaigns() {
+  try { state.campaigns = await api("/api/campaigns"); } catch (e) { state.campaigns = { campaigns: [], error: e.message }; }
+  render();
+}
+function openCampaign(id) {
+  const c = state.campaigns && state.campaigns.campaigns.find((x) => x.id === id);
+  if (!c) return;
+  state.campaignOpen = id;
+  state.cDraft = JSON.parse(JSON.stringify({ name: c.name, talked: c.talked, cold: c.cold, rhythm: c.rhythm, monthly: c.monthly, clickHoldDays: c.clickHoldDays, wrap: c.wrap, send: c.send }));
+  state.cSel = { track: "talked", kind: "step", i: 0 };
+  state.cErrors = {}; state.cPreview = null; state.cDirty = false; state.cMsg = null;
+  render();
+  window.scrollTo(0, 0);
+}
+// New, or a copy (11/10): the editor opens at once with the name empty; nothing is created until Save.
+function openNew(from) {
+  const cs = state.campaigns;
+  const base = from || (cs && cs.campaigns.find((c) => c.id === "standard"));
+  if (!base) return;
+  state.campaignOpen = "new"; state.cNewFrom = base.name;
+  state.cDraft = JSON.parse(JSON.stringify({ name: "", talked: base.talked, cold: base.cold, rhythm: base.rhythm, monthly: base.monthly, clickHoldDays: base.clickHoldDays, wrap: base.wrap, send: base.send }));
+  state.cSel = { track: "talked", kind: "step", i: 0 };
+  state.cErrors = {}; state.cPreview = null; state.cDirty = true; state.cMsg = null;
+  render();
+  window.scrollTo(0, 0);
+  const n = document.querySelector(".cmptitle .seqtext.name"); if (n) n.focus();
+}
+function closeCampaign() {
+  if (state.cDirty && !confirm("Leave without saving? Your changes to this sequence go.")) return;
+  state.campaignOpen = null; state.cDraft = null; state.cErrors = {}; state.cPreview = null; state.cDirty = false; state.cMsg = null;
+  render();
+}
 
-  const run = async (save) => {
-    state.mailBusy = true; state.seqErrors = {}; render();
-    try {
-      const r = await api("/api/automations/sequence", { sequence: q, dry_run: !save });
-      if (!r.ok) {
-        state.seqErrors = Object.fromEntries(r.errors.map((x) => [x.path, x.problem]));
-        state.seqPreview = null;
-        state.seqMsg = `${r.errors.length} thing${r.errors.length === 1 ? "" : "s"} to fix, marked below.`;
-      } else if (save) {
-        state.seqOpen = false; state.seqDraft = null; state.seqPreview = null; state.seqMsg = null;
-        state.paceMsg = `Saved: ${q.name}. ${r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves. ` : ""}Anything already scheduled for today goes as is; the new sequence starts with the next plan.`;
-      } else {
-        state.seqPreview = r; state.seqMsg = null;
-      }
-    } catch (e) { alert(e.message); }
-    state.mailBusy = false;
-    if (save) await reloadAutos(); else render();
-  };
-  const reset = async () => {
-    if (!confirm("Back to the standard sequence? Your version stays in the scoreboard under its name, but nothing new sends from it.")) return;
+// The list.
+function campaignsCard() {
+  const cs = state.campaigns;
+  if (cs === undefined) { state.campaigns = null; loadCampaigns(); }
+  const list = (cs && cs.campaigns) || [];
+  const busy = () => state.mailBusy;
+  const after = async () => { state.mailBusy = false; await loadCampaigns(); reloadAutos(); };
+  const act = async (path, msg) => {
+    if (msg && !confirm(msg)) return;
     state.mailBusy = true; render();
-    try { await api("/api/automations/sequence/reset", {}); state.seqOpen = false; state.seqDraft = null; state.seqPreview = null; state.paceMsg = "Back to the standard sequence."; } catch (e) { alert(e.message); }
-    state.mailBusy = false; await reloadAutos();
+    try { await api(path, {}); } catch (e) { alert(e.message); }
+    await after();
   };
-  const cancel = () => { state.seqOpen = false; state.seqDraft = null; state.seqErrors = {}; state.seqPreview = null; state.seqMsg = null; render(); };
-
-  const pv = state.seqPreview;
-  return el("div", { class: "seqbox" }, [
-    el("div", { class: "seqhead" }, [
-      el("h2", { text: "Edit the sequence" }),
-      el("p", { class: "muted small3", text: "Everything here is yours to change: how many emails, how far apart, and what each one says. Give the version a name; every email it sends carries it, so the scoreboard shows which version brings in RFQs. Fill-ins: {name} is their first name, {url} is the link, and {when} in the first talked email becomes \"yesterday\" or \"the other day\". The rest of the email (the meme, the attached PDF, your name) stays." }),
+  const num = (n, label) => el("span", {}, [el("b", { class: "mono", text: n }), el("span", { class: "sub2", text: label })]);
+  return el("section", { class: "mcard cmpcard" }, [
+    el("div", { class: "mhead" }, [
+      el("h2", { text: "Sequences" }),
+      el("span", { class: "sub2", text: "What goes out after the line card. One is live; the others wait their turn, and the numbers tell you which works." }),
+      el("div", { class: "acts grow" }, [el("button", { class: "btn small primary", disabled: busy(), text: "New sequence", onclick: () => openNew(null) })]),
     ]),
-    el("div", { class: "seqsec seqrow" }, [el("label", { text: "Version name" }), line1(() => q.name, (v) => { q.name = v; }), err("name")]),
-    trackBox("talked", "Talked to the buyer", "You reached them and the line card went out. Then:"),
-    trackBox("cold", "Email from the front desk", "The front desk gave you their email, or you asked for it instead of leaving a voicemail. The line card went out. Then:"),
-    el("div", { class: "seqsec" }, [
-      el("h3", { text: "Then the rhythm" }), el("p", { class: "muted small3", text: "Once the intro's done, how often an email goes, by how much they buy (business days between emails):" }),
-      ...Object.keys(TIER_LABELS).map((tier) => el("div", { class: "seqrow" }, [el("label", { text: TIER_LABELS[tier] }), num(() => q.rhythm.gaps[tier], (v) => { q.rhythm.gaps[tier] = v; }), err(`rhythm.gaps.${tier}`)])),
-      el("div", { class: "seqrow" }, [el("label", { text: "A shared mailbox (info@, estimating@), or someone you've never talked to: at least" }), num(() => q.rhythm.slowMinGap, (v) => { q.rhythm.slowMinGap = v; }), el("span", { class: "sub2", text: "business days apart" }), err("rhythm.slowMinGap")]),
-    ]),
-    el("div", { class: "seqsec" }, [
-      el("h3", { text: "Going quiet" }),
-      el("div", { class: "seqrow" }, [el("label", { text: "After" }), num(() => q.monthly.after, (v) => { q.monthly.after = v; }, { max: 20 }), el("label", { text: "emails since you last talked with nothing back, one every" }), num(() => q.monthly.gap, (v) => { q.monthly.gap = v; }, { min: 5, max: 60 }), el("span", { class: "sub2", text: "business days" }), err("monthly.after"), err("monthly.gap")]),
-    ]),
-    el("div", { class: "seqsec" }, [
-      el("h3", { text: "A click" }),
-      el("div", { class: "seqrow" }, [el("label", { text: "Someone clicks the line card or the site: it's a call today, and no email for" }), num(() => q.clickHoldDays, (v) => { q.clickHoldDays = v; }, { min: 0, max: 10 }), el("span", { class: "sub2", text: "business days" }), err("clickHoldDays")]),
-    ]),
-    el("div", { class: "seqsec" }, [
-      el("h3", { text: "Around the line" }), el("p", { class: "muted small3", text: "The same in every email." }),
-      el("div", { class: "seqrow" }, [el("label", { text: "Greeting" }), line1(() => q.wrap.greeting, (v) => { q.wrap.greeting = v; }), err("wrap.greeting")]),
-      el("div", { class: "seqrow" }, [el("label", { text: "Line card line" }), line1(() => q.wrap.cardLine, (v) => { q.wrap.cardLine = v; }), err("wrap.cardLine")]),
-      el("div", { class: "seqrow" }, [el("label", { text: "Site line (front-desk track only)" }), line1(() => q.wrap.siteLine, (v) => { q.wrap.siteLine = v; }), err("wrap.siteLine")]),
-      el("div", { class: "seqrow" }, [el("label", { text: "Sign-off (your name goes under it)" }), line1(() => q.wrap.signoff, (v) => { q.wrap.signoff = v; }), err("wrap.signoff")]),
-    ]),
-    el("div", { class: "seqsec" }, [
-      el("h3", { text: "When they go out" }), el("p", { class: "muted small3", text: "Their time. A random minute in the window, so a wave isn't a block." }),
-      el("div", { class: "seqrow" }, [el("label", { text: "Tuesday to Friday" }), clockIn(() => q.send.from, (v) => { q.send.from = v; }), el("span", { class: "sub2", text: "to" }), clockIn(() => q.send.to, (v) => { q.send.to = v; })]),
-      el("div", { class: "seqrow" }, [el("label", { text: "Monday" }), clockIn(() => q.send.mondayFrom, (v) => { q.send.mondayFrom = v; }), el("span", { class: "sub2", text: "to" }), clockIn(() => q.send.mondayTo, (v) => { q.send.mondayTo = v; }), err("send")]),
-    ]),
-    el("p", { class: "muted small3", text: "Saving changes the timing from the next plan. Anything already scheduled for today goes as is." }),
-    state.seqMsg ? el("p", { class: "seqerr big", text: state.seqMsg }) : null,
-    el("div", { class: "acts seqacts" }, [
-      el("button", { class: "btn small", disabled: state.mailBusy, text: "Preview the emails", onclick: () => run(false) }),
-      el("button", { class: "btn small primary", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Save", onclick: () => run(true) }),
-      au.sequenceCustom ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Back to the standard sequence", onclick: reset }) : null,
-      el("button", { class: "linkbtn small3", text: "Cancel", onclick: cancel }),
-    ]),
-    pv ? el("div", { class: "seqpreview" }, [
-      el("p", {}, [el("strong", { text: "Looks good. " }), pv.moved ? `${pv.moved} account${pv.moved === 1 ? "'s" : "s'"} next email date moves if you save.` : "Nobody's next email date moves."]),
-      el("p", { class: "muted small3", text: "What each one reads like, for a buyer called Sam, on a Wednesday:" }),
-      ...pv.previews.map((x) => el("details", { class: "seqsample" }, [
-        el("summary", { text: x.gap ? `${x.label} · ${x.gap} business day${x.gap === 1 ? "" : "s"} after the last one` : x.label }),
-        el("pre", { text: x.body }),
-      ])),
-    ]) : null,
+    !cs ? el("p", { class: "loading", text: "Loading…" })
+      : cs.error ? el("p", { class: "seqerr", text: cs.error })
+        : el("div", { class: "cmprows" }, list.map((c) => el("div", { class: `cmprow${c.live ? " live" : ""}`, role: "button", tabindex: "0", onclick: () => openCampaign(c.id), onkeydown: (e) => { if (e.key === "Enter") openCampaign(c.id); } }, [
+          el("div", { class: "cmpname" }, [
+            el("b", { text: c.name }),
+            c.live ? el("span", { class: "pill live", text: "Live" }) : c.readOnly ? el("span", { class: "pill", text: "Built in" }) : null,
+          ]),
+          el("span", { class: "sub2 wrap", text: campaignShape(c) }),
+          el("div", { class: "cmpnums", title: "The last 60 days" }, [num(c.stats.sent, "emails"), num(c.stats.rfqs, "RFQs"), num(c.stats.stops, "stops")]),
+          el("div", { class: "acts" }, [
+            !c.live ? el("button", { class: "btn small", disabled: busy(), text: "Set live", onclick: (e) => { e.stopPropagation(); act(`/api/campaigns/${c.id}/live`, `From the next plan, the emails follow "${c.name}". Today's scheduled emails go as they are.`); } }) : null,
+            el("span", { class: "chev", "aria-hidden": "true" }, [svgEl("svg", { viewBox: "0 0 16 16", width: 14, height: 14 }, [svgEl("path", { d: "M6 3.5 L10.5 8 L6 12.5", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" })])]),
+          ]),
+        ]))),
   ]);
 }
 
+// The editor.
+const CMP_PATHS = { timing: ["rhythm", "monthly", "clickHoldDays"], wrap: ["wrap", "send"] };
+function campaignEditor() {
+  const cs = state.campaigns;
+  const isNew = state.campaignOpen === "new";
+  const c = isNew ? { id: "new", name: "", live: false, readOnly: false, stats: { steps: {} } } : cs && cs.campaigns.find((x) => x.id === state.campaignOpen);
+  if (!c || !state.cDraft) { state.campaignOpen = null; return null; }
+  const q = state.cDraft, sel = state.cSel, errs = state.cErrors || {}, pv = state.cPreview, ro = !!c.readOnly;
+  const me = state.me && state.me.rep ? state.me.rep.name : "Your name";
+  const err = (path) => (errs[path] ? el("p", { class: "seqerr", text: errs[path] }) : null);
+  const errsIn = (paths) => Object.keys(errs).filter((k) => paths.some((p) => k === p || k.startsWith(`${p}.`))).length;
+  const dirty = () => {
+    if (state.cDirty) return;
+    state.cDirty = true;
+    const b = document.querySelector(".cmpsave"); if (b) b.classList.add("primary");
+  };
+  const select = (s) => { state.cSel = s; render(); };
+  const rerender = () => { state.cPreview = null; render(); };
+  const track = sel.track || "talked";
+  const t = q[track];
+  const stats = c.stats || { steps: {} };
+  const statOf = (key) => { const s = stats.steps && stats.steps[key]; return s && s.sent ? `${s.sent} sent · ${s.rfqs} RFQ${s.rfqs === 1 ? "" : "s"}` : null; };
+  const dayOfStep = (i) => t.steps.slice(0, i + 1).reduce((n, s) => n + (Number(s.gap) || 0), 0);
+  const sample = (tr, nth) => pv && pv.previews.find((x) => x.track === tr && x.nth === nth);
+  // The fixed parts read for a sample buyer, so the card looks like the email and not like a form.
+  const fill = (s) => String(s || "").replace(/\{name\}/g, "Sam").replace(/\{when\}/g, "yesterday").replace(/\{url\}/g, "westgatesupply.com/…");
+  const rowsFor = (v) => Math.max(2, Math.ceil((String(v).length + 20) / 95));
+  const numIn = (get, set, o = {}) => el("input", { type: "number", class: "seqnum", min: o.min ?? 1, max: o.max ?? 30, value: get(), disabled: ro, ...(o.attrs || {}), oninput: (e) => set(Number(e.target.value)) });
+  const clockIn = (get, set) => el("input", { type: "time", class: "seqtime", value: toClock(get()), disabled: ro, oninput: (e) => set(fromClock(e.target.value)) });
+  const textIn = (get, set, placeholder) => el("textarea", { class: "seqline", rows: rowsFor(get()), placeholder, readonly: ro, oninput: (e) => { set(e.target.value); e.target.rows = rowsFor(e.target.value); } }, [get()]);
+  const lineIn = (get, set, cls) => el("input", { type: "text", class: cls || "seqtext", value: get(), readonly: ro, oninput: (e) => set(e.target.value) });
+  // The day numbers and the left row's words follow the inputs without a re-render.
+  const syncDays = () => document.querySelectorAll("[data-day]").forEach((n) => { n.textContent = `Day ${dayOfStep(Number(n.dataset.day))}`; });
+  const syncWait = (i, v) => document.querySelectorAll(`[data-wait="${i}"]`).forEach((n) => { if (Number(n.value) !== v) n.value = v; });
+  const syncWords = (key, v) => document.querySelectorAll(`[data-words="${key}"]`).forEach((n) => { n.textContent = firstWords(v) || "Empty: write it on the right"; });
+  const setGap = (i, v) => { t.steps[i].gap = v; dirty(); syncDays(); syncWait(i, v); };
+
+  // ---- the left pane: the steps ----
+  const stepRow = (o) => el("button", { class: `cmpstep ${o.cls || ""}${o.on ? " on" : ""}${o.bad ? " bad" : ""}`, disabled: !o.onclick, onclick: o.onclick }, [
+    el("i", { class: "dot" }),
+    el("div", { class: "cmpstep-b" }, [
+      el("span", { class: "cmpstep-t" }, [el("span", { class: "label", text: o.label }), o.day != null ? el("span", { class: "day", "data-day": o.day, text: `Day ${dayOfStep(o.day)}` }) : null]),
+      o.sub != null ? el("span", { class: "sub2", "data-words": o.words || null, text: o.sub }) : null,
+      o.stat ? el("span", { class: "sub2 stat", text: o.stat }) : null,
+    ]),
+  ]);
+  const waitRow = (i) => el("div", { class: "cmpwait" }, [
+    el("i", { class: "tick" }),
+    el("span", {}, ["wait ", numIn(() => t.steps[i].gap, (v) => setGap(i, v), { attrs: { "data-wait": i } }), ` business day${Number(t.steps[i].gap) === 1 ? "" : "s"}`]),
+    err(`${track}.steps.${i}.gap`),
+  ]);
+  const trackTabs = el("div", { class: "tabs cmptabs" }, [["talked", "Talked to the buyer"], ["cold", "From the front desk"]].map(([k, label]) => {
+    const n = errsIn([k]);
+    return el("button", { class: `tab${track === k ? " on" : ""}${n ? " alert" : ""}`, onclick: () => select({ track: k, kind: "step", i: 0 }) }, [label, n ? el("span", { class: "c mono", text: n }) : null]);
+  }));
+  const left = el("div", { class: "cmpleft" }, [
+    trackTabs,
+    el("div", { class: "cmplist" }, [
+      stepRow({ label: "Line card sent", cls: "start", sub: track === "talked" ? "You reached the buyer and the card went out." : "The front desk gave you the email; the card went out." }),
+      ...t.steps.flatMap((st, i) => [
+        waitRow(i),
+        stepRow({ label: `Email ${i + 1}`, day: i, sub: firstWords(st.line) || "Empty: write it on the right", words: `${track}:${i}`, stat: statOf(`${track}:${i}`), on: sel.kind === "step" && sel.i === i, bad: !!(errs[`${track}.steps.${i}.line`] || errs[`${track}.steps.${i}.gap`]), onclick: () => select({ track, kind: "step", i }) }),
+      ]),
+      !ro && t.steps.length < 6 ? el("button", { class: "cmpadd", text: "+ Add an email", onclick: () => { t.steps.push({ gap: 5, line: "" }); dirty(); state.cSel = { track, kind: "step", i: t.steps.length - 1 }; rerender(); } }) : null,
+      err(`${track}.steps`),
+      stepRow({ label: "Then the rhythm", cls: "end", sub: `Every ${rhythmRangeOf(q)}, by how much they buy. Round and round:` }),
+      ...t.after.map((l, i) => stepRow({ label: `Line ${i + 1}`, cls: "after", sub: firstWords(l) || "Empty: write it on the right", words: `${track}:after:${i}`, stat: statOf(`${track}:after:${i}`), on: sel.kind === "after" && sel.i === i, bad: !!errs[`${track}.after.${i}`], onclick: () => select({ track, kind: "after", i }) })),
+      !ro && t.after.length < 6 ? el("button", { class: "cmpadd", text: "+ Add a line", onclick: () => { t.after.push(""); dirty(); state.cSel = { track, kind: "after", i: t.after.length - 1 }; rerender(); } }) : null,
+      err(`${track}.after`),
+    ]),
+    el("div", { class: "cmpsettings" }, [
+      el("span", { class: "label", text: "Both tracks" }),
+      stepRow({ label: "Timing", cls: "gear", sub: "The rhythm, shared mailboxes, going quiet, a click", on: sel.kind === "timing", bad: errsIn(CMP_PATHS.timing) > 0, onclick: () => select({ track, kind: "timing" }) }),
+      stepRow({ label: "Every email", cls: "gear", sub: "Greeting, line card line, sign-off, when they go out", on: sel.kind === "wrap", bad: errsIn(CMP_PATHS.wrap) > 0, onclick: () => select({ track, kind: "wrap" }) }),
+    ]),
+  ]);
+
+  // ---- the right pane: the chosen thing ----
+  const insertAt = (ta, s) => { const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a; ta.setRangeText(s, a, b, "end"); ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); };
+  const chips = (ta, names) => (ro ? null : el("div", { class: "cmpchips" }, [
+    el("span", { class: "sub2", text: "Fill-ins:" }),
+    ...names.map(([n, why]) => el("button", { class: "chip3", type: "button", title: why, text: `{${n}}`, onclick: () => insertAt(ta, `{${n}}`) })),
+  ]));
+  const mailFrame = (ta, opts) => el("div", { class: "seqcard" }, [
+    el("div", { class: "seqmail" }, [
+      el("p", { class: "fixed", text: fill(q.wrap.greeting) }),
+      chips(ta, opts.chips),
+      ta, opts.err,
+      el("p", { class: "fixed", text: fill(q.wrap.cardLine) }),
+      track === "cold" ? el("p", { class: "fixed", text: fill(q.wrap.siteLine) }) : null,
+      el("p", { class: "fixed sig", text: `${q.wrap.signoff}\n${me}` }),
+      el("p", { class: "fixed meme", text: "+ a meme they haven't had" }),
+    ]),
+    opts.out ? el("div", { class: "seqout" }, [el("span", { class: "label", text: "As it goes out, for Sam, on a Wednesday" }), el("pre", { text: opts.out.body })]) : null,
+  ]);
+  const move = (arr, i, j) => { const [x] = arr.splice(i, 1); arr.splice(j, 0, x); dirty(); };
+  const stepPane = () => {
+    const i = sel.i, st = t.steps[i];
+    if (!st) return null;
+    const ta = textIn(() => st.line, (v) => { st.line = v; dirty(); syncWords(`${track}:${i}`, v); }, "What this email says. End with the ask.");
+    const names = [["name", "Their first name"], ["url", "The link"], ...(track === "talked" && i === 0 ? [["when", "\"yesterday\" or \"the other day\", from when you talked"]] : [])];
+    return el("div", { class: "cmppane" }, [
+      el("div", { class: "cmppane-head" }, [
+        el("h3", { text: `Email ${i + 1}` }),
+        el("span", { class: "sub2", "data-day": i, text: `Day ${dayOfStep(i)}` }),
+        el("span", { class: "sub2", text: i === 0 ? "The first email after the line card." : `After email ${i}.` }),
+        statOf(`${track}:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`${track}:${i}`) }) : null,
+      ]),
+      mailFrame(ta, { chips: names, err: err(`${track}.steps.${i}.line`), out: sample(track, i) }),
+      !ro ? el("div", { class: "cmptools" }, [
+        el("span", {}, ["Wait ", numIn(() => st.gap, (v) => setGap(i, v), { attrs: { "data-wait": i } }), " business days before this one"]), err(`${track}.steps.${i}.gap`),
+        el("span", { class: "grow" }),
+        i > 0 ? el("button", { class: "linkbtn", text: "Move up", onclick: () => { move(t.steps, i, i - 1); select({ track, kind: "step", i: i - 1 }); } }) : null,
+        i < t.steps.length - 1 ? el("button", { class: "linkbtn", text: "Move down", onclick: () => { move(t.steps, i, i + 1); select({ track, kind: "step", i: i + 1 }); } }) : null,
+        t.steps.length > 1 ? el("button", { class: "linkbtn", text: "Remove this email", onclick: () => { t.steps.splice(i, 1); dirty(); state.cSel = { track, kind: "step", i: Math.max(0, i - 1) }; rerender(); } }) : null,
+      ]) : null,
+    ]);
+  };
+  const afterPane = () => {
+    const i = sel.i;
+    if (t.after[i] === undefined) return null;
+    const ta = textIn(() => t.after[i], (v) => { t.after[i] = v; dirty(); syncWords(`${track}:after:${i}`, v); }, "A line for the rhythm. End with the ask.");
+    const n = t.after.length;
+    return el("div", { class: "cmppane" }, [
+      el("div", { class: "cmppane-head" }, [
+        el("h3", { text: `Rhythm line ${i + 1}` }),
+        el("span", { class: "sub2", text: n === 1 ? "Every rhythm email carries this line." : `Rhythm email ${i + 1}, then every ${n === 2 ? "other" : `${n}th`} one after that.` }),
+        statOf(`${track}:after:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`${track}:after:${i}`) }) : null,
+      ]),
+      mailFrame(ta, { chips: [["name", "Their first name"], ["url", "The link"]], err: err(`${track}.after.${i}`), out: sample(track, t.steps.length + i) }),
+      !ro ? el("div", { class: "cmptools" }, [
+        el("span", { class: "sub2", text: `The rhythm: every ${rhythmRangeOf(q)} by how much they buy. Change that under Timing.` }),
+        el("span", { class: "grow" }),
+        i > 0 ? el("button", { class: "linkbtn", text: "Move up", onclick: () => { move(t.after, i, i - 1); select({ track, kind: "after", i: i - 1 }); } }) : null,
+        i < n - 1 ? el("button", { class: "linkbtn", text: "Move down", onclick: () => { move(t.after, i, i + 1); select({ track, kind: "after", i: i + 1 }); } }) : null,
+        n > 1 ? el("button", { class: "linkbtn", text: "Remove this line", onclick: () => { t.after.splice(i, 1); dirty(); state.cSel = { track, kind: "after", i: Math.max(0, i - 1) }; rerender(); } }) : null,
+      ]) : null,
+    ]);
+  };
+  const setting = (title, sub, kids) => el("div", { class: "seqset" }, [
+    el("div", { class: "seqset-l" }, [el("b", { text: title }), el("span", { class: "sub2 wrap", text: sub })]),
+    el("div", { class: "seqset-r" }, kids),
+  ]);
+  const timingPane = () => el("div", { class: "cmppane" }, [
+    el("div", { class: "cmppane-head" }, [el("h3", { text: "Timing" }), el("span", { class: "sub2", text: "The same for both tracks. Business days, so weekends never count." })]),
+    el("div", { class: "seqsets" }, [
+      setting("The rhythm", "Once the intro's done: how often an email goes, by how much they buy.", Object.keys(TIER_LABELS).map((tier) => el("div", { class: "seqrow" }, [
+        el("span", { class: "seqrow-l", text: TIER_LABELS[tier] }), el("span", { text: "every" }), numIn(() => q.rhythm.gaps[tier], (v) => { q.rhythm.gaps[tier] = v; dirty(); }), el("span", { text: "business days" }), err(`rhythm.gaps.${tier}`),
+      ]))),
+      setting("Shared mailboxes", "info@, estimating@, or someone you've never talked to.", [el("div", { class: "seqrow" }, [
+        el("span", { text: "At least" }), numIn(() => q.rhythm.slowMinGap, (v) => { q.rhythm.slowMinGap = v; dirty(); }), el("span", { text: "business days apart" }), err("rhythm.slowMinGap"),
+      ])]),
+      setting("Going quiet", "Nothing back since you last talked: the emails slow right down.", [el("div", { class: "seqrow" }, [
+        el("span", { text: "After" }), numIn(() => q.monthly.after, (v) => { q.monthly.after = v; dirty(); }, { max: 20 }), el("span", { text: "emails, one every" }), numIn(() => q.monthly.gap, (v) => { q.monthly.gap = v; dirty(); }, { min: 5, max: 60 }), el("span", { text: "business days" }), err("monthly.after"), err("monthly.gap"),
+      ])]),
+      setting("A click", "Someone clicks the line card or the site. It's a call today, and the emails wait.", [el("div", { class: "seqrow" }, [
+        el("span", { text: "No email for" }), numIn(() => q.clickHoldDays, (v) => { q.clickHoldDays = v; dirty(); }, { min: 0, max: 10 }), el("span", { text: "business days" }), err("clickHoldDays"),
+      ])]),
+    ]),
+  ]);
+  const wrapPane = () => {
+    const sampleEl = el("div", { class: "seqmail sample" });
+    const draw = () => sampleEl.replaceChildren(
+      el("p", { class: "fixed", text: fill(q.wrap.greeting) }),
+      el("p", { text: fill((q.talked.steps[0] && q.talked.steps[0].line) || "The line this email carries.") }),
+      el("p", { class: "fixed", text: fill(q.wrap.cardLine) }),
+      el("p", { class: "fixed", text: `${fill(q.wrap.siteLine)} (front-desk track only)` }),
+      el("p", { class: "fixed sig", text: `${q.wrap.signoff}\n${me}` }),
+      el("p", { class: "fixed meme", text: "+ a meme they haven't had" }),
+    );
+    draw();
+    const field = (label, sub, get, set, path) => el("div", { class: "seqfield" }, [
+      el("label", { class: "label", text: label }), lineIn(get, (v) => { set(v); dirty(); draw(); }), sub ? el("span", { class: "sub2 wrap", text: sub }) : null, err(path),
+    ]);
+    return el("div", { class: "cmppane" }, [
+      el("div", { class: "cmppane-head" }, [el("h3", { text: "Every email" }), el("span", { class: "sub2", text: "The parts around the line, and when they go out." })]),
+      el("div", { class: "seqwrap" }, [
+        el("div", { class: "seqfields" }, [
+          field("Greeting", "{name} is their first name.", () => q.wrap.greeting, (v) => { q.wrap.greeting = v; }, "wrap.greeting"),
+          field("Line card line", "{url} is the link. The PDF rides along every time.", () => q.wrap.cardLine, (v) => { q.wrap.cardLine = v; }, "wrap.cardLine"),
+          field("Site line", "Front-desk track only: a click tells us the address works.", () => q.wrap.siteLine, (v) => { q.wrap.siteLine = v; }, "wrap.siteLine"),
+          field("Sign-off", "Your name goes under it.", () => q.wrap.signoff, (v) => { q.wrap.signoff = v; }, "wrap.signoff"),
+          el("div", { class: "seqfield" }, [
+            el("label", { class: "label", text: "When they go out" }),
+            el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Tuesday to Friday" }), clockIn(() => q.send.from, (v) => { q.send.from = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.to, (v) => { q.send.to = v; dirty(); })]),
+            el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Monday" }), clockIn(() => q.send.mondayFrom, (v) => { q.send.mondayFrom = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.mondayTo, (v) => { q.send.mondayTo = v; dirty(); }), err("send")]),
+            el("span", { class: "sub2 wrap", text: "Their time. A random minute in the window, so a wave isn't a block." }),
+          ]),
+        ]),
+        el("div", { class: "seqpaper" }, [el("span", { class: "label", text: "What every email looks like" }), sampleEl]),
+      ]),
+    ]);
+  };
+  const right = el("div", { class: "cmpright" }, [sel.kind === "after" ? afterPane() : sel.kind === "timing" ? timingPane() : sel.kind === "wrap" ? wrapPane() : stepPane()]);
+
+  // ---- save, preview, the top bar ----
+  const selFor = (path) => {
+    const m = /^(talked|cold)\.(steps|after)\.(\d+)/.exec(path);
+    if (m) return { track: m[1], kind: m[2] === "steps" ? "step" : "after", i: Number(m[3]) };
+    if (/^(talked|cold)\./.test(path)) return { track: path.split(".")[0], kind: "step", i: 0 };
+    if (CMP_PATHS.timing.some((p) => path.startsWith(p))) return { track, kind: "timing" };
+    if (CMP_PATHS.wrap.some((p) => path.startsWith(p))) return { track, kind: "wrap" };
+    return null;
+  };
+  const run = async (save) => {
+    state.mailBusy = true; state.cErrors = {}; render();
+    try {
+      const r = isNew ? await api(save ? "/api/campaigns" : "/api/campaigns/preview", { campaign: q }) : await api(`/api/campaigns/${c.id}`, { campaign: q, dry_run: !save });
+      if (!r.ok) {
+        state.cErrors = Object.fromEntries(r.errors.map((x) => [x.path, x.problem]));
+        state.cPreview = null;
+        state.cMsg = { bad: true, text: `${r.errors.length} thing${r.errors.length === 1 ? "" : "s"} to fix, marked on the steps and under the fields.` };
+        const first = r.errors.map((x) => selFor(x.path)).find(Boolean);
+        if (first) state.cSel = first;
+      } else if (save && isNew) {
+        await loadCampaigns();
+        openCampaign(r.campaign.id);
+        state.cMsg = { text: "Saved. Set it live from the Sequences list when it's ready." };
+        state.mailBusy = false;
+        render();
+        return;
+      } else if (save) {
+        state.cDirty = false; state.cPreview = null;
+        state.cMsg = { text: `Saved. ${c.live ? (r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves. ` : "") + "Anything already scheduled for today goes as is; the new timing starts with the next plan." : "Set it live from the Sequences list when it's ready."}` };
+        await loadCampaigns();
+        if (c.live) reloadAutos();
+      } else {
+        state.cPreview = r;
+        state.cMsg = { text: `${r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves if you save. ` : c.live ? "Nobody's next email date moves. " : ""}Each email shows how it reads for a buyer called Sam.` };
+      }
+    } catch (e) { alert(e.message); }
+    state.mailBusy = false;
+    render();
+  };
+  const top = el("div", { class: "cmptop" }, [
+    el("button", { class: "linkbtn back", text: "← Sequences", onclick: closeCampaign }),
+    el("div", { class: "cmptitle" }, [
+      ro ? el("h2", { text: q.name }) : el("input", { type: "text", class: "seqtext name", value: q.name, placeholder: "Name this sequence", oninput: (e) => { q.name = e.target.value; dirty(); } }),
+      el("span", { class: `pill${c.live ? " live" : ""}`, text: c.live ? "Live" : ro ? "Built in" : isNew ? `New · a copy of ${state.cNewFrom}` : "Not live" }),
+      err("name"),
+    ]),
+    el("div", { class: "acts" }, [
+      !isNew ? el("button", { class: "linkbtn", text: "Duplicate", onclick: () => { if (!state.cDirty || confirm("Leave without saving? Your changes to this sequence go.")) { state.cDirty = false; openNew(c); } } }) : null,
+      !ro && !c.live && !isNew ? el("button", { class: "linkbtn", text: "Delete", onclick: async () => {
+        if (!confirm(`Delete "${c.name}"? Its numbers stay in the scoreboard; nothing new sends from it.`)) return;
+        try { await api(`/api/campaigns/${c.id}/delete`, {}); state.cDirty = false; closeCampaign(); await loadCampaigns(); } catch (e) { alert(e.message); }
+      } }) : null,
+      ro ? el("span", { class: "sub2", text: "Built in: duplicate it to make your own." }) : el("button", { class: "linkbtn", text: "Cancel", onclick: closeCampaign }),
+      !ro ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Preview the emails", onclick: () => run(false) }) : el("button", { class: "btn small", text: "Back", onclick: closeCampaign }),
+      !ro ? el("button", { class: `btn small cmpsave${state.cDirty ? " primary" : ""}`, disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Save", onclick: () => run(true) }) : null,
+    ]),
+  ]);
+  const chip = (k, v) => el("div", { class: "seqchip" }, [el("span", { class: "label", text: k }), el("b", { text: v })]);
+  const shape = (tr) => `${tr.steps.length} email${tr.steps.length === 1 ? "" : "s"} over ${bdaysOf(tr.steps.reduce((n, s) => n + (Number(s.gap) || 0), 0))}`;
+  return el("section", { class: "cmpedit" }, [
+    top,
+    el("div", { class: "seqsum" }, [
+      chip("Talked to the buyer", shape(q.talked)), chip("From the front desk", shape(q.cold)),
+      chip("Then the rhythm", `every ${rhythmRangeOf(q)}`), chip("Going quiet", `after ${q.monthly.after}, one every ${q.monthly.gap}`),
+    ]),
+    state.cMsg ? el("p", { class: `seqnote${state.cMsg.bad ? " bad" : " good"}`, text: state.cMsg.text }) : null,
+    el("div", { class: "cmpwrap" }, [left, right]),
+  ]);
+}
+
+// ---------- the sequence over time (Walt 11/10: "a line graph with the good data points") ----------
+// One chart in place of the leads list: by week, emails sent, the RFQs they brought in, replies, asked to stop.
+// Two panels on one hover, because the sent line is ten times the others and would flatten them on one scale:
+// emails sent on top, what came back underneath. Hand-drawn SVG: 2px lines, 8px dots with a white ring, a
+// crosshair that snaps to the week, one tooltip for every series, a legend that doubles as the toggle, and a
+// table under it for anyone who'd rather read.
+const GRAPH_SERIES = [
+  ["sent", "Emails sent", "sent"],
+  ["rfqs", "RFQs from emails", "rfqs"],
+  ["stops", "Asked to stop", "stops"],
+  ["replies", "Replies", "replies"],
+];
+const svgEl = (tag, attrs = {}, kids = []) => {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
+  for (const c of kids) if (c) n.append(c);
+  return n;
+};
+const niceCeil = (v) => { if (v <= 4) return 4; const p = 10 ** Math.floor(Math.log10(v)); const f = v / p; const m = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10; return m * p; };
+const weekLabel = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+
+function graphCard(au) {
+  const weeks = au.series || [];
+  state.graphOff = state.graphOff || {};
+  const totals = Object.fromEntries(GRAPH_SERIES.map(([k]) => [k, weeks.reduce((n, w) => n + (w[k] || 0), 0)]));
+  const W = 800, L = 34, R = 40, T = 12, B = 26;
+  const x = (i) => L + (weeks.length > 1 ? (i / (weeks.length - 1)) * (W - L - R) : (W - L - R) / 2);
+
+  // One panel: its own scale, the lines for its series, end labels that don't collide, its own crosshair.
+  const panel = (keys, H, withDates) => {
+    const on = GRAPH_SERIES.filter(([k]) => keys.includes(k) && !state.graphOff[k]);
+    const top = niceCeil(Math.max(1, ...weeks.flatMap((w) => on.map(([k]) => w[k] || 0))));
+    const y = (v) => T + (1 - v / top) * (H - T - (withDates ? B : 10));
+    const ticks = [0, top / 2, top].map((v) => Math.round(v * 10) / 10);
+    const grid = ticks.map((v) => svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "gridline" }));
+    const yLabels = ticks.map((v) => svgEl("text", { x: L - 8, y: y(v) + 4, class: "axis", "text-anchor": "end" }, [document.createTextNode(String(v))]));
+    const every = weeks.length > 8 ? 2 : 1;
+    const xLabels = withDates ? weeks.map((w, i) => (i % every === (weeks.length - 1) % every ? svgEl("text", { x: x(i), y: H - 6, class: "axis", "text-anchor": "middle" }, [document.createTextNode(weekLabel(w.week))]) : null)) : [];
+    const lines = on.map(([k, , cls]) => svgEl("path", { d: weeks.map((w, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(w[k] || 0).toFixed(1)}`).join(" "), class: `series s-${cls}` }));
+    const dots = on.flatMap(([k, , cls]) => weeks.map((w, i) => svgEl("circle", { cx: x(i), cy: y(w[k] || 0), r: 4, class: `dot s-${cls}` })));
+    // The last value of each line, unless two would sit on top of each other: then the tooltip carries it.
+    const last = weeks[weeks.length - 1];
+    const ends = last ? on.map(([k]) => ({ v: last[k] || 0, py: y(last[k] || 0) })).sort((a, b) => a.py - b.py).filter((e, i, a) => !i || e.py - a[i - 1].py >= 13)
+      .map((e) => svgEl("text", { x: x(weeks.length - 1) + 9, y: e.py + 4, class: "endlabel" }, [document.createTextNode(String(e.v))])) : [];
+    const cross = svgEl("line", { x1: 0, x2: 0, y1: T, y2: y(0), class: "crosshair", visibility: "hidden" });
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "graph", role: "img" }, [...grid, ...yLabels, ...xLabels, ...lines, ...dots, ...ends, cross]);
+    return { svg, cross };
+  };
+  const topP = panel(["sent"], 150, false);
+  const botP = panel(["rfqs", "stops", "replies"], 170, true);
+  const tip = el("div", { class: "gtip", style: "display:none" });
+  const on = GRAPH_SERIES.filter(([k]) => !state.graphOff[k]);
+  const show = (i, clientX) => {
+    const w = weeks[i];
+    for (const p of [topP, botP]) { p.cross.setAttribute("x1", x(i)); p.cross.setAttribute("x2", x(i)); p.cross.setAttribute("visibility", "visible"); }
+    tip.replaceChildren(
+      el("b", { text: `Week of ${weekLabel(w.week)}` }),
+      ...on.map(([k, label, cls]) => el("div", { class: "gtip-row" }, [el("i", { class: `key s-${cls}` }), el("strong", { class: "mono", text: w[k] || 0 }), el("span", { text: label })])),
+    );
+    tip.style.display = "block";
+    const box = wrap.getBoundingClientRect();
+    tip.style.left = `${Math.min(Math.max(clientX - box.left + 14, 8), box.width - 190)}px`;
+  };
+  const hide = () => { for (const p of [topP, botP]) p.cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  const wrap = el("div", { class: "graphwrap", onmousemove: (e) => {
+    if (!weeks.length) return;
+    const box = topP.svg.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * W;
+    let best = 0;
+    for (let i = 1; i < weeks.length; i++) if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i;
+    show(best, e.clientX);
+  }, onmouseleave: hide }, [
+    el("div", { class: "gpanel-l label", text: "Emails sent" }), topP.svg,
+    el("div", { class: "gpanel-l label", text: "What came back" }), botP.svg,
+    tip,
+  ]);
+
+  const legend = el("div", { class: "glegend" }, GRAPH_SERIES.map(([k, label, cls]) => el("button", { class: `gkey${state.graphOff[k] ? " off" : ""}`, type: "button", disabled: k === "sent", title: k === "sent" ? "" : "Show or hide this line", onclick: () => { state.graphOff[k] = !state.graphOff[k]; render(); } }, [
+    el("i", { class: `key s-${cls}` }), el("strong", { class: "mono", text: totals[k] }), el("span", { text: label }),
+  ])));
+  const table = el("details", { class: "gtable" }, [
+    el("summary", { text: "As a table" }),
+    el("table", {}, [
+      el("thead", {}, [el("tr", {}, ["Week", ...GRAPH_SERIES.map(([, l]) => l)].map((h) => el("th", { text: h })))]),
+      el("tbody", {}, weeks.map((w) => el("tr", {}, [el("td", { text: weekLabel(w.week) }), ...GRAPH_SERIES.map(([k]) => el("td", { class: "mono", text: w[k] || 0 }))]))),
+    ]),
+  ]);
+  return el("section", { class: "mcard graphcard" }, [
+    el("div", { class: "mhead" }, [el("h2", { text: "The last 12 weeks" }), el("span", { class: "sub2", text: "By week. An RFQ or a reply counts for the sequence when an email went out within the week before it." })]),
+    legend,
+    !weeks.length ? el("p", { class: "empty", text: "Nothing sent yet." }) : wrap,
+    weeks.length ? table : null,
+  ]);
+}
+
+// ---------- the Email Sequence page (11/10: "remove the noise") ----------
+// Three blocks: the sequences (one live), the leads (where each one is), the schedule. Everything else folds away.
 function emailsSection() {
   const au = state.autos;
   const toggle = async () => {
@@ -2267,23 +2436,34 @@ function emailsSection() {
     await reloadAutos();
     load(true);
   };
+  if (state.campaignOpen && state.campaigns) return el("section", { class: "mdash" }, [campaignEditor()]);
   let rows = au ? mailRows(au, state.mailTab) : [];
   if (au && state.mailTab === "upcoming" && state.mailDay) rows = rows.filter((m) => localDay(m.sortAt) === state.mailDay);
+  // One line of status under the title: on or off, what's going out next, which sequence, the pace.
+  const today = localDay(new Date().toISOString());
+  const upcoming = au ? mailRows(au, "upcoming") : [];
+  const todayN = upcoming.filter((m) => localDay(m.sortAt) === today).length;
+  const nextDay = [...new Set(upcoming.map((m) => localDay(m.sortAt)))].sort().find((d) => d > today);
+  const nextN = nextDay ? upcoming.filter((m) => localDay(m.sortAt) === nextDay).length : 0;
+  const live = state.campaigns && state.campaigns.campaigns && state.campaigns.campaigns.find((c) => c.live);
+  const status = au ? [
+    au.enabled ? "On" : "Off",
+    todayN ? `${todayN} going out today` : nextDay ? `${nextN} going out ${dayOf(`${nextDay}T12:00:00`)}` : "nothing due in the next two weeks",
+    live ? `the "${live.name}" sequence` : null,
+    au.dailyCap < au.fullCap ? `slowed to ${au.dailyCap} a day` : null,
+  ].filter(Boolean).join(" · ") : "";
   return el("section", { class: "mdash" }, [
     el("div", { class: "head pagehead" }, [
-      el("h1", { class: "ptitle", text: "Automatic emails" }),
+      el("div", { class: "ptitlewrap" }, [el("h1", { class: "ptitle", text: "Email Sequence" }), au ? el("p", { class: "sub2 wrap mstatus-line", text: status }) : null]),
       au ? el("div", { class: "acts" }, [
-        el("span", { class: `switch${au.enabled ? " on" : ""}` }, [el("i"), au.enabled ? "On" : "Off"]),
-        el("button", { class: "btn small", disabled: state.mailBusy, text: au.enabled ? "Turn off" : "Turn on", onclick: toggle }),
+        el("button", { class: `switch btn-switch${au.enabled ? " on" : ""}`, disabled: state.mailBusy, title: au.enabled ? "Turn the sequence off" : "Turn the sequence on", onclick: toggle }, [el("i"), au.enabled ? "On · turn off" : "Off · turn on"]),
         el("button", { class: `btn small${au.dailyCap < au.fullCap ? " slowon" : ""}`, disabled: state.mailBusy, text: au.dailyCap < au.fullCap ? `Slowed: ${au.dailyCap} a day` : "Slow down", onclick: () => { state.paceOpen = !state.paceOpen; render(); } }),
-        au.sequence ? el("button", { class: `btn small${au.sequenceCustom ? " slowon" : ""}`, disabled: state.mailBusy, text: au.sequenceCustom ? `Sequence: ${au.sequence.name}` : "Edit the sequence", onclick: () => { state.seqOpen = !state.seqOpen; if (!state.seqOpen) state.seqDraft = null; state.paceOpen = false; render(); } }) : null,
-        el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today's emails now", onclick: planNow }),
+        el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today now", onclick: planNow }),
       ]) : null,
     ]),
     au && state.paceOpen ? paceBox(au) : null,
-    au && state.seqOpen && au.sequence ? seqBuilder(au) : null,
     state.paceMsg ? el("p", { class: "muted small3", text: state.paceMsg }) : null,
-    au && !au.enabled ? el("p", { class: "offnote", text: "Automatic emails are off. Everything below shows what would go out; nothing sends until you turn them on." }) : null,
+    au && !au.enabled ? el("p", { class: "offnote", text: "The sequence is off. Everything below shows what would go out; nothing sends until you turn it on." }) : null,
     // Test mode (10/1): only Test Lead Fabrication gets them until it's turned off.
     au && au.testMode ? el("div", { class: "testnote" }, [
       el("p", {}, [el("strong", { text: "Test mode: " }), "each morning, one email goes to ", el("strong", { text: "Test Lead Fabrication" }), " only, with its meme, so you can see how it lands. No real company gets anything."]),
@@ -2294,11 +2474,11 @@ function emailsSection() {
         state.mailBusy = false; reloadAutos();
       } }),
     ]) : null,
-    ...(au ? mailDashboard(au) : [el("p", { class: "loading", text: "Loading…" })]),
-    au && au.scoreboard && au.scoreboard.length ? scoreboardTable(au.scoreboard) : null,
-    au && au.versions && au.versions.length > 1 ? scoreboardTable(au.versions, "By sequence version") : null,
+    !au ? el("p", { class: "loading", text: "Loading…" }) : null,
+    au ? campaignsCard() : null,
+    au ? graphCard(au) : null,
     el("div", { class: "mlist" }, [
-      el("div", { class: "mhead" }, [el("h2", { text: "Every email" }), state.mailDay && state.mailTab === "upcoming" ? el("button", { class: "linkbtn small3", text: `Showing ${dayOf(`${state.mailDay}T12:00:00`)} · show all`, onclick: () => { state.mailDay = null; render(); } }) : null]),
+      el("div", { class: "mhead" }, [el("h2", { text: "The schedule" }), state.mailDay && state.mailTab === "upcoming" ? el("button", { class: "linkbtn small3", text: `Showing ${dayOf(`${state.mailDay}T12:00:00`)} · show all`, onclick: () => { state.mailDay = null; render(); } }) : null]),
       el("div", { class: "tabs" }, MAIL_TABS.map(([k, label]) => el("button", {
         class: `tab${state.mailTab === k ? " on" : ""}`, onclick: () => { state.mailTab = k; if (k !== "upcoming") state.mailDay = null; render(); },
       }, [label, el("span", { class: "c mono", text: au ? mailRows(au, k).length : "–" })]))),
@@ -2310,6 +2490,7 @@ function emailsSection() {
           ]),
     ]),
     au ? el("details", { class: "mhow" }, [el("summary", { text: "Memes" }), memeLibrary()]) : null,
+    au ? el("details", { class: "mhow" }, [el("summary", { text: "New line card wave" }), newCardCard() || el("p", { class: "muted small3", text: "Nothing to do here right now." })]) : null,
   ]);
 }
 

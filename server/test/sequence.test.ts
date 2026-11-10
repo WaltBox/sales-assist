@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Deps } from "../src/assistant.js";
 import { accountsBoard } from "../src/accounts.js";
 import { cadenceFor, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, sequenceFor } from "../src/cadence.js";
-import { checkSequence, resetSequence, sequencePreview, setAutomations, planBumps } from "../src/automations.js";
+import { checkSequence, createCampaign, saveCampaign, setLiveCampaign, setAutomations, planBumps } from "../src/automations.js";
 import { demoLineCards, demoLlm, FakeClose } from "../src/demo.js";
 import { bumpBodyFor, bumpLine, sendSlot } from "../src/followup.js";
 import { store } from "../src/store.js";
@@ -97,27 +97,29 @@ test("the sequence builder: the check names the field for a bad gap, a hedging l
   assert.ok(checkSequence(DEFAULT_SEQUENCE).seq, "the default passes its own check");
 });
 
-test("the sequence builder: saved per rep, the board's due dates follow it, the sent rows carry the version, reset brings the default back", async () => {
+test("sequences (11/10): saved per rep, the live one drives the board's due dates, sent rows carry its name and step, and Standard comes back", async () => {
   const { d } = setup("user_seq");
   assert.deepEqual(await sequenceFor(d.rep.closeUserId), DEFAULT_SEQUENCE, "nothing saved: the default");
   const before = await accountsBoard(d, { fresh: true });
   const talkedBefore = before.accounts.filter((a) => a.cadence.eligible && a.cadence.phase === "intro");
   assert.ok(talkedBefore.length, "an intro account to move");
 
+  const c = await createCampaign(d, { name: "Slow and steady" });
   const mine = cloneSequence(DEFAULT_SEQUENCE);
   mine.name = "Slow and steady";
   mine.talked.steps = mine.talked.steps.map((s) => ({ ...s, gap: s.gap + 10 }));
   mine.cold.steps = mine.cold.steps.map((s) => ({ ...s, gap: s.gap + 10 }));
-  const dry = await sequencePreview(d, mine, { save: false });
+  const dry = await saveCampaign(d, c.id, mine, { dryRun: true });
   assert.equal(dry.ok, true, JSON.stringify(dry.errors));
   assert.equal(dry.saved, false);
   assert.ok(dry.previews.length >= 5, "one sample per step and rotating line");
   assert.match(dry.previews[0].body, /^Hi Sam!/);
-  assert.deepEqual(await sequenceFor(d.rep.closeUserId), DEFAULT_SEQUENCE, "a dry run saves nothing");
-
-  const saved = await sequencePreview(d, mine, { save: true });
+  const saved = await saveCampaign(d, c.id, mine);
   assert.equal(saved.saved, true);
-  assert.ok(saved.moved >= talkedBefore.length, `moved ${saved.moved}`);
+  assert.equal(saved.moved, 0, "not live yet: nobody moves");
+  assert.deepEqual(await sequenceFor(d.rep.closeUserId), DEFAULT_SEQUENCE, "saved but not live: the default still runs");
+
+  await setLiveCampaign(d, c.id);
   assert.equal((await sequenceFor(d.rep.closeUserId)).name, "Slow and steady");
   const after = await accountsBoard(d, { fresh: true });
   for (const a of talkedBefore) {
@@ -125,15 +127,23 @@ test("the sequence builder: saved per rep, the board's due dates follow it, the 
     assert.ok(now.cadence.dueAt! > a.cadence.dueAt!, `${a.company}: ${a.cadence.dueAt} → ${now.cadence.dueAt}`);
     assert.equal(now.cadence.gap, a.cadence.gap + 10);
   }
+  // Live now: a change to the timing says how many accounts' next email moves.
+  const slower = cloneSequence(mine);
+  slower.talked.steps = slower.talked.steps.map((s) => ({ ...s, gap: s.gap + 5 }));
+  slower.cold.steps = slower.cold.steps.map((s) => ({ ...s, gap: s.gap + 5 }));
+  const dry2 = await saveCampaign(d, c.id, slower, { dryRun: true });
+  assert.ok(dry2.moved >= talkedBefore.length, `moved ${dry2.moved}`);
 
   await setAutomations(d, true);
   const r = await planBumps(d, { force: true });
-  for (const p of r.planned) assert.equal(p.seq, "Slow and steady", `${p.company} carries the version`);
+  for (const p of r.planned) {
+    assert.equal(p.seq, "Slow and steady", `${p.company} carries the sequence's name`);
+    assert.match(p.step ?? "", /^(talked|cold):(after:)?\d+$/, `${p.company} carries its step`);
+  }
 
-  await resetSequence(d);
+  await setLiveCampaign(d, "standard");
   assert.deepEqual(await sequenceFor(d.rep.closeUserId), DEFAULT_SEQUENCE);
-  assert.equal(await store.getSetting(d.rep.closeUserId, "sequence"), null);
-  // Something saved that no longer parses runs the default, not a crash.
-  await store.putSetting(d.rep.closeUserId, "sequence", { talked: "nope" });
+  // A saved sequence that no longer parses is skipped, and the default runs: never a crash.
+  await store.putSetting(d.rep.closeUserId, "campaigns", { campaigns: [{ id: "x", name: "Broken", talked: "nope" }], liveId: "x" });
   assert.deepEqual(await sequenceFor(d.rep.closeUserId), DEFAULT_SEQUENCE);
 });
