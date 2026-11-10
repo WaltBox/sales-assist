@@ -100,7 +100,8 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   assert.equal(saved.leads[1].outcome, "Voicemail");
   const note = close.writes.find((w) => w.op === "note")!.body as { leadId: string; note: string };
   assert.deepEqual([note.leadId, note.note], [DEMO_LEAD_ID, "[Work trial] Called by Jake Miller (work trial): Voicemail. Notes: Renee out till Monday"]);
-  assert.ok(!close.writes.some((w) => w.op === "status" || w.op === "task"), "notes only: no status changes, no tasks");
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Called", "a voicemail still means the lead was Called (10/29)");
+  assert.ok(!close.writes.some((w) => w.op === "task"), "no tasks");
   // Same outcome again: no second note. A bad outcome is refused.
   await markListLead(d, guest, 1, { notes: "Renee out till Monday, try 9am" });
   assert.equal(close.writes.filter((w) => w.op === "note").length, 1);
@@ -118,6 +119,11 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   const named = (await getList(repId, guest.id))!.leads[0];
   assert.equal(named.gotName, "Mike Torres, purchasing, x214");
   assert.match((close.writes.filter((w) => w.op === "note").pop()!.body as { note: string }).note, /^\[Work trial\] Called by Jake Miller \(work trial\): Got a name\. Ask for: Mike Torres, purchasing, x214\.$/);
+  // Reaching someone makes the lead Qualified (10/29); a status past that (the rep set Sent Line Card) is left alone.
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Qualified", "Got a name = Qualified");
+  close.leadStatus.set(DEMO_LEAD_ID, "Sent Line Card");
+  await markListLead(d, guest, 0, { outcome: "Reached buyer" });
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Sent Line Card", "forward only");
 });
 
 test("marks in a batch all stick, the answer doesn't wait on Close, and notes come after (10/15)", async () => {

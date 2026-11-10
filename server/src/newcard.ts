@@ -60,7 +60,7 @@ export async function planNewCard(owner: Deps, senders: Deps[], opts: { since?: 
   const leads: NewCardPlan["leads"] = [];
   for (const [leadId, e] of latest) {
     if (hasNew.has(leadId)) continue;
-    const s = byUser.get(String(e.user_id));
+    const s = byUser.get(String(e.user_id)); // whoever sent them their last card, hand-offs or not (Walt 10/28)
     if (!s) continue;
     if (!names.has(leadId)) names.set(leadId, ((await owner.close.lead(leadId).catch(() => null)) as { display_name?: string } | null)?.display_name ?? "An account");
     leads.push({ leadId, company: names.get(leadId)!, repId: s.rep.closeUserId, repName: s.rep.name, lastCardAt: at(e as never) });
@@ -131,7 +131,8 @@ const greet = (name: string | null | undefined) => {
  * This rep's share for today: up to their daily pace (minus anything already planned today), each checked against
  * Close first. Runs from the morning job once a day per rep, or by hand from the page.
  */
-export async function sendNewCard(d: Deps, opts: { max?: number } = {}) {
+// all: the whole share in one go, past the daily cap (Walt 10/28: "blast the new line cards together in one big batch").
+export async function sendNewCard(d: Deps, opts: { max?: number; all?: boolean } = {}) {
   const now = d.now?.() ?? new Date();
   const plan = await newCardPlan();
   if (!plan) return { planned: [] as Automation[], skipped: [] as Array<{ company: string; why: string }>, reason: "No new line card wave is planned." };
@@ -141,7 +142,7 @@ export async function sendNewCard(d: Deps, opts: { max?: number } = {}) {
   const dayKey = `${today.year}-${today.month}-${today.day}`;
   const recent = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - DAY).toISOString());
   const plannedToday = recent.filter((a) => { const p = localParts(new Date(a.createdAt), d.rep.timeZone); return `${p.year}-${p.month}-${p.day}` === dayKey && a.status !== "failed"; }).length;
-  const room = Math.max(0, Math.min(opts.max ?? Infinity, (await dailyCapFor(d)) - plannedToday));
+  const room = opts.all ? Infinity : Math.max(0, Math.min(opts.max ?? Infinity, (await dailyCapFor(d)) - plannedToday));
   const planned: Automation[] = [];
   const skipped: Array<{ company: string; why: string }> = [];
   if (!room) return { planned, skipped, reason: "Today's emails are already at your pace. The rest go tomorrow." };

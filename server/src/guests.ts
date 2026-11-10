@@ -3,6 +3,7 @@ import type { Deps } from "./assistant.js";
 import type { LeadEmail } from "./close.js";
 import { store } from "./store.js";
 import { LineCardError, sendLineCard } from "./linecard.js";
+import { advanceStatus, type FunnelStatus } from "./accounts.js";
 import { memeFor } from "./memes.js";
 
 /**
@@ -209,9 +210,15 @@ async function keepEarlierCalls(repId: string, guestId: string) {
 
 /**
  * The guest marks a lead: an outcome, notes, the email they got. A note goes on the lead in Close when the company
- * is found there (notes only: no status changes, no tasks).
+ * is found there, and the lead moves forward in the funnel (10/29): any outcome means it was Called; reaching someone
+ * (a buyer, a name, "send the card", "sending an RFQ") makes it Qualified. Forward only: a status past that, or one
+ * outside the funnel (Not Interested, Customer), is never touched. No tasks.
  */
 export type MarkPatch = { outcome?: string | null; notes?: string | null; email?: string | null; gotName?: string | null };
+
+/** The lead status a call outcome earns. */
+export const outcomeStatus = (outcome: Outcome): FunnelStatus =>
+  ["Reached buyer", "Wants line card", "Sending an RFQ", "Got a name"].includes(outcome) ? "Qualified" : "Called";
 
 /**
  * Several marks in one save (10/15): the page queues taps and sends them one request at a time, so two saves never
@@ -258,6 +265,7 @@ function applyMark(d: Deps, guest: Guest, lead: ListLead, patch: MarkPatch): (()
       if (ids[snap.i] !== id) await store.putSetting(d.rep.closeUserId, idsKey(guest.id), { ...ids, [snap.i]: id }).catch(() => undefined);
     }
     if (id) await d.close.createNote(id, `[Work trial] Called by ${guest.name} (work trial): ${snap.outcome}.${snap.gotName ? ` Ask for: ${snap.gotName}.` : ""}${snap.notes ? ` Notes: ${snap.notes}` : ""}${snap.email ? ` Email: ${snap.email}` : ""}`, false);
+    if (id && snap.outcome) await advanceStatus(d, id, outcomeStatus(snap.outcome)).catch((e) => console.error(`[guest status ${id}]`, (e as Error).message));
   };
 }
 

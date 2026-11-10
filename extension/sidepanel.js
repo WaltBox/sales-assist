@@ -493,7 +493,7 @@ let fixing = null; // { busy, msg }
 function problemCard(message, retry) {
   const offline = message.startsWith("OFFLINE: ");
   const text = offline ? message.slice(9) : message;
-  const closeKey = /Close .*failed \((401|403)\)|API key/i.test(text);
+  const closeKey = /Close .*failed \((401|403)\)|Close API key/i.test(text) && !/Claude API/i.test(text); // a Claude key problem is not a Close key problem (10/30)
   const signIn = /sign in|session|unauthori[sz]ed|\b401\b/i.test(text) && !closeKey;
   const f = fixing || {};
   const kids = [el("p", { class: "fixmsg", text: closeKey ? "Close isn't accepting your API key anymore." : text })];

@@ -373,14 +373,24 @@
       const fresh = msgs.slice(msgs.findIndex((m) => m.id === before) + 1).filter((m) => m.email !== g.race.you);
       g.chatSeen = last ? last.id : "";
       fillChat();
-      // Closed: the newest line takes over the bar's words for a few seconds.
-      if (fresh.length && !g.open) {
-        const m = fresh[fresh.length - 1];
-        clearTimeout(g.toastTimer);
-        g.toast = m;
-        g.toastTimer = setTimeout(() => { g.toast = null; if (!g.drag && !g.party) render(); }, 7000);
-        if (!g.drag && !g.party) render();
-      }
+      // Closed: the newest line drops in as a banner over the bar (Walt 10/28: "come in like surprisingly").
+      if (fresh.length && !g.open && !opts.mount) banner(fresh[fresh.length - 1]);
+    }
+    // A speech bubble that pops up above the bar, hangs around long enough to read, and opens the chat when tapped.
+    function banner(m) {
+      const first = (m.name || "Someone").split(/\s+/)[0];
+      const old = document.getElementById("wg-banner");
+      if (old) old.remove();
+      clearTimeout(g.bannerTimer);
+      const hide = () => { el.classList.add("bye"); setTimeout(() => el.remove(), 350); };
+      const el = h("div", { id: "wg-banner", class: "wg-banner", role: "status", onclick: () => { hide(); g.open = true; render(); setTimeout(() => { const i = g.chatEl && g.chatEl.querySelector(".wg-input"); if (i) i.focus(); }, 400); } }, [
+        h("span", { class: "wg-banavatar", text: first[0].toUpperCase() }),
+        h("span", { class: "wg-bantext" }, [h("b", { text: first }), h("span", { text: m.text })]),
+        h("small", { class: "wg-banhint", text: "Reply" }),
+      ]);
+      document.body.append(el);
+      g.bannerTimer = setTimeout(hide, 9000);
+      if (g.sound) blip();
     }
     function chatBox() {
       if (g.chatEl) return g.chatEl;
@@ -619,7 +629,7 @@
           h("span", { class: "wg-mid" }, [
             h("span", { class: "wg-bar" }, [
               h("span", { class: "wg-brand", text: "West Game" }),
-              g.toast ? h("span", { class: "wg-sum wg-said" }, [h("b", { text: `${(g.toast.name || "").split(/\s+/)[0]}: ` }), g.toast.text]) : h("span", { class: "wg-sum", text: blurb(ls) }),
+              h("span", { class: "wg-sum", text: blurb(ls) }),
             ]),
             h("span", { class: "wg-mini" }, [
               h("i", { class: "wg-trail", style: `width: calc(${pctOf(mine, max)}% - ${pctOf(mine, max) / 100} * var(--wg-dot) + var(--wg-dot) / 2)` }),
@@ -726,6 +736,22 @@
       } catch { /* no sound device, or audio not allowed yet */ }
     }
     window.ringBell = () => bell(3);
+    // A short two-note blip for a chat message: noticeable, nothing like the RFQ bell.
+    function blip() {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audio = audio || new AC();
+        if (audio.state === "suspended") audio.resume();
+        [[660, 0], [990, .09]].forEach(([f, dt]) => {
+          const t0 = audio.currentTime + .02 + dt;
+          const o = audio.createOscillator(), gn = audio.createGain();
+          o.type = "triangle"; o.frequency.value = f;
+          gn.gain.setValueAtTime(0, t0); gn.gain.linearRampToValueAtTime(.35, t0 + .008); gn.gain.exponentialRampToValueAtTime(.0005, t0 + .22);
+          o.connect(gn); gn.connect(audio.destination); o.start(t0); o.stop(t0 + .25);
+        });
+      } catch {}
+    }
     function soundButton() {
       return h("button", { class: `wg-soundlink${g.sound ? "" : " off"}`, title: g.sound ? "The bell rings for every RFQ. Tap to mute it on this screen." : "Muted on this screen. Tap to ring the bell for RFQs again.", "aria-label": g.sound ? "Mute the bell" : "Unmute the bell",
         text: g.sound ? "The bell is on. Mute it here." : "The bell is muted here. Turn it on.", onclick: () => { g.sound = !g.sound; opts.store.set(SOUND, g.sound); if (g.sound) bell(1); render(); } });
@@ -785,9 +811,7 @@
 
     load(false);
     setInterval(() => load(false), opts.pollMs || 20_000);
-    // Every 8s (11/9; it was 3): the server hands every screen one shared copy, and the showtime on each RFQ keeps
-    // the celebration in sync whichever second a screen picks it up.
-    if (opts.live) setInterval(live, 8000);
+    if (opts.live) setInterval(live, 3000);
     return { render, load, celebrate, playNow, get race() { return g.race; } };
   }
 

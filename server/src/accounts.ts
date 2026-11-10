@@ -5,6 +5,7 @@ import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequenceFor, type Cadence, type Sequence } from "./cadence.js";
 import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
+import { adoptByRule, cardOwner, handoffRules, handoffs } from "./handoff.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts, zonedTime } from "./rules.js";
@@ -245,6 +246,8 @@ export type Account = {
   callAsk?: { kind: "heat" | "clicked" | "flag" | "touch"; label: string; detail: string; due: string; rank: number; score?: number } | null;
   /** The heat map, v3 (10/14): who's most likely to send an RFQ soon, a band and the reason in plain words. */
   heat?: Heat;
+  /** Handed to you by a teammate (10/28): their name, until your first email to the account. */
+  handedFrom?: string;
   /** Their site, from Close or the buyer's email domain. */
   website: string | null;
   /** How much PVF buying they do at all (Walt 10/5), read from their site; null until it's been read. */
@@ -491,7 +494,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
   const ours = (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();
-  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles, seq] = await Promise.all([
+  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles, hand, rules, seq] = await Promise.all([
     d.close.listSince<Email>("email", {
       since: new Date(since.getTime() - 14 * DAY).toISOString(), max: 5000,
       fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,opens,to,sender,attachments,thread_id,contact_id",
@@ -505,6 +508,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     // The follow-up test (10/2): the account's own gap between automatic emails, once it's been dealt one.
     store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
     loadProfiles(d.rep.closeUserId),
+    handoffs(),
+    handoffRules(),
     // The rep's own sequence from the builder (11/9), or the default.
     sequenceFor(d.rep.closeUserId),
   ]);
@@ -518,7 +523,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   // The line card you sent, not an automatic email that carries it as an attachment (10/13: every bump attaches the
   // card since 10/6, and each one was read as a fresh line card, resetting the account's start date).
   const autoIds = new Set(autos.map((au) => au.id));
-  const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId && at(e) >= since.toISOString()
+  // A card a teammate sent counts as yours once the account was handed to you, and theirs no longer (10/28).
+  const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && cardOwner(hand, rules, e.lead_id, String(e.user_id)) === d.rep.closeUserId && at(e) >= since.toISOString()
     && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && !autoIds.has(e.id));
   const latestCard = new Map<string, Email>();
   for (const e of cards) if (!latestCard.has(e.lead_id) || at(e) > at(latestCard.get(e.lead_id)!)) latestCard.set(e.lead_id, e);
@@ -563,6 +569,25 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   // out of the automatic emails (Walt 10/5: West Coast Air Conditioning was Not Interested and still in line for
   // a rescue call). One that already sent an RFQ stays on the RFQs page.
   const accounts = built.filter((a) => !isOwnLead(a) && !(isOutStatus(a.status) && !a.rfq));
+  // Handed over (10/28): yours to call from today; your automatic emails start after your first email to them (the
+  // new line card goes from you), never as a reply inside your teammate's thread.
+  // Yours by a standing rule (10/29): written down as a hand-off, so Close's Lead owner follows.
+  const byRule = accounts.filter((a) => !hand[a.leadId] && rules[String(latestCard.get(a.leadId)?.user_id)]?.to === d.rep.closeUserId)
+    .map((a) => { const r = rules[String(latestCard.get(a.leadId)!.user_id)]; return { leadId: a.leadId, from: String(latestCard.get(a.leadId)!.user_id), fromName: r.fromName }; });
+  if (byRule.length) background(adoptByRule(d, byRule), "hand-off by rule");
+  for (const a of accounts) {
+    const hnd = hand[a.leadId] ?? (byRule.some((b) => b.leadId === a.leadId) ? { to: d.rep.closeUserId, fromName: rules[String(latestCard.get(a.leadId)!.user_id)].fromName, at: now.toISOString() } : null);
+    if (!hnd || hnd.to !== d.rep.closeUserId) continue;
+    if (all.some((e) => e.lead_id === a.leadId && e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId)) continue;
+    a.handedFrom = hnd.fromName;
+    if ((a.next.kind === "bump" && a.next.tag !== "Call") || a.next.kind === "rescue") {
+      const who = hnd.fromName.split(/\s+/)[0];
+      a.next = { kind: "waiting", tag: "Handed over", label: `${who} handed you ${a.company}`, detail: `${who} handed this account to you on ${hnd.at.slice(0, 10)}. It's yours to call. Your automatic emails start after your first email to them: the new line card goes from you.`, due: null, rescue: false };
+      a.bumpDue = false;
+      a.section = sectionOf(a);
+    }
+    a.cadence = { ...a.cadence, eligible: false, why: `Handed to you by ${hnd.fromName.split(/\s+/)[0]}: automatic emails start after your first email to them.` };
+  }
   // The sequence's calls for today (10/12): no cap (Walt: "just use proper logic"). Every one is a call on the board,
   // in priority order: clicks, then the intro-done flags, then the longest quiet. Whatever isn't called today is still
   // there tomorrow, higher up because it's been quiet longer; the 3-day rule keeps the volume steady by itself.

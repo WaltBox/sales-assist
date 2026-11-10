@@ -336,8 +336,18 @@ body.has-race { --rb: 78px; padding-bottom: var(--rb); }
 .wg-send { flex: none; padding: 8px 14px; border: 1.5px solid var(--wg-ink); border-radius: 0; background: var(--wg-red); color: #fff; font-family: var(--label, Arial, sans-serif); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; box-shadow: 2px 2px 0 var(--wg-ink); }
 .wg-send:disabled { opacity: .6; }
 /* a new message on the closed bar */
-.wg-said { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wg-said b { color: var(--wg-gold); }
+/* A teammate's chat line, dropped in over the bar (10/28). Sits just above the sheet, whatever its height. */
+.wg-banner { position: fixed; left: 12px; right: 12px; bottom: calc(var(--rb, 64px) + 10px); z-index: 61; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fffdf6; color: var(--wg-ink, #111114); border: 2px solid var(--wg-ink, #111114); border-radius: 14px; box-shadow: 5px 5px 0 rgba(17, 17, 20, .22); cursor: pointer; font-family: var(--sans, system-ui, sans-serif); animation: wgbannerin .55s cubic-bezier(.2, 1.4, .4, 1) both; }
+.wg-banner::after { content: ""; position: absolute; left: 26px; bottom: -9px; width: 14px; height: 14px; background: #fffdf6; border-right: 2px solid var(--wg-ink, #111114); border-bottom: 2px solid var(--wg-ink, #111114); transform: rotate(45deg); }
+.wg-banner.bye { animation: wgbannerout .3s ease-in both; }
+.wg-banavatar { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--wg-ink, #111114); color: var(--wg-gold, #f5c518); font-weight: 800; font-size: 14px; }
+.wg-bantext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wg-bantext b { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; font-family: var(--label, Arial, sans-serif); color: #8a1c1c; }
+.wg-bantext span { font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.wg-banhint { flex: none; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .55; }
+@keyframes wgbannerin { from { transform: translateY(40px) scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wgbannerout { to { transform: translateY(20px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .wg-banner { animation: wgfade .2s both; } }
 /* who the RFQs came from, under a lane's numbers (10/27) */
 .wg-from { margin-top: 10px; }
 .wg-from ul { list-style: none; margin: 4px 0 0; padding: 0; }
