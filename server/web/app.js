@@ -2188,7 +2188,7 @@ function openCampaign(id) {
   if (!c) return;
   state.campaignOpen = id;
   state.cDraft = JSON.parse(JSON.stringify({ name: c.name, talked: c.talked, cold: c.cold, rhythm: c.rhythm, monthly: c.monthly, clickHoldDays: c.clickHoldDays, wrap: c.wrap, send: c.send }));
-  state.cSheet = false; state.cFd = {};
+  state.cSheet = false; state.cFd = {}; state.cOpen = 0;
   state.cErrors = {}; state.cPreview = null; state.cDirty = false; state.cMsg = null;
   render();
   window.scrollTo(0, 0);
@@ -2200,7 +2200,7 @@ function openNew(from) {
   if (!base) return;
   state.campaignOpen = "new"; state.cNewFrom = base.name;
   state.cDraft = JSON.parse(JSON.stringify({ name: "", talked: base.talked, cold: base.cold, rhythm: base.rhythm, monthly: base.monthly, clickHoldDays: base.clickHoldDays, wrap: base.wrap, send: base.send }));
-  state.cSheet = false; state.cFd = {};
+  state.cSheet = false; state.cFd = {}; state.cOpen = 0;
   state.cErrors = {}; state.cPreview = null; state.cDirty = true; state.cMsg = null;
   render();
   window.scrollTo(0, 0);
@@ -2312,7 +2312,14 @@ function campaignEditor() {
     el("span", {}, ["wait ", numIn(() => q[tr].steps[i].gap, (v) => setGap(tr, i, v)), el("span", { "data-days": `${tr}:${i}`, text: ` business day${Number(q[tr].steps[i].gap) === 1 ? "" : "s"}` }), tail || ""]),
     err(`${tr}.steps.${i}.gap`),
   ]);
-  const head = (title, kids) => el("div", { class: "cmpcard-h" }, [el("h3", { text: title }), ...kids]);
+  // A card's header: click it and the card opens (one at a time, the rest stay as rows), like any sequence tool.
+  const isOpen = (key) => state.cOpen === key;
+  const toggle = (key) => { state.cOpen = isOpen(key) ? null : key; render(); };
+  const head = (key, title, kids, words) => el("div", { class: "cmpcard-h", role: "button", tabindex: "0", onclick: () => toggle(key), onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(key); } } }, [
+    el("h3", { text: title }), ...kids,
+    !isOpen(key) && words != null ? el("span", { class: "words", text: words }) : null,
+    el("span", { class: "chev", "aria-hidden": "true", text: isOpen(key) ? "▾" : "▸" }),
+  ]);
 
   // ---- the front-desk version of email i, folded into its card ----
   const frontDesk = (i) => {
@@ -2349,15 +2356,16 @@ function campaignEditor() {
     const ta = st && textIn(() => st.line, (v) => { st.line = v; dirty(); }, "What this email says. End with the ask.");
     const removeStep = () => { q.talked.steps.splice(i, 1); if (q.cold.steps[i]) q.cold.steps.splice(i, 1); dirty(); rerender(); };
     const moveStep = (j) => { move(q.talked.steps, i, j); move(q.cold.steps, i, j); dirty(); rerender(); };
-    return el("div", { class: `cmpnode${errs[`talked.steps.${i}.line`] ? " bad" : ""}` }, [
+    const bad = !!(errs[`talked.steps.${i}.line`] || errs[`cold.steps.${i}.line`] || errs[`cold.steps.${i}.gap`]);
+    const words = st ? firstWords(st.line, 90) || "Empty" : "Front desk only";
+    return el("div", { class: `cmpnode${bad ? " bad" : ""}` }, [
       el("i", { class: "dot" }),
-      el("div", { class: "cmpcard" }, [
-        head(`Email ${i + 1}`, [
+      el("div", { class: `cmpcard${isOpen(i) ? " open" : ""}` }, [
+        head(i, `Email ${i + 1}`, [
           st ? el("span", { class: "day", "data-day": `talked:${i}`, text: `Day ${dayOf("talked", i)}` }) : null,
-          el("span", { class: "sub2", text: i === 0 ? "The first email after the line card." : `After email ${i}.` }),
           statOf(`talked:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`talked:${i}`) }) : null,
-        ]),
-        el("div", { class: "cmpcard-b" }, [
+        ], words),
+        !isOpen(i) ? null : el("div", { class: "cmpcard-b" }, [
           st ? mail("talked", ta, { chips: i === 0 ? [...FILLS, WHEN] : FILLS, err: err(`talked.steps.${i}.line`), out: sample("talked", i) })
             : el("p", { class: "cmpnone", text: "No email at this step for buyers you talked to; only the front-desk version below goes." }),
           frontDesk(i),
@@ -2389,9 +2397,9 @@ function campaignEditor() {
   ]);
   const rhythmCard = el("div", { class: `cmpnode end${errsIn(["talked.after", "cold.after"]) ? " bad" : ""}` }, [
     el("i", { class: "dot" }),
-    el("div", { class: "cmpcard" }, [
-      head("Then keep bumping", [el("span", { class: "sub2", text: "Until they write back or send an RFQ." })]),
-      el("div", { class: "cmpcard-b" }, [
+    el("div", { class: `cmpcard${isOpen("after") ? " open" : ""}` }, [
+      head("after", "Then keep bumping", [el("span", { class: "day", text: `every ${rhythmRangeOf(q)}` })], `${q.talked.after.length} line${q.talked.after.length === 1 ? "" : "s"} they take turns through, until they write back or send an RFQ`),
+      !isOpen("after") ? null : el("div", { class: "cmpcard-b" }, [
         el("p", { class: "cmprule" }, [
           `One every ${rhythmRangeOf(q)}, by how much they buy. After ${q.monthly.after} with nothing back, one every ${q.monthly.gap}. `,
           el("button", { class: "linkbtn small3", text: ro ? "See the timing" : "Change the timing", onclick: () => { state.cSheet = true; render(); setTimeout(() => { const s = document.querySelector(".cmpsheet"); if (s) s.scrollIntoView({ block: "start", behavior: "smooth" }); }); } }),
@@ -2474,6 +2482,8 @@ function campaignEditor() {
         // A problem in the settings opens them; the front-desk version with a problem unfolds.
         if (r.errors.some((x) => [...CMP_PATHS.timing, ...CMP_PATHS.wrap].some((p) => x.path.startsWith(p)))) state.cSheet = true;
         for (const x of r.errors) { const m = /^cold\.steps\.(\d+)/.exec(x.path); if (m) state.cFd[m[1]] = true; if (x.path.startsWith("cold.after")) state.cFd.after = true; }
+        const at = r.errors.map((x) => { const m = /^(talked|cold)\.(steps|after)\.?(\d*)/.exec(x.path); return m ? (m[2] === "after" ? "after" : Number(m[3] || 0)) : null; }).find((k) => k !== null);
+        if (at !== undefined) state.cOpen = at;
         setTimeout(() => { const first = document.querySelector(".cmpedit .seqerr"); if (first) first.scrollIntoView({ block: "center", behavior: "smooth" }); }, 50);
       } else if (save && isNew) {
         await loadCampaigns();
