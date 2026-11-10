@@ -2698,6 +2698,13 @@ function emailsSection() {
     ]) : null,
     !au ? el("p", { class: "loading", text: "Loading…" }) : null,
     au ? campaignsCard() : null,
+    // The memes sit right under the sequences (Walt 11/10: "I don't see it", when they were under 220 scheduled rows).
+    // Open across renders: editing a meme re-renders the page, and the library has to stay in view.
+    au ? el("details", { class: "mhow memes", open: !!(state.lib && state.lib.open), ontoggle: (e) => { if (state.lib) state.lib.open = e.currentTarget.open; } }, [
+      el("summary", {}, [el("span", { text: state.lib && state.lib.memes ? `Memes · ${state.lib.memes.length}` : "Memes" }), el("span", { class: "sub2 hint", text: "One rides on every email. Add text to one and it's drawn in with the buyer's name." })]),
+      memeLibrary(),
+    ]) : null,
+    au ? el("details", { class: "mhow" }, [el("summary", { text: "New line card wave" }), newCardCard() || el("p", { class: "muted small3", text: "Nothing to do here right now." })]) : null,
     au ? graphCard(au) : null,
     el("div", { class: "mlist" }, [
       el("div", { class: "mhead" }, [el("h2", { text: "The schedule" }), state.mailDay && state.mailTab === "upcoming" ? el("button", { class: "linkbtn small3", text: `Showing ${dayOf(`${state.mailDay}T12:00:00`)} · show all`, onclick: () => { state.mailDay = null; render(); } }) : null]),
@@ -2711,9 +2718,6 @@ function emailsSection() {
             ...rows.flatMap(mailRow),
           ]),
     ]),
-    // Stays open across renders (11/10): editing a meme re-renders the page, and the library has to stay in view.
-    au ? el("details", { class: "mhow", open: !!(state.lib && state.lib.open), ontoggle: (e) => { if (state.lib) state.lib.open = e.currentTarget.open; } }, [el("summary", { text: "Memes" }), memeLibrary()]) : null,
-    au ? el("details", { class: "mhow" }, [el("summary", { text: "New line card wave" }), newCardCard() || el("p", { class: "muted small3", text: "Nothing to do here right now." })]) : null,
   ]);
 }
 

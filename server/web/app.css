@@ -371,6 +371,8 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .mhow summary { cursor: pointer; font-family: var(--label); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
 .mhow ol { margin: 10px 0 4px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .mhow .library { margin-top: 10px; }
+.mhow summary .hint { font-family: var(--sans); letter-spacing: 0; text-transform: none; margin-left: 12px; }
+.mhow.memes { margin-top: 14px; }
 .mlist { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 60px; }
 .coolrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 @media (max-width: 900px) {
