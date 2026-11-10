@@ -2169,10 +2169,8 @@ function paceBox(au) {
 
 
 // ---------- Campaigns (Walt 11/10: "more of a campaign builder, the UI popular companies use") ----------
-// Several campaigns a rep, one live. The list is a card on the Automatic emails page; Edit opens a two-pane editor
-// in its place, Apollo-style: the steps down the left (wait rows between the emails, day numbers, each step's
-// numbers), the chosen email open on the right as the email itself. Typing never re-renders (it would drop the
-// cursor): selecting, adding, removing and tab switches do.
+// Several campaigns a rep, one live. The list is a card on the Email Sequence page; a row opens the editor in its
+// place (one column of cards, see campaignEditor).
 const TIER_LABELS = { steady: "Steady buyers (several RFQs a week)", project: "Project buyers", occasional: "Occasional (a few times a year)", unknown: "Don't know yet" };
 const toClock = (m) => `${String(m / 60 | 0).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const fromClock = (v) => { const [h, m] = String(v || "0:0").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
@@ -2190,7 +2188,7 @@ function openCampaign(id) {
   if (!c) return;
   state.campaignOpen = id;
   state.cDraft = JSON.parse(JSON.stringify({ name: c.name, talked: c.talked, cold: c.cold, rhythm: c.rhythm, monthly: c.monthly, clickHoldDays: c.clickHoldDays, wrap: c.wrap, send: c.send }));
-  state.cSel = { track: "talked", kind: "step", i: 0 };
+  state.cSheet = false; state.cFd = {};
   state.cErrors = {}; state.cPreview = null; state.cDirty = false; state.cMsg = null;
   render();
   window.scrollTo(0, 0);
@@ -2202,7 +2200,7 @@ function openNew(from) {
   if (!base) return;
   state.campaignOpen = "new"; state.cNewFrom = base.name;
   state.cDraft = JSON.parse(JSON.stringify({ name: "", talked: base.talked, cold: base.cold, rhythm: base.rhythm, monthly: base.monthly, clickHoldDays: base.clickHoldDays, wrap: base.wrap, send: base.send }));
-  state.cSel = { track: "talked", kind: "step", i: 0 };
+  state.cSheet = false; state.cFd = {};
   state.cErrors = {}; state.cPreview = null; state.cDirty = true; state.cMsg = null;
   render();
   window.scrollTo(0, 0);
@@ -2251,14 +2249,19 @@ function campaignsCard() {
   ]);
 }
 
-// The editor.
+// The editor (Walt 11/10, second cut: "this UI is too confusing"). One column, top to bottom, the way the sequence
+// tools everyone uses read: the line card, then each email as a card you type into right there, a wait row between
+// them, and one last card for the bumping that never stops. The front-desk version of an email sits inside that
+// email's card instead of on a second track. Timing and the parts of every email are settings behind one button.
+// Typing never re-renders (it would drop the cursor): adding, removing and moving do.
 const CMP_PATHS = { timing: ["rhythm", "monthly", "clickHoldDays"], wrap: ["wrap", "send"] };
 function campaignEditor() {
   const cs = state.campaigns;
   const isNew = state.campaignOpen === "new";
   const c = isNew ? { id: "new", name: "", live: false, readOnly: false, stats: { steps: {} } } : cs && cs.campaigns.find((x) => x.id === state.campaignOpen);
   if (!c || !state.cDraft) { state.campaignOpen = null; return null; }
-  const q = state.cDraft, sel = state.cSel, errs = state.cErrors || {}, pv = state.cPreview, ro = !!c.readOnly;
+  const q = state.cDraft, errs = state.cErrors || {}, pv = state.cPreview, ro = !!c.readOnly;
+  state.cFd = state.cFd || {};
   const me = state.me && state.me.rep ? state.me.rep.name : "Your name";
   const err = (path) => (errs[path] ? el("p", { class: "seqerr", text: errs[path] }) : null);
   const errsIn = (paths) => Object.keys(errs).filter((k) => paths.some((p) => k === p || k.startsWith(`${p}.`))).length;
@@ -2267,157 +2270,154 @@ function campaignEditor() {
     state.cDirty = true;
     const b = document.querySelector(".cmpsave"); if (b) b.classList.add("primary");
   };
-  const select = (s) => { state.cSel = s; render(); };
   const rerender = () => { state.cPreview = null; render(); };
-  const track = sel.track || "talked";
-  const t = q[track];
   const stats = c.stats || { steps: {} };
   const statOf = (key) => { const s = stats.steps && stats.steps[key]; return s && s.sent ? `${s.sent} sent · ${s.rfqs} RFQ${s.rfqs === 1 ? "" : "s"}` : null; };
-  const dayOfStep = (i) => t.steps.slice(0, i + 1).reduce((n, s) => n + (Number(s.gap) || 0), 0);
+  const dayOf = (tr, i) => q[tr].steps.slice(0, i + 1).reduce((n, s) => n + (Number(s.gap) || 0), 0);
   const sample = (tr, nth) => pv && pv.previews.find((x) => x.track === tr && x.nth === nth);
-  // The fixed parts read for a sample buyer, so the card looks like the email and not like a form.
+  // The fixed parts read for a sample buyer, so a card looks like the email and not like a form.
   const fill = (s) => String(s || "").replace(/\{name\}/g, "Sam").replace(/\{when\}/g, "yesterday").replace(/\{url\}/g, "westgatesupply.com/…");
   const rowsFor = (v) => Math.max(2, Math.ceil((String(v).length + 20) / 95));
-  const numIn = (get, set, o = {}) => el("input", { type: "number", class: "seqnum", min: o.min ?? 1, max: o.max ?? 30, value: get(), disabled: ro, ...(o.attrs || {}), oninput: (e) => set(Number(e.target.value)) });
+  const numIn = (get, set, o = {}) => el("input", { type: "number", class: "seqnum", min: o.min ?? 1, max: o.max ?? 30, value: get(), disabled: ro, oninput: (e) => set(Number(e.target.value)) });
   const clockIn = (get, set) => el("input", { type: "time", class: "seqtime", value: toClock(get()), disabled: ro, oninput: (e) => set(fromClock(e.target.value)) });
   const textIn = (get, set, placeholder) => el("textarea", { class: "seqline", rows: rowsFor(get()), placeholder, readonly: ro, oninput: (e) => { set(e.target.value); e.target.rows = rowsFor(e.target.value); } }, [get()]);
-  const lineIn = (get, set, cls) => el("input", { type: "text", class: cls || "seqtext", value: get(), readonly: ro, oninput: (e) => set(e.target.value) });
-  // The day numbers and the left row's words follow the inputs without a re-render.
-  const syncDays = () => document.querySelectorAll("[data-day]").forEach((n) => { n.textContent = `Day ${dayOfStep(Number(n.dataset.day))}`; });
-  const syncWait = (i, v) => document.querySelectorAll(`[data-wait="${i}"]`).forEach((n) => { if (Number(n.value) !== v) n.value = v; });
-  const syncWords = (key, v) => document.querySelectorAll(`[data-words="${key}"]`).forEach((n) => { n.textContent = firstWords(v) || "Empty: write it on the right"; });
-  const setGap = (i, v) => { t.steps[i].gap = v; dirty(); syncDays(); syncWait(i, v); };
-
-  // ---- the left pane: the steps ----
-  const stepRow = (o) => el("button", { class: `cmpstep ${o.cls || ""}${o.on ? " on" : ""}${o.bad ? " bad" : ""}`, disabled: !o.onclick, onclick: o.onclick }, [
-    el("i", { class: "dot" }),
-    el("div", { class: "cmpstep-b" }, [
-      el("span", { class: "cmpstep-t" }, [el("span", { class: "label", text: o.label }), o.day != null ? el("span", { class: "day", "data-day": o.day, text: `Day ${dayOfStep(o.day)}` }) : null]),
-      o.sub != null ? el("span", { class: "sub2", "data-words": o.words || null, text: o.sub }) : null,
-      o.stat ? el("span", { class: "sub2 stat", text: o.stat }) : null,
-    ]),
-  ]);
-  const waitRow = (i) => el("div", { class: "cmpwait" }, [
-    el("i", { class: "tick" }),
-    el("span", {}, ["wait ", numIn(() => t.steps[i].gap, (v) => setGap(i, v), { attrs: { "data-wait": i } }), ` business day${Number(t.steps[i].gap) === 1 ? "" : "s"}`]),
-    err(`${track}.steps.${i}.gap`),
-  ]);
-  const trackTabs = el("div", { class: "tabs cmptabs" }, [["talked", "Talked to the buyer"], ["cold", "From the front desk"]].map(([k, label]) => {
-    const n = errsIn([k]);
-    return el("button", { class: `tab${track === k ? " on" : ""}${n ? " alert" : ""}`, onclick: () => select({ track: k, kind: "step", i: 0 }) }, [label, n ? el("span", { class: "c mono", text: n }) : null]);
-  }));
-  const left = el("div", { class: "cmpleft" }, [
-    trackTabs,
-    el("div", { class: "cmplist" }, [
-      stepRow({ label: "Line card sent", cls: "start", sub: track === "talked" ? "You reached the buyer and the card went out." : "The front desk gave you the email; the card went out." }),
-      ...t.steps.flatMap((st, i) => [
-        waitRow(i),
-        stepRow({ label: `Email ${i + 1}`, day: i, sub: firstWords(st.line) || "Empty: write it on the right", words: `${track}:${i}`, stat: statOf(`${track}:${i}`), on: sel.kind === "step" && sel.i === i, bad: !!(errs[`${track}.steps.${i}.line`] || errs[`${track}.steps.${i}.gap`]), onclick: () => select({ track, kind: "step", i }) }),
-      ]),
-      !ro && t.steps.length < 6 ? el("button", { class: "cmpadd", text: "+ Add an email", onclick: () => { t.steps.push({ gap: 5, line: "" }); dirty(); state.cSel = { track, kind: "step", i: t.steps.length - 1 }; rerender(); } }) : null,
-      err(`${track}.steps`),
-      stepRow({ label: "Then the rhythm", cls: "end", sub: `Every ${rhythmRangeOf(q)}, by how much they buy. Round and round:` }),
-      ...t.after.map((l, i) => stepRow({ label: `Line ${i + 1}`, cls: "after", sub: firstWords(l) || "Empty: write it on the right", words: `${track}:after:${i}`, stat: statOf(`${track}:after:${i}`), on: sel.kind === "after" && sel.i === i, bad: !!errs[`${track}.after.${i}`], onclick: () => select({ track, kind: "after", i }) })),
-      !ro && t.after.length < 6 ? el("button", { class: "cmpadd", text: "+ Add a line", onclick: () => { t.after.push(""); dirty(); state.cSel = { track, kind: "after", i: t.after.length - 1 }; rerender(); } }) : null,
-      err(`${track}.after`),
-    ]),
-    el("div", { class: "cmpsettings" }, [
-      el("span", { class: "label", text: "Both tracks" }),
-      stepRow({ label: "Timing", cls: "gear", sub: "The rhythm, shared mailboxes, going quiet, a click", on: sel.kind === "timing", bad: errsIn(CMP_PATHS.timing) > 0, onclick: () => select({ track, kind: "timing" }) }),
-      stepRow({ label: "Every email", cls: "gear", sub: "Greeting, line card line, sign-off, when they go out", on: sel.kind === "wrap", bad: errsIn(CMP_PATHS.wrap) > 0, onclick: () => select({ track, kind: "wrap" }) }),
-    ]),
-  ]);
-
-  // ---- the right pane: the chosen thing ----
+  const lineIn = (get, set) => el("input", { type: "text", class: "seqtext", value: get(), readonly: ro, oninput: (e) => set(e.target.value) });
+  // The day numbers follow the wait boxes without a re-render.
+  const syncDays = () => {
+    document.querySelectorAll("[data-day]").forEach((n) => { const [tr, i] = n.dataset.day.split(":"); n.textContent = `Day ${dayOf(tr, Number(i))}`; });
+    document.querySelectorAll("[data-days]").forEach((n) => { const [tr, i] = n.dataset.days.split(":"); n.textContent = ` business day${Number(q[tr].steps[i].gap) === 1 ? "" : "s"}`; });
+  };
+  const setGap = (tr, i, v) => { q[tr].steps[i].gap = v; dirty(); syncDays(); };
+  const move = (arr, i, j) => { if (i < arr.length && j < arr.length) { const [x] = arr.splice(i, 1); arr.splice(j, 0, x); } };
   const insertAt = (ta, s) => { const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a; ta.setRangeText(s, a, b, "end"); ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); };
   const chips = (ta, names) => (ro ? null : el("div", { class: "cmpchips" }, [
     el("span", { class: "sub2", text: "Fill-ins:" }),
     ...names.map(([n, why]) => el("button", { class: "chip3", type: "button", title: why, text: `{${n}}`, onclick: () => insertAt(ta, `{${n}}`) })),
   ]));
-  const mailFrame = (ta, opts) => el("div", { class: "seqcard" }, [
+  const FILLS = [["name", "Their first name"], ["url", "The link"]];
+  const WHEN = ["when", "\"yesterday\" or \"the other day\", from when you talked"];
+  // One email as it reads: the fixed parts around the line you type, and under it how it goes out once previewed.
+  const mail = (tr, ta, o) => el("div", { class: "seqcard" }, [
     el("div", { class: "seqmail" }, [
       el("p", { class: "fixed", text: fill(q.wrap.greeting) }),
-      chips(ta, opts.chips),
-      ta, opts.err,
+      chips(ta, o.chips), ta, o.err,
       el("p", { class: "fixed", text: fill(q.wrap.cardLine) }),
-      track === "cold" ? el("p", { class: "fixed", text: fill(q.wrap.siteLine) }) : null,
+      tr === "cold" ? el("p", { class: "fixed", text: fill(q.wrap.siteLine) }) : null,
       el("p", { class: "fixed sig", text: `${q.wrap.signoff}\n${me}` }),
       el("p", { class: "fixed meme", text: "+ a meme they haven't had" }),
     ]),
-    opts.out ? el("div", { class: "seqout" }, [el("span", { class: "label", text: "As it goes out, for Sam, on a Wednesday" }), el("pre", { text: opts.out.body })]) : null,
+    o.out ? el("div", { class: "seqout" }, [el("span", { class: "label", text: "As it goes out, for Sam, on a Wednesday" }), el("pre", { text: o.out.body })]) : null,
   ]);
-  const move = (arr, i, j) => { const [x] = arr.splice(i, 1); arr.splice(j, 0, x); dirty(); };
-  const stepPane = () => {
-    const i = sel.i, st = t.steps[i];
-    if (!st) return null;
-    const ta = textIn(() => st.line, (v) => { st.line = v; dirty(); syncWords(`${track}:${i}`, v); }, "What this email says. End with the ask.");
-    const names = [["name", "Their first name"], ["url", "The link"], ...(track === "talked" && i === 0 ? [["when", "\"yesterday\" or \"the other day\", from when you talked"]] : [])];
-    return el("div", { class: "cmppane" }, [
-      el("div", { class: "cmppane-head" }, [
-        el("h3", { text: `Email ${i + 1}` }),
-        el("span", { class: "sub2", "data-day": i, text: `Day ${dayOfStep(i)}` }),
-        el("span", { class: "sub2", text: i === 0 ? "The first email after the line card." : `After email ${i}.` }),
-        statOf(`${track}:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`${track}:${i}`) }) : null,
+  const waitRow = (tr, i, tail) => el("div", { class: `cmpwait${tr === "cold" ? " inner" : ""}` }, [
+    el("span", {}, ["wait ", numIn(() => q[tr].steps[i].gap, (v) => setGap(tr, i, v)), el("span", { "data-days": `${tr}:${i}`, text: ` business day${Number(q[tr].steps[i].gap) === 1 ? "" : "s"}` }), tail || ""]),
+    err(`${tr}.steps.${i}.gap`),
+  ]);
+  const head = (title, kids) => el("div", { class: "cmpcard-h" }, [el("h3", { text: title }), ...kids]);
+
+  // ---- the front-desk version of email i, folded into its card ----
+  const frontDesk = (i) => {
+    const st = q.cold.steps[i];
+    if (!st) {
+      // Only the next slot can be added, so the front-desk emails stay in step with the others.
+      return el("div", { class: "cmpfd none" }, [
+        el("span", { class: "sub2", text: "If you only reached the front desk: no email at this step. " }),
+        !ro && i === q.cold.steps.length ? el("button", { class: "linkbtn small3", text: "Add a front-desk version", onclick: () => { q.cold.steps.push({ gap: (q.talked.steps[i] && q.talked.steps[i].gap) || 5, line: "" }); dirty(); state.cFd[i] = true; rerender(); } }) : null,
+      ]);
+    }
+    const ta = textIn(() => st.line, (v) => { st.line = v; dirty(); }, "What the front-desk version says. End with the ask.");
+    // Folded until you open it (the first words show), so a card stays one email tall.
+    const open = state.cFd[i] === true;
+    return el("details", { class: `cmpfd${errs[`cold.steps.${i}.line`] || errs[`cold.steps.${i}.gap`] ? " bad" : ""}`, open, ontoggle: (e) => { state.cFd[i] = e.currentTarget.open; } }, [
+      el("summary", {}, [
+        el("span", { class: "label", text: "If you only reached the front desk" }),
+        el("span", { class: "day", "data-day": `cold:${i}`, text: `Day ${dayOf("cold", i)}` }),
+        el("span", { class: "sub2 words", text: firstWords(st.line, 80) || "Empty" }),
+        statOf(`cold:${i}`) ? el("span", { class: "sub2 stat", text: statOf(`cold:${i}`) }) : null,
       ]),
-      mailFrame(ta, { chips: names, err: err(`${track}.steps.${i}.line`), out: sample(track, i) }),
-      !ro ? el("div", { class: "cmptools" }, [
-        el("span", {}, ["Wait ", numIn(() => st.gap, (v) => setGap(i, v), { attrs: { "data-wait": i } }), " business days before this one"]), err(`${track}.steps.${i}.gap`),
-        el("span", { class: "grow" }),
-        i > 0 ? el("button", { class: "linkbtn", text: "Move up", onclick: () => { move(t.steps, i, i - 1); select({ track, kind: "step", i: i - 1 }); } }) : null,
-        i < t.steps.length - 1 ? el("button", { class: "linkbtn", text: "Move down", onclick: () => { move(t.steps, i, i + 1); select({ track, kind: "step", i: i + 1 }); } }) : null,
-        t.steps.length > 1 ? el("button", { class: "linkbtn", text: "Remove this email", onclick: () => { t.steps.splice(i, 1); dirty(); state.cSel = { track, kind: "step", i: Math.max(0, i - 1) }; rerender(); } }) : null,
-      ]) : null,
+      el("div", { class: "cmpfd-b" }, [
+        waitRow("cold", i, " after the last one"),
+        mail("cold", ta, { chips: FILLS, err: err(`cold.steps.${i}.line`), out: sample("cold", i) }),
+        !ro && i === q.cold.steps.length - 1 ? el("button", { class: "linkbtn small3", text: "Remove the front-desk version", onclick: () => { q.cold.steps.pop(); dirty(); rerender(); } }) : null,
+      ]),
     ]);
   };
-  const afterPane = () => {
-    const i = sel.i;
-    if (t.after[i] === undefined) return null;
-    const ta = textIn(() => t.after[i], (v) => { t.after[i] = v; dirty(); syncWords(`${track}:after:${i}`, v); }, "A line for the rhythm. End with the ask.");
-    const n = t.after.length;
-    return el("div", { class: "cmppane" }, [
-      el("div", { class: "cmppane-head" }, [
-        el("h3", { text: `Rhythm line ${i + 1}` }),
-        el("span", { class: "sub2", text: n === 1 ? "Every rhythm email carries this line." : `Rhythm email ${i + 1}, then every ${n === 2 ? "other" : `${n}th`} one after that.` }),
-        statOf(`${track}:after:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`${track}:after:${i}`) }) : null,
+
+  // ---- an email's card: the version for buyers you talked to, the front-desk version, the tools ----
+  const count = Math.max(q.talked.steps.length, q.cold.steps.length);
+  const emailCard = (i) => {
+    const st = q.talked.steps[i];
+    const ta = st && textIn(() => st.line, (v) => { st.line = v; dirty(); }, "What this email says. End with the ask.");
+    const removeStep = () => { q.talked.steps.splice(i, 1); if (q.cold.steps[i]) q.cold.steps.splice(i, 1); dirty(); rerender(); };
+    const moveStep = (j) => { move(q.talked.steps, i, j); move(q.cold.steps, i, j); dirty(); rerender(); };
+    return el("div", { class: `cmpnode${errs[`talked.steps.${i}.line`] ? " bad" : ""}` }, [
+      el("i", { class: "dot" }),
+      el("div", { class: "cmpcard" }, [
+        head(`Email ${i + 1}`, [
+          st ? el("span", { class: "day", "data-day": `talked:${i}`, text: `Day ${dayOf("talked", i)}` }) : null,
+          el("span", { class: "sub2", text: i === 0 ? "The first email after the line card." : `After email ${i}.` }),
+          statOf(`talked:${i}`) ? el("span", { class: "chip3 soft", text: statOf(`talked:${i}`) }) : null,
+        ]),
+        el("div", { class: "cmpcard-b" }, [
+          st ? mail("talked", ta, { chips: i === 0 ? [...FILLS, WHEN] : FILLS, err: err(`talked.steps.${i}.line`), out: sample("talked", i) })
+            : el("p", { class: "cmpnone", text: "No email at this step for buyers you talked to; only the front-desk version below goes." }),
+          frontDesk(i),
+          !ro ? el("div", { class: "cmptools" }, [
+            el("span", { class: "grow" }),
+            i > 0 ? el("button", { class: "linkbtn small3", text: "Move up", onclick: () => moveStep(i - 1) }) : null,
+            i < count - 1 ? el("button", { class: "linkbtn small3", text: "Move down", onclick: () => moveStep(i + 1) }) : null,
+            count > 1 ? el("button", { class: "linkbtn small3", text: "Remove this email", onclick: removeStep }) : null,
+          ]) : null,
+        ]),
       ]),
-      mailFrame(ta, { chips: [["name", "Their first name"], ["url", "The link"]], err: err(`${track}.after.${i}`), out: sample(track, t.steps.length + i) }),
-      !ro ? el("div", { class: "cmptools" }, [
-        el("span", { class: "sub2", text: `The rhythm: every ${rhythmRangeOf(q)} by how much they buy. Change that under Timing.` }),
-        el("span", { class: "grow" }),
-        i > 0 ? el("button", { class: "linkbtn", text: "Move up", onclick: () => { move(t.after, i, i - 1); select({ track, kind: "after", i: i - 1 }); } }) : null,
-        i < n - 1 ? el("button", { class: "linkbtn", text: "Move down", onclick: () => { move(t.after, i, i + 1); select({ track, kind: "after", i: i + 1 }); } }) : null,
-        n > 1 ? el("button", { class: "linkbtn", text: "Remove this line", onclick: () => { t.after.splice(i, 1); dirty(); state.cSel = { track, kind: "after", i: Math.max(0, i - 1) }; rerender(); } }) : null,
-      ]) : null,
     ]);
   };
+
+  // ---- the last card: the bumping that never stops, and the lines it takes turns through ----
+  const lines = (tr) => el("div", { class: "seqlines" }, [
+    ...q[tr].after.map((l, i) => el("div", { class: "seqlinerow" }, [
+      el("span", { class: "n", text: i + 1 }),
+      el("div", { class: "grow" }, [
+        textIn(() => q[tr].after[i], (v) => { q[tr].after[i] = v; dirty(); }, "A line for a bump. End with the ask."),
+        err(`${tr}.after.${i}`),
+        statOf(`${tr}:after:${i}`) ? el("span", { class: "sub2 stat", text: statOf(`${tr}:after:${i}`) }) : null,
+        sample(tr, q[tr].steps.length + i) ? el("details", { class: "seqsample" }, [el("summary", { text: "As it goes out, for Sam" }), el("pre", { text: sample(tr, q[tr].steps.length + i).body })]) : null,
+      ]),
+      !ro && q[tr].after.length > 1 ? el("button", { class: "linkbtn small3", text: "Remove", onclick: () => { q[tr].after.splice(i, 1); dirty(); rerender(); } }) : null,
+    ])),
+    err(`${tr}.after`),
+    !ro && q[tr].after.length < 6 ? el("button", { class: "cmpadd", text: "+ Add a line", onclick: () => { q[tr].after.push(""); dirty(); rerender(); } }) : null,
+  ]);
+  const rhythmCard = el("div", { class: `cmpnode end${errsIn(["talked.after", "cold.after"]) ? " bad" : ""}` }, [
+    el("i", { class: "dot" }),
+    el("div", { class: "cmpcard" }, [
+      head("Then keep bumping", [el("span", { class: "sub2", text: "Until they write back or send an RFQ." })]),
+      el("div", { class: "cmpcard-b" }, [
+        el("p", { class: "cmprule" }, [
+          `One every ${rhythmRangeOf(q)}, by how much they buy. After ${q.monthly.after} with nothing back, one every ${q.monthly.gap}. `,
+          el("button", { class: "linkbtn small3", text: ro ? "See the timing" : "Change the timing", onclick: () => { state.cSheet = true; render(); setTimeout(() => { const s = document.querySelector(".cmpsheet"); if (s) s.scrollIntoView({ block: "start", behavior: "smooth" }); }); } }),
+        ]),
+        el("p", { class: "sub2", text: "Each bump carries the next line, round and round. Same email around it as always." }),
+        lines("talked"),
+        el("details", { class: `cmpfd${errsIn(["cold.after"]) ? " bad" : ""}`, open: state.cFd.after === true, ontoggle: (e) => { state.cFd.after = e.currentTarget.open; } }, [
+          el("summary", {}, [el("span", { class: "label", text: "If you only reached the front desk" }), el("span", { class: "sub2 words", text: `${q.cold.after.length} line${q.cold.after.length === 1 ? "" : "s"} of their own` })]),
+          el("div", { class: "cmpfd-b" }, [lines("cold")]),
+        ]),
+      ]),
+    ]),
+  ]);
+
+  // ---- the settings sheet: timing, and the parts of every email ----
   const setting = (title, sub, kids) => el("div", { class: "seqset" }, [
     el("div", { class: "seqset-l" }, [el("b", { text: title }), el("span", { class: "sub2 wrap", text: sub })]),
     el("div", { class: "seqset-r" }, kids),
   ]);
-  const timingPane = () => el("div", { class: "cmppane" }, [
-    el("div", { class: "cmppane-head" }, [el("h3", { text: "Timing" }), el("span", { class: "sub2", text: "The same for both tracks. Business days, so weekends never count." })]),
-    el("div", { class: "seqsets" }, [
-      setting("The rhythm", "Once the intro's done: how often an email goes, by how much they buy.", Object.keys(TIER_LABELS).map((tier) => el("div", { class: "seqrow" }, [
-        el("span", { class: "seqrow-l", text: TIER_LABELS[tier] }), el("span", { text: "every" }), numIn(() => q.rhythm.gaps[tier], (v) => { q.rhythm.gaps[tier] = v; dirty(); }), el("span", { text: "business days" }), err(`rhythm.gaps.${tier}`),
-      ]))),
-      setting("Shared mailboxes", "info@, estimating@, or someone you've never talked to.", [el("div", { class: "seqrow" }, [
-        el("span", { text: "At least" }), numIn(() => q.rhythm.slowMinGap, (v) => { q.rhythm.slowMinGap = v; dirty(); }), el("span", { text: "business days apart" }), err("rhythm.slowMinGap"),
-      ])]),
-      setting("Going quiet", "Nothing back since you last talked: the emails slow right down.", [el("div", { class: "seqrow" }, [
-        el("span", { text: "After" }), numIn(() => q.monthly.after, (v) => { q.monthly.after = v; dirty(); }, { max: 20 }), el("span", { text: "emails, one every" }), numIn(() => q.monthly.gap, (v) => { q.monthly.gap = v; dirty(); }, { min: 5, max: 60 }), el("span", { text: "business days" }), err("monthly.after"), err("monthly.gap"),
-      ])]),
-      setting("A click", "Someone clicks the line card or the site. It's a call today, and the emails wait.", [el("div", { class: "seqrow" }, [
-        el("span", { text: "No email for" }), numIn(() => q.clickHoldDays, (v) => { q.clickHoldDays = v; dirty(); }, { min: 0, max: 10 }), el("span", { text: "business days" }), err("clickHoldDays"),
-      ])]),
-    ]),
-  ]);
-  const wrapPane = () => {
+  const sheet = () => {
     const sampleEl = el("div", { class: "seqmail sample" });
     const draw = () => sampleEl.replaceChildren(
       el("p", { class: "fixed", text: fill(q.wrap.greeting) }),
       el("p", { text: fill((q.talked.steps[0] && q.talked.steps[0].line) || "The line this email carries.") }),
       el("p", { class: "fixed", text: fill(q.wrap.cardLine) }),
-      el("p", { class: "fixed", text: `${fill(q.wrap.siteLine)} (front-desk track only)` }),
+      el("p", { class: "fixed", text: `${fill(q.wrap.siteLine)} (front desk only)` }),
       el("p", { class: "fixed sig", text: `${q.wrap.signoff}\n${me}` }),
       el("p", { class: "fixed meme", text: "+ a meme they haven't had" }),
     );
@@ -2425,36 +2425,44 @@ function campaignEditor() {
     const field = (label, sub, get, set, path) => el("div", { class: "seqfield" }, [
       el("label", { class: "label", text: label }), lineIn(get, (v) => { set(v); dirty(); draw(); }), sub ? el("span", { class: "sub2 wrap", text: sub }) : null, err(path),
     ]);
-    return el("div", { class: "cmppane" }, [
-      el("div", { class: "cmppane-head" }, [el("h3", { text: "Every email" }), el("span", { class: "sub2", text: "The parts around the line, and when they go out." })]),
+    return el("div", { class: "cmpsheet" }, [
+      el("div", { class: "cmpsheet-h" }, [
+        el("h3", { text: "Timing and every email" }),
+        el("button", { class: "linkbtn small3", text: "Close", onclick: () => { state.cSheet = false; render(); } }),
+      ]),
+      el("h4", { text: "Timing" }),
+      el("div", { class: "seqsets" }, [
+        setting("The bumping", "Once the emails above are done: how often one goes, by how much they buy. Business days, so weekends never count.", Object.keys(TIER_LABELS).map((tier) => el("div", { class: "seqrow" }, [
+          el("span", { class: "seqrow-l", text: TIER_LABELS[tier] }), el("span", { text: "every" }), numIn(() => q.rhythm.gaps[tier], (v) => { q.rhythm.gaps[tier] = v; dirty(); }), el("span", { text: "business days" }), err(`rhythm.gaps.${tier}`),
+        ]))),
+        setting("Shared mailboxes", "info@, estimating@, or someone you've never talked to.", [el("div", { class: "seqrow" }, [
+          el("span", { text: "At least" }), numIn(() => q.rhythm.slowMinGap, (v) => { q.rhythm.slowMinGap = v; dirty(); }), el("span", { text: "business days apart" }), err("rhythm.slowMinGap"),
+        ])]),
+        setting("Going quiet", "Nothing back since you last talked: the emails slow right down.", [el("div", { class: "seqrow" }, [
+          el("span", { text: "After" }), numIn(() => q.monthly.after, (v) => { q.monthly.after = v; dirty(); }, { max: 20 }), el("span", { text: "emails, one every" }), numIn(() => q.monthly.gap, (v) => { q.monthly.gap = v; dirty(); }, { min: 5, max: 60 }), el("span", { text: "business days" }), err("monthly.after"), err("monthly.gap"),
+        ])]),
+        setting("A click", "Someone clicks the line card or the site. It's a call today, and the emails wait.", [el("div", { class: "seqrow" }, [
+          el("span", { text: "No email for" }), numIn(() => q.clickHoldDays, (v) => { q.clickHoldDays = v; dirty(); }, { min: 0, max: 10 }), el("span", { text: "business days" }), err("clickHoldDays"),
+        ])]),
+        setting("When they go out", "Their time. A random minute in the window, so a wave isn't a block.", [
+          el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Tuesday to Friday" }), clockIn(() => q.send.from, (v) => { q.send.from = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.to, (v) => { q.send.to = v; dirty(); })]),
+          el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Monday" }), clockIn(() => q.send.mondayFrom, (v) => { q.send.mondayFrom = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.mondayTo, (v) => { q.send.mondayTo = v; dirty(); }), err("send")]),
+        ]),
+      ]),
+      el("h4", { text: "Every email" }),
       el("div", { class: "seqwrap" }, [
         el("div", { class: "seqfields" }, [
           field("Greeting", "{name} is their first name.", () => q.wrap.greeting, (v) => { q.wrap.greeting = v; }, "wrap.greeting"),
           field("Line card line", "{url} is the link. The PDF rides along every time.", () => q.wrap.cardLine, (v) => { q.wrap.cardLine = v; }, "wrap.cardLine"),
-          field("Site line", "Front-desk track only: a click tells us the address works.", () => q.wrap.siteLine, (v) => { q.wrap.siteLine = v; }, "wrap.siteLine"),
+          field("Site line", "Front desk only: a click tells us the address works.", () => q.wrap.siteLine, (v) => { q.wrap.siteLine = v; }, "wrap.siteLine"),
           field("Sign-off", "Your name goes under it.", () => q.wrap.signoff, (v) => { q.wrap.signoff = v; }, "wrap.signoff"),
-          el("div", { class: "seqfield" }, [
-            el("label", { class: "label", text: "When they go out" }),
-            el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Tuesday to Friday" }), clockIn(() => q.send.from, (v) => { q.send.from = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.to, (v) => { q.send.to = v; dirty(); })]),
-            el("div", { class: "seqrow" }, [el("span", { class: "seqrow-l", text: "Monday" }), clockIn(() => q.send.mondayFrom, (v) => { q.send.mondayFrom = v; dirty(); }), el("span", { text: "to" }), clockIn(() => q.send.mondayTo, (v) => { q.send.mondayTo = v; dirty(); }), err("send")]),
-            el("span", { class: "sub2 wrap", text: "Their time. A random minute in the window, so a wave isn't a block." }),
-          ]),
         ]),
         el("div", { class: "seqpaper" }, [el("span", { class: "label", text: "What every email looks like" }), sampleEl]),
       ]),
     ]);
   };
-  const right = el("div", { class: "cmpright" }, [sel.kind === "after" ? afterPane() : sel.kind === "timing" ? timingPane() : sel.kind === "wrap" ? wrapPane() : stepPane()]);
 
   // ---- save, preview, the top bar ----
-  const selFor = (path) => {
-    const m = /^(talked|cold)\.(steps|after)\.(\d+)/.exec(path);
-    if (m) return { track: m[1], kind: m[2] === "steps" ? "step" : "after", i: Number(m[3]) };
-    if (/^(talked|cold)\./.test(path)) return { track: path.split(".")[0], kind: "step", i: 0 };
-    if (CMP_PATHS.timing.some((p) => path.startsWith(p))) return { track, kind: "timing" };
-    if (CMP_PATHS.wrap.some((p) => path.startsWith(p))) return { track, kind: "wrap" };
-    return null;
-  };
   const run = async (save) => {
     state.mailBusy = true; state.cErrors = {}; render();
     try {
@@ -2462,9 +2470,11 @@ function campaignEditor() {
       if (!r.ok) {
         state.cErrors = Object.fromEntries(r.errors.map((x) => [x.path, x.problem]));
         state.cPreview = null;
-        state.cMsg = { bad: true, text: `${r.errors.length} thing${r.errors.length === 1 ? "" : "s"} to fix, marked on the steps and under the fields.` };
-        const first = r.errors.map((x) => selFor(x.path)).find(Boolean);
-        if (first) state.cSel = first;
+        state.cMsg = { bad: true, text: `${r.errors.length} thing${r.errors.length === 1 ? "" : "s"} to fix, marked in red below.` };
+        // A problem in the settings opens them; the front-desk version with a problem unfolds.
+        if (r.errors.some((x) => [...CMP_PATHS.timing, ...CMP_PATHS.wrap].some((p) => x.path.startsWith(p)))) state.cSheet = true;
+        for (const x of r.errors) { const m = /^cold\.steps\.(\d+)/.exec(x.path); if (m) state.cFd[m[1]] = true; if (x.path.startsWith("cold.after")) state.cFd.after = true; }
+        setTimeout(() => { const first = document.querySelector(".cmpedit .seqerr"); if (first) first.scrollIntoView({ block: "center", behavior: "smooth" }); }, 50);
       } else if (save && isNew) {
         await loadCampaigns();
         openCampaign(r.campaign.id);
@@ -2479,12 +2489,13 @@ function campaignEditor() {
         if (c.live) reloadAutos();
       } else {
         state.cPreview = r;
-        state.cMsg = { text: `${r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves if you save. ` : c.live ? "Nobody's next email date moves. " : ""}Each email shows how it reads for a buyer called Sam.` };
+        state.cMsg = { text: `${r.moved ? `${r.moved} account${r.moved === 1 ? "'s" : "s'"} next email date moves if you save. ` : c.live ? "Nobody's next email date moves. " : ""}Each email now shows how it reads for a buyer called Sam.` };
       }
     } catch (e) { alert(e.message); }
     state.mailBusy = false;
     render();
   };
+  const settingsBad = errsIn([...CMP_PATHS.timing, ...CMP_PATHS.wrap]);
   const top = el("div", { class: "cmptop" }, [
     el("button", { class: "linkbtn back", text: "← Sequences", onclick: closeCampaign }),
     el("div", { class: "cmptitle" }, [
@@ -2493,26 +2504,28 @@ function campaignEditor() {
       err("name"),
     ]),
     el("div", { class: "acts" }, [
-      !isNew ? el("button", { class: "linkbtn", text: "Duplicate", onclick: () => { if (!state.cDirty || confirm("Leave without saving? Your changes to this sequence go.")) { state.cDirty = false; openNew(c); } } }) : null,
+      !isNew ? el("button", { class: "linkbtn", title: ro ? "Built in: a copy is yours to change." : "A copy to change", text: "Duplicate", onclick: () => { if (!state.cDirty || confirm("Leave without saving? Your changes to this sequence go.")) { state.cDirty = false; openNew(c); } } }) : null,
       !ro && !c.live && !isNew ? el("button", { class: "linkbtn", text: "Delete", onclick: async () => {
         if (!confirm(`Delete "${c.name}"? Its numbers stay in the scoreboard; nothing new sends from it.`)) return;
         try { await api(`/api/campaigns/${c.id}/delete`, {}); state.cDirty = false; closeCampaign(); await loadCampaigns(); } catch (e) { alert(e.message); }
       } }) : null,
-      ro ? el("span", { class: "sub2", text: "Built in: duplicate it to make your own." }) : el("button", { class: "linkbtn", text: "Cancel", onclick: closeCampaign }),
-      !ro ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Preview the emails", onclick: () => run(false) }) : el("button", { class: "btn small", text: "Back", onclick: closeCampaign }),
+      el("button", { class: `btn small${state.cSheet ? " on" : ""}${settingsBad ? " alert" : ""}`, text: settingsBad ? `Timing · ${settingsBad} to fix` : "Timing", onclick: () => { state.cSheet = !state.cSheet; render(); } }),
+      !ro ? el("button", { class: "btn small", disabled: state.mailBusy, text: "Preview", onclick: () => run(false) }) : null,
       !ro ? el("button", { class: `btn small cmpsave${state.cDirty ? " primary" : ""}`, disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Save", onclick: () => run(true) }) : null,
     ]),
   ]);
-  const chip = (k, v) => el("div", { class: "seqchip" }, [el("span", { class: "label", text: k }), el("b", { text: v })]);
-  const shape = (tr) => `${tr.steps.length} email${tr.steps.length === 1 ? "" : "s"} over ${bdaysOf(tr.steps.reduce((n, s) => n + (Number(s.gap) || 0), 0))}`;
+  const flow = el("div", { class: "cmpflow" }, [
+    el("div", { class: "cmpnode start" }, [el("i", { class: "dot" }), el("span", { class: "label", text: "Line card sent" }), el("span", { class: "sub2", text: "You reached the buyer, or the front desk gave you an email, and the card went out." })]),
+    ...Array.from({ length: count }, (_, i) => [q.talked.steps[i] ? waitRow("talked", i) : el("div", { class: "cmpwait" }, [el("span", { class: "sub2", text: "front desk only" })]), emailCard(i)]).flat(),
+    err("talked.steps"), err("cold.steps"),
+    !ro && q.talked.steps.length < 6 ? el("button", { class: "cmpadd", text: "+ Add an email", onclick: () => { q.talked.steps.push({ gap: 5, line: "" }); dirty(); rerender(); } }) : null,
+    rhythmCard,
+  ]);
   return el("section", { class: "cmpedit" }, [
     top,
-    el("div", { class: "seqsum" }, [
-      chip("Talked to the buyer", shape(q.talked)), chip("From the front desk", shape(q.cold)),
-      chip("Then the rhythm", `every ${rhythmRangeOf(q)}`), chip("Going quiet", `after ${q.monthly.after}, one every ${q.monthly.gap}`),
-    ]),
     state.cMsg ? el("p", { class: `seqnote${state.cMsg.bad ? " bad" : " good"}`, text: state.cMsg.text }) : null,
-    el("div", { class: "cmpwrap" }, [left, right]),
+    state.cSheet ? sheet() : null,
+    flow,
   ]);
 }
 
