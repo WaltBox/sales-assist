@@ -368,3 +368,23 @@ test("an old line copy with no inboxes can show a tiebreak but not write it down
   assert.deepEqual([lane(fresh, "Walt").rfqs, lane(fresh, "Chase").rfqs, lane(fresh, "Jameson").rfqs], [1, 0, 1]);
   assert.equal((await rfqCredits(walt))[`lead_enfab|${today}`]?.why, "came to their inbox");
 });
+
+test("an inbox settles an RFQ only when its owner emailed the company (11/10: Novus came to Berni's inbox and scored for nobody)", async () => {
+  const { localDay } = await import("../src/stats.js");
+  const { rfqCredits } = await import("../src/race.js");
+  const jacob = "user_wg_jacob8", berni = "user_wg_berni8";
+  const team: Deps[] = [
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Jacob Lizarraga", "jacob@westgatesupply.com", jacob) },
+    { close: new FakeClose(), llm: demoLlm, rep: rep("Berni Ortiz", "berni@westgatesupply.com", berni) },
+  ] as never;
+  const today = localDay("America/Chicago", new Date()).day;
+  const line = (accounts: Array<Record<string, unknown>>) => ({ since: today, total: accounts.length, thisWeek: accounts.length, lastWeek: 0, firstToday: accounts.length, firstThisWeek: accounts.length, companies: accounts.length, newThisWeek: accounts.length, newLastWeek: 0, newThisMonth: accounts.length, newLastMonth: 0, at: new Date().toISOString(), inboxes: true,
+    days: [{ day: today, count: accounts.length, total: accounts.length, newCompanies: accounts.length, companiesTotal: accounts.length, accounts }] });
+  // Jacob emailed Novus; their file came to Berni's inbox, who never wrote to them. Jacob tapped it.
+  await store.cacheSet(`rfqline:${jacob}`, line([{ leadId: "lead_novus", company: "Novus Process", how: "file", first: true, to: berni, marked: true, card: true }]), 3600_000);
+  await store.cacheSet(`rfqline:${berni}`, line([]), 3600_000);
+  await store.cacheSet("race:team", null, 1);
+  const race = await teamRace(team, jacob, { fresh: true });
+  assert.deepEqual([race.lanes.find((l) => l.first === "Jacob")!.rfqs, race.lanes.find((l) => l.first === "Berni")!.rfqs], [1, 0], "Jacob's: he worked it");
+  assert.equal((await rfqCredits(jacob))[`lead_novus|${today}`], undefined, "left open, in case Berni's line catches it");
+});

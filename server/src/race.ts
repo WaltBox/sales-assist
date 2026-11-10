@@ -292,14 +292,18 @@ async function oneOwnerPerRfq(results: RepResult[], ownerId: string, previous: R
       continue;
     }
     const inbox = es.find((e) => e.to && racerOf.has(e.to));
-    if (inbox) {
-      // It came to a racer's inbox: theirs, even when only someone else's line has caught it so far.
+    if (inbox && es.some((e) => e.r === racerOf.get(inbox.to!))) {
+      // It came to a racer's inbox and they'd emailed the company: theirs.
       const keep = racerOf.get(inbox.to!)!;
-      loseAll(es, es.some((e) => e.r === keep) ? keep : null, k);
+      loseAll(es, keep, k);
       decided[k] = { rep: keep.t.rep.email.toLowerCase(), at: new Date().toISOString(), why: "came to their inbox" };
       continue;
     }
     if (new Set(es.map((e) => e.r)).size < 2) continue;
+    // Nobody's inbox settles it (it came to a racer who never emailed the company, or whose line hasn't caught it yet,
+    // 11/10: Novus came to Berni's inbox and scored for nobody). The tiebreak shows but isn't written down, so the
+    // inbox still wins once that line catches up.
+    if (inbox) weak.add(k);
     const owner = ownerOf.get(es[0].leadId);
     const pick = es.find((e) => e.marked) ? "tapped it" : es.find((e) => e.card) ? "sent the line card" : owner && es.some((e) => e.r.t.rep.closeUserId === owner) ? "owns the lead in Close" : "first on the board";
     const keep = (es.find((e) => e.marked) ?? es.find((e) => e.card) ?? es.find((e) => !!owner && e.r.t.rep.closeUserId === owner) ?? es[0]).r;

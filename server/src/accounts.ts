@@ -76,7 +76,11 @@ export function rfqInBody(subject: string | null | undefined, body: string | nul
   // An order's status email (Novus Process, "ESD PO OS037235") has a parts table too; it isn't an RFQ.
   if (ORDER_SUBJECT.test(subject ?? "")) return false;
   if (!/^\s*(re|aw|sv|fw|fwd)\s*:/i.test(subject ?? "") && askSubject.test(subject ?? "")) return true;
-  return /\b(item|part)(\s*#|\s+no\.?)?\b[\s\S]{0,60}\bdescription\b/i.test(own) && /\b(qty|quantity|ordered|each|ea)\b/i.test(own);
+  if (/\b(item|part)(\s*#|\s+no\.?)?\b[\s\S]{0,60}\bdescription\b/i.test(own) && /\b(qty|quantity|ordered|each|ea)\b/i.test(own)) return true;
+  // A bare parts list with quantities is an RFQ (Global Welding 11/10: Helen's "Description / QTY" and twenty lines of
+  // pipe, flanges and studs, with "quote" nowhere in it, was read as no RFQ, and her second list to Jacob as the first).
+  const specLines = own.split(/\r?\n/).filter((l) => /\d+(?:-\d+\/\d+)?"|\b\d+#|\bsch(?:edule)?\s*\d|\bS\/(?:XH|XS|STD|\d+)\b|\bSA-?\d{3}\b|\bA-?(?:105|106|234|403|182|516)\b|\bASTM\b/i.test(l)).length;
+  return /\bdescription\b[\s\S]{0,40}\b(qty|quantity)\b/i.test(own) && specLines >= 3;
 }
 
 /**

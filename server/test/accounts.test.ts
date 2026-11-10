@@ -219,6 +219,9 @@ test("an RFQ typed into the email counts, and a teammate looped in means it's wi
   const josipa = "Hi, I think this will me an idea of how much the cost difference is. I am not sure that I like your website, I am sorry. Do you have a line card I can have?\n\nItem Description Ordered\nWELDNUT OFFSET 1/4-20 18-8SS 100\n\nOn Wed, Sep 24, 2026 at 11:25 AM Walt Boxwell wrote:\n> Hi Josipa";
   assert.equal(rfqInBody("RE: Westgate Supply – line card", josipa), true);
   assert.equal(rfqInBody("Re: line card", "Please quote the attached"), true);
+  const helen = "Description\nQTY\nFLANGE 14\" 150# S/XH RFWN SA-105N\n4\nELBOW 90 LR 14\" S/XH SA-234-WPB\n2\nPIPE 3\" S/40 SMLS SA-312-304\n20\nSTUDS 1-1/4\" X 7\" W/2 HNN TEFLON BLUE\n80\nBest Regards,\nHelen Heng\nPurchasing";
+  assert.equal(rfqInBody("RE: Westgate Supply: pipe and fittings, valves, fasteners, gaskets", helen), true, "a bare parts list with quantities (Global Welding 11/10)");
+  assert.equal(rfqInBody("RE: Westgate Supply: pipe and fittings", "Description\nQTY\nThanks, we'll keep you in mind."), false, "a header alone isn't a list");
   assert.equal(rfqInBody("RFQ 26-0100", "Hello Jacob, see below."), true, "a new RFQ email");
   assert.equal(rfqInBody("Re: Westgate Supply – line card", "Thanks for sending that over. I'll be sure to reach out when we have a materials list or RFQ."), false, "a mention, not an ask (Metal Rise)");
   // 10/28: the scan celebrated an out-of-office reply in an "Amwell - RFQ" thread, an order-status email with a parts
