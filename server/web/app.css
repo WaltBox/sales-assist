@@ -822,6 +822,20 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .gi-sends ul { margin: 6px 0 0; padding-left: 18px; }
 .gi-list { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 8px; font-size: 13px; }
 .gi-oc { font-family: var(--label); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--ink-line); }
+/* who each guest has (11/10) */
+.gi-leads { margin-top: 8px; font-size: 13px; }
+.gi-leads > summary { cursor: pointer; font-family: var(--label); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; }
+.gleads { margin-top: 8px; }
+.gleads-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-bottom: 8px; }
+.gleads-bar .heatq { flex: 1 1 220px; max-width: 340px; }
+.gleads-bar .tabs { margin: 0; }
+.gleads-scroll { max-height: 440px; overflow: auto; border: 1px solid var(--ink-line); }
+.gleads table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.gleads th { position: sticky; top: 0; background: var(--paper-dark); font-family: var(--label); font-weight: 400; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; text-align: left; padding: 6px 8px; }
+.gleads td { padding: 5px 8px; border-top: 1px solid var(--ink-line); vertical-align: top; }
+.gleads tr.called td { background: rgba(11, 107, 47, .04); }
+.gleads td .what { display: block; font-size: 11.5px; }
+.gleads td.notes { max-width: 260px; }
 
 /* Chrome extension page (10/19). */
 .extpage .extsteps { margin: 8px 0 14px; padding-left: 22px; line-height: 1.55; max-width: 760px; }

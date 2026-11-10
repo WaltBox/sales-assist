@@ -2018,22 +2018,81 @@ function extensionPage() {
 function guestUpload(x) {
   const u = (state.guestUp || {})[x.id] || {};
   const set = (v) => { state.guestUp = { ...(state.guestUp || {}), [x.id]: v }; render(); };
-  const input = el("input", { type: "file", accept: ".csv,.xlsx,.xls", style: "display:none", onchange: async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    if (x.list && !confirm(`Replace ${x.name}'s list "${x.list.name}" (${x.list.called} of ${x.list.total} called) with ${f.name}? Their outcomes on the old list go with it, so download it first if you want them.`)) return;
-    set({ busy: true });
-    try {
-      const rows = await window.readSheet(f);
-      const r = await api(`/api/guests/${x.id}/list`, { name: f.name.replace(/\.[^.]+$/, ""), rows });
-      set({ msg: `${r.list.total} companies loaded for ${x.name.split(" ")[0]}${r.filled ? ` (${r.filled} phones filled in from Close)` : ""}.${r.notFound ? ` ${r.notFound} had no phone in Close and were left out.` : ""} They'll see them when they open their link.` });
-      await loadGuests();
-    } catch (err) { set({ error: err.message }); }
-  } });
+  // A sheet stacks onto their list (Walt 11/10: "those leads need to stack, rn they just replace"); Replace is still there.
+  const pick = (mode) => {
+    const input = el("input", { type: "file", accept: ".csv,.xlsx,.xls", style: "display:none", onchange: async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      if (mode === "replace" && x.list && !confirm(`Start ${x.name}'s list over with ${f.name}? The ${x.list.total} companies on it now go, with their outcomes (download it first if you want them). The calls they've made still count.`)) return;
+      set({ busy: true });
+      try {
+        const rows = await window.readSheet(f);
+        const r = await api(`/api/guests/${x.id}/list`, { name: f.name.replace(/\.[^.]+$/, ""), rows, mode });
+        const first = x.name.split(" ")[0];
+        const what = mode === "replace" || !x.list ? `${r.list.total} companies loaded for ${first}` : `${r.added} added to ${first}'s list${r.skipped ? ` (${r.skipped} already on it)` : ""}, ${r.list.total} on it now`;
+        set({ msg: `${what}${r.filled ? ` (${r.filled} phones filled in from Close)` : ""}.${r.notFound ? ` ${r.notFound} had no phone in Close and were left out.` : ""} They'll see it on their link.` });
+        delete (state.guestLists || {})[x.id];
+        await loadGuests();
+      } catch (err) { set({ error: err.message }); }
+    } });
+    document.body.append(input); input.click(); setTimeout(() => input.remove(), 60000);
+  };
   return el("div", { class: "gi-up" }, [
-    el("button", { class: "btn small", disabled: !!u.busy, text: u.busy ? "Loading… (filling phones in from Close can take a minute)" : x.list ? "Upload a new list for them" : "Upload their list", onclick: () => input.click() }), input,
-    el("span", { class: "sub2", text: "CSV or Excel. A Close export works too: phones, states and contacts are filled in from Close." }),
+    el("button", { class: "btn small", disabled: !!u.busy, text: u.busy ? "Loading… (filling phones in from Close can take a minute)" : x.list ? "Add a sheet to their list" : "Upload their list", onclick: () => pick("add") }),
+    x.list && !u.busy ? el("button", { class: "linkbtn small3", title: "The list starts over with this sheet", text: "or replace it", onclick: () => pick("replace") }) : null,
+    el("span", { class: "sub2", text: "CSV or Excel. A Close export works too: phones, states and contacts are filled in from Close. A company already on the list is skipped." }),
     u.msg ? el("span", { class: "gmsgok small3", text: u.msg }) : null,
     u.error ? el("span", { class: "bad small", text: u.error }) : null,
+  ]);
+}
+
+// Who each guest has (Walt 11/10): the whole list, with a search box and a called / not-called switch.
+async function loadGuestList(id) {
+  state.guestLists = state.guestLists || {};
+  state.guestLists[id] = { busy: true };
+  render();
+  try { const r = await api(`/api/guests/${id}/list`); state.guestLists[id] = { list: r.list, q: "", only: "all" }; }
+  catch (e) { state.guestLists[id] = { error: e.message }; }
+  render();
+}
+function guestLeads(x) {
+  const gl = (state.guestLists || {})[x.id];
+  const open = !!(state.guestOpen || {})[x.id];
+  return el("details", { class: "gi-leads", open, ontoggle: (e) => {
+    state.guestOpen = { ...(state.guestOpen || {}), [x.id]: e.currentTarget.open };
+    if (e.currentTarget.open && !gl) loadGuestList(x.id);
+  } }, [
+    el("summary", { text: `Their leads · ${x.list.total}` }),
+    !gl || gl.busy ? el("p", { class: "loading", text: "Loading…" })
+      : gl.error ? el("p", { class: "bad small", text: gl.error })
+        : guestLeadsTable(x, gl),
+  ]);
+}
+function guestLeadsTable(x, gl) {
+  const L = gl.list.leads;
+  const q = gl.q.trim().toLowerCase();
+  const rows = L.filter((l) => (gl.only === "all" || (gl.only === "called" ? l.outcome : !l.outcome)) && (!q || `${l.company} ${l.phone} ${l.city} ${l.state} ${l.askFor} ${l.gotName || ""} ${l.notes}`.toLowerCase().includes(q)));
+  const when = (iso) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+  const uploads = gl.list.uploads || [];
+  return el("div", { class: "gleads" }, [
+    el("div", { class: "gleads-bar" }, [
+      el("input", { class: "heatq", placeholder: "Find a company, phone, city…", value: gl.q, oninput: (e) => { gl.q = e.target.value; render(); } }),
+      el("div", { class: "tabs" }, [["all", `All ${L.length}`], ["todo", `Not called ${L.filter((l) => !l.outcome).length}`], ["called", `Called ${L.filter((l) => l.outcome).length}`]].map(([k, label]) => el("button", { class: `tab${gl.only === k ? " on" : ""}`, onclick: () => { gl.only = k; render(); } }, [label]))),
+      uploads.length > 1 ? el("span", { class: "sub2", text: `${uploads.length} sheets: ${uploads.map((u) => `${u.name} (${u.count})`).join(", ")}` }) : null,
+    ]),
+    !rows.length ? el("p", { class: "empty", text: "Nothing matches." }) : el("div", { class: "gleads-scroll" }, [el("table", {}, [
+      el("thead", {}, [el("tr", {}, ["#", "Company", "Phone", "Where", "Ask for", "Outcome", "Called", "Name they got", "Notes"].map((h) => el("th", { text: h })))]),
+      el("tbody", {}, rows.map((l) => el("tr", { class: l.outcome ? "called" : "" }, [
+        el("td", { class: "mono muted", text: l.i + 1 }),
+        el("td", {}, [l.leadId ? el("a", { href: closeLead(l.leadId), target: "_blank", rel: "noopener", text: l.company }) : el("span", { text: l.company }), l.what ? el("span", { class: "sub2 what", text: l.what }) : null]),
+        el("td", { class: "mono", text: l.phone }),
+        el("td", { text: [l.city, l.state].filter(Boolean).join(", ") }),
+        el("td", { text: l.askFor }),
+        el("td", {}, [l.outcome ? el("span", { class: "gi-oc", text: l.outcome }) : el("span", { class: "muted", text: "–" })]),
+        el("td", { class: "muted", text: when(l.outcomeAt) }),
+        el("td", { text: l.gotName || "" }),
+        el("td", { class: "notes", text: l.notes || "" }),
+      ]))),
+    ])]),
   ]);
 }
 
@@ -2081,7 +2140,7 @@ function guestsPage() {
           ]),
           // Their call list (10/15): how far along, how it's going, and the sheet back with their outcomes.
           x.list ? el("div", { class: "gi-list" }, [
-            el("span", {}, [el("strong", { text: x.list.name }), ` · ${x.list.called} of ${x.list.total} called`]),
+            el("span", {}, [el("strong", { text: x.list.name }), x.list.uploads > 1 ? ` + ${x.list.uploads - 1} more sheet${x.list.uploads > 2 ? "s" : ""}` : "", ` · ${x.list.called} of ${x.list.total} called`]),
             ...Object.entries(x.list.by).sort((a, b) => b[1] - a[1]).map(([o, n]) => el("span", { class: "gi-oc", text: `${o} ${n}` })),
             el("button", { class: "linkbtn small3", text: "Download with their outcomes", onclick: async () => {
               const res = await fetch(`/api/guests/${x.id}/list.csv`, { headers: { authorization: `Bearer ${token}` } });
@@ -2090,6 +2149,7 @@ function guestsPage() {
               const a = el("a", { href: url, download: `${x.list.name} - ${x.name}.csv` }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
             } }),
           ]) : el("p", { class: "sub2", text: "No call list uploaded yet." }),
+          x.list ? guestLeads(x) : null,
           // Upload their leads for them (10/21): the same as they would from their link.
           guestUpload(x),
           x.sends.length ? el("details", { class: "gi-sends" }, [el("summary", { text: "What they sent" }),

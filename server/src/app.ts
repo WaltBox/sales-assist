@@ -392,9 +392,12 @@ export function createApp(appDeps: AppDeps) {
     } catch (err) { next(err); }
   };
   app.get("/api/guest/:token/list", guestRoute(async (_req, g) => ({ list: await getList(g.repId, g.guest.id) })));
+  // Since 11/10 a sheet stacks onto the list; `mode: "replace"` starts it over.
+  const listMode = (req: Request) => (req.body?.mode === "replace" ? "replace" : "add") as "add" | "replace";
   app.post("/api/guest/:token/list", guestRoute(async (req, g) => {
     const fill = await fillFromClose(await depsFor(g.rep), Array.isArray(req.body?.rows) ? req.body.rows : []);
-    return { list: await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows }), filled: fill.filled, notFound: fill.notFound };
+    const { added, skipped, ...list } = await putList(g.repId, g.guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows }, { mode: listMode(req) });
+    return { list, added, skipped, filled: fill.filled, notFound: fill.notFound };
   }));
   // Taps, batched by the page and sent one save at a time; Close notes go after the answer (10/15).
   const Mark = z.object({ i: z.number().int().min(0), outcome: z.string().max(40).nullable().optional(), notes: z.string().max(1000).nullable().optional(), email: z.string().max(200).nullable().optional(), gotName: z.string().max(200).nullable().optional() });
@@ -417,15 +420,17 @@ export function createApp(appDeps: AppDeps) {
   // The rep's side: make a link, switch it off or on, see what each guest sent.
   const guestLink = (req: Request, token: string) => `${(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0]}://${req.get("host")}/g/${token}`;
   app.get("/api/guests", authed, route(async (_req, d) => ({ guests: await Promise.all((await listGuests(d.rep.closeUserId)).map(async ({ tokenHash: _h, ...g }) => ({ ...g, list: listSummary(await getList(d.rep.closeUserId, g.id)) }))) })));
-  // Upload a guest's call list for them (10/21): the same as they would from their link; it replaces theirs.
+  // Upload a guest's call list for them (10/21): the same as they would from their link. It stacks (11/10).
   app.post("/api/guests/:id/list", authed, route(async (req, d) => {
     const guest = (await listGuests(d.rep.closeUserId)).find((g) => g.id === String(req.params.id));
     if (!guest) throw new GuestError(404, "No guest link with that id.");
     // A Close export has no phones: those are filled in from Close first (10/21).
     const fill = await fillFromClose(d, Array.isArray(req.body?.rows) ? req.body.rows : []);
-    const list = await putList(d.rep.closeUserId, guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows });
-    return { list: listSummary(list), filled: fill.filled, notFound: fill.notFound };
+    const list = await putList(d.rep.closeUserId, guest, { name: typeof req.body?.name === "string" ? req.body.name : "", rows: fill.rows }, { mode: listMode(req) });
+    return { list: listSummary(list), added: list.added, skipped: list.skipped, filled: fill.filled, notFound: fill.notFound };
   }));
+  // The whole list, to see who each guest has (Walt 11/10).
+  app.get("/api/guests/:id/list", authed, route(async (req, d) => ({ list: await getList(d.rep.closeUserId, String(req.params.id)) })));
   app.get("/api/guests/:id/list.csv", authed, async (req, res, next) => {
     try {
       const d = res.locals.deps as Deps;

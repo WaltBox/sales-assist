@@ -29,11 +29,18 @@ test("the same read within a few seconds comes from memory; a write forgets the 
     await s.getSetting("user_1", "pace");
     assert.equal(f.calls.filter((c) => c.method === "GET").length, 2, "one trip each for the rep and the setting");
     assert.deepEqual(s.counts, { remembered: 3, fetched: 2 });
-    // A write to settings forgets the settings reads, and only those.
+    // A write to a setting forgets that setting's reads, and only those.
+    await s.getSetting("user_1", "other");
     await s.putSetting("user_1", "pace", { pace: 10 });
     await s.getSetting("user_1", "pace");
+    await s.getSetting("user_1", "other");
     await s.getRep("walt@westgatesupply.com");
-    assert.equal(f.calls.filter((c) => c.method === "GET").length, 3, "the setting was read again, the rep wasn't");
+    assert.equal(f.calls.filter((c) => c.method === "GET").length, 4, "pace was read again; other and the rep weren't");
+    // The same for one cache key.
+    await s.cacheGet("race:live:a"); await s.cacheGet("race:team");
+    await s.cacheSet("race:live:a", 1, 1000);
+    await s.cacheGet("race:live:a"); await s.cacheGet("race:team");
+    assert.equal(f.calls.filter((c) => c.url.includes("/brief_cache?")).length, 4, "two reads, the write, and one read again");
     // Two askers at once share one trip.
     await Promise.all([s.getSetting("user_2", "pace"), s.getSetting("user_2", "pace")]);
     assert.equal(f.calls.filter((c) => c.url.includes("user_2")).length, 1);

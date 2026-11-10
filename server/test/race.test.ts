@@ -63,8 +63,12 @@ test("West Game: a guest plays while their link is on; their calls are the marks
   assert.deepEqual([lane.dials, lane.reached, lane.lineCards], [2, 1, 1]);
   assert.equal(lane.points, 2 * POINTS.dial + POINTS.reached + POINTS.lineCard);
 
-  // A new list mid-day doesn't wipe the calls already made (10/27: Micah went to 0).
-  await putList(ownerId, guest, { name: "Afternoon", rows: [{ company: "D Co", phone: "5551110003" }] });
+  // A new list mid-day doesn't wipe the calls already made (10/27: Micah went to 0). Since 11/10 a sheet stacks onto
+  // the list, so the calls simply stay on it; replacing the list keeps them aside.
+  await putList(ownerId, guest, { name: "Noon", rows: [{ company: "E Co", phone: "5551110004" }] });
+  const stacked = (await teamRace(team, ownerId, { fresh: true })).lanes.find((l) => l.email === `guest:${guest.id}`)!;
+  assert.deepEqual([stacked.dials, stacked.reached], [2, 1], "stacked: the morning's calls are still on the list");
+  await putList(ownerId, guest, { name: "Afternoon", rows: [{ company: "D Co", phone: "5551110003" }] }, { mode: "replace" });
   const after = (await teamRace(team, ownerId, { fresh: true })).lanes.find((l) => l.email === `guest:${guest.id}`)!;
   assert.deepEqual([after.dials, after.reached], [2, 1], "the morning's calls still count");
   const { earlierCalls } = await import("../src/guests.js");

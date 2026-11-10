@@ -158,7 +158,9 @@ export type ListLead = {
   /** The name they got on the call ("Got a name", 10/15): who to ask for next time. */
   gotName?: string;
 };
-export type CallList = { name: string; uploadedAt: string; leads: ListLead[] };
+/** One upload onto the list (11/10: lists stack). */
+export type ListUpload = { name: string; at: string; count: number };
+export type CallList = { name: string; uploadedAt: string; leads: ListLead[]; uploads?: ListUpload[] };
 const LIST_MAX = 3000;
 const listKey = (guestId: string) => `guestList:${guestId}`;
 
@@ -166,20 +168,41 @@ export async function getList(repId: string, guestId: string): Promise<CallList 
   return store.getSetting<CallList>(repId, listKey(guestId));
 }
 
-/** A new list from the guest's sheet (already split into rows in their browser); replaces any earlier one. */
-export async function putList(repId: string, guest: Guest, body: { name?: string; rows: Array<Record<string, unknown>> }): Promise<CallList> {
+/** A company's fingerprint for "already on the list": the phone's digits, else the name without punctuation. */
+const sameAs = (l: { company: string; phone: string }) => { const digits = l.phone.replace(/\D/g, ""); return digits.length >= 7 ? `p:${digits.slice(-10)}` : `c:${l.company.toLowerCase().replace(/[^a-z0-9]/g, "")}`; };
+
+/**
+ * A sheet from the guest (already split into rows in their browser). Since 11/10 it stacks: the new companies go
+ * on the end of the list they're working, their outcomes so far untouched, and a company already on the list is
+ * skipped. `mode: "replace"` is the old way: the list starts over (the calls made on the old one are kept aside).
+ */
+export async function putList(repId: string, guest: Guest, body: { name?: string; rows: Array<Record<string, unknown>> }, opts: { mode?: "add" | "replace" } = {}): Promise<CallList & { added: number; skipped: number }> {
   const s = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
   const rows = (body.rows ?? []).slice(0, LIST_MAX);
-  const leads: ListLead[] = rows.map((r, i) => ({
-    i, company: s(r.company, 160), phone: s(r.phone, 40), askFor: s(r.askFor, 120) || "Purchasing manager", what: s(r.what, 400),
+  const fresh: ListLead[] = rows.map((r) => ({
+    i: 0, company: s(r.company, 160), phone: s(r.phone, 40), askFor: s(r.askFor, 120) || "Purchasing manager", what: s(r.what, 400),
     city: s(r.city, 60), state: s(r.state, 30).toUpperCase().slice(0, 2), email: s(r.email, 160), notes: s(r.notes, 1000),
     outcome: (OUTCOMES as readonly string[]).includes(s(r.outcome, 40)) ? (s(r.outcome, 40) as Outcome) : null, outcomeAt: null, leadId: null,
   })).filter((l) => l.company && l.phone);
-  if (!leads.length) throw new GuestError(400, "Couldn't find any rows with a company and a phone number in that file.");
-  const list: CallList = { name: s(body.name, 80) || "Call list", uploadedAt: new Date().toISOString(), leads };
-  await keepEarlierCalls(repId, guest.id);
+  if (!fresh.length) throw new GuestError(400, "Couldn't find any rows with a company and a phone number in that file.");
+  const name = s(body.name, 80) || "Call list";
+  const now = new Date().toISOString();
+  const old = opts.mode === "replace" ? null : await getList(repId, guest.id).catch(() => null);
+  if (!old) {
+    const leads = fresh.map((l, i) => ({ ...l, i }));
+    const list: CallList = { name, uploadedAt: now, leads, uploads: [{ name, at: now, count: leads.length }] };
+    if (opts.mode === "replace") await keepEarlierCalls(repId, guest.id);
+    await store.putSetting(repId, listKey(guest.id), list);
+    return { ...list, added: leads.length, skipped: 0 };
+  }
+  // Stacking: the same company twice (this sheet against the list, or twice in this sheet) goes on once.
+  const seen = new Set(old.leads.map(sameAs));
+  const added: ListLead[] = [];
+  for (const l of fresh) { const k = sameAs(l); if (seen.has(k)) continue; seen.add(k); added.push({ ...l, i: old.leads.length + added.length }); }
+  if (old.leads.length + added.length > LIST_MAX) throw new GuestError(400, `That would put the list over ${LIST_MAX} companies. Replace it instead, or trim the sheet.`);
+  const list: CallList = { ...old, uploadedAt: now, leads: [...old.leads, ...added], uploads: [...(old.uploads ?? [{ name: old.name, at: old.uploadedAt, count: old.leads.length }]), { name, at: now, count: added.length }] };
   await store.putSetting(repId, listKey(guest.id), list);
-  return list;
+  return { ...list, added: added.length, skipped: fresh.length - added.length };
 }
 
 // ---------- calls from earlier lists (Walt 10/27: Micah uploaded a new list mid-day and his calls went to 0) ----------
@@ -284,7 +307,8 @@ export function listSummary(list: CallList | null) {
   if (!list) return null;
   const by: Record<string, number> = {};
   for (const l of list.leads) if (l.outcome) by[l.outcome] = (by[l.outcome] ?? 0) + 1;
-  return { name: list.name, uploadedAt: list.uploadedAt, total: list.leads.length, called: list.leads.filter((l) => l.outcome).length, by };
+  const uploads = list.uploads ?? [{ name: list.name, at: list.uploadedAt, count: list.leads.length }];
+  return { name: list.name, uploadedAt: list.uploadedAt, total: list.leads.length, called: list.leads.filter((l) => l.outcome).length, by, uploads: uploads.length, latest: uploads[uploads.length - 1] };
 }
 
 /** The list back as a spreadsheet (CSV), with what the guest filled in. */

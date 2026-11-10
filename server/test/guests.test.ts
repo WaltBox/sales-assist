@@ -223,3 +223,32 @@ test("a Close export uploads (10/21): rows with a company and no phone get the p
   assert.deepEqual(list.leads.map((l) => l.company), ["Synergy Fabrication Inc", "Has A Phone LLC"], "no phone anywhere: left out");
   assert.ok(!close.writes.length, "reading only");
 });
+
+test("lists stack (Walt 11/10): a second sheet goes on the end, outcomes stay, a company already there is skipped; replace still starts over", async () => {
+  const { putList, getList, markListLead, listSummary, earlierCalls } = await import("../src/guests.js");
+  const repId = "user_guestStack";
+  const close = new FakeClose();
+  const d: Deps = { close, llm: demoLlm, rep: rep(repId) };
+  const { guest } = await createGuest(repId, "Charlie Day");
+  const first = await putList(repId, guest, { name: "Monday", rows: [{ company: "Accel Fire", phone: "(888) 952-2235" }, { company: "Rodda Electric", phone: "(925) 240-6024" }] });
+  assert.deepEqual([first.added, first.skipped, first.uploads?.length], [2, 0, 1]);
+  close.findLeadsResult = [{ id: DEMO_LEAD_ID, display_name: "Rodda Electric" }];
+  await markListLead(d, guest, 1, { outcome: "Voicemail", notes: "try Renee" });
+  // The afternoon sheet: one new, one already on the list by phone, one already on it by name.
+  const second = await putList(repId, guest, { name: "Tuesday", rows: [
+    { company: "Dynasel USA", phone: "555-000-1111" }, { company: "RODDA ELECTRIC INC", phone: "925.240.6024" }, { company: "Accel Fire", phone: "" , email: "x" },
+  ] });
+  assert.deepEqual([second.added, second.skipped], [1, 1], "the blank-phone row was dropped before matching; the phone match was skipped");
+  const list = (await getList(repId, guest.id))!;
+  assert.deepEqual(list.leads.map((l) => [l.i, l.company]), [[0, "Accel Fire"], [1, "Rodda Electric"], [2, "Dynasel USA"]]);
+  assert.equal(list.leads[1].outcome, "Voicemail", "what they'd called stays");
+  assert.equal(list.leads[1].notes, "try Renee");
+  assert.equal(list.name, "Monday", "the list keeps its first name");
+  assert.deepEqual(list.uploads?.map((u) => [u.name, u.count]), [["Monday", 2], ["Tuesday", 1]]);
+  const sum = listSummary(list)!;
+  assert.deepEqual([sum.total, sum.called, sum.uploads, sum.latest.name], [3, 1, 2, "Tuesday"]);
+  // Replace: the list starts over, and the call they made is kept aside for the game.
+  const third = await putList(repId, guest, { name: "Fresh", rows: [{ company: "New Co", phone: "555-222-3333" }] }, { mode: "replace" });
+  assert.deepEqual([third.leads.length, third.name, third.uploads?.length], [1, "Fresh", 1]);
+  assert.deepEqual((await earlierCalls(repId, guest.id)).map((x) => [x.company, x.outcome, x.list]), [["Rodda Electric", "Voicemail", "Monday"]]);
+});

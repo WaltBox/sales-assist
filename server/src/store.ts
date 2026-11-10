@@ -183,7 +183,7 @@ export class FileStore implements Store {
 // table forgets that table's reads, so a copy of the server never serves what it just changed as old news; another
 // copy can be behind by at most the table's few seconds. Reads in flight are shared, so a burst of the same read
 // is one request.
-const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 3_000, reviews: 5_000, automations: 5_000, users: 10_000 };
+const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000 };
 /** Timestamps in a query rounded down to ten seconds, so "since now" asked twice in a row is the same read. */
 const readKey = (pathAndQuery: string) => pathAndQuery.replace(/(\d{4}-\d{2}-\d{2}T\d{2}(?::|%3A)\d{2}(?::|%3A))(\d)\d(?:\.\d{1,3})?Z/g, "$10.000Z");
 
@@ -200,7 +200,14 @@ export class SupabaseStore implements Store {
     const table = pathAndQuery.split("?")[0];
     const ttl = READ_TTL_MS[table] ?? 0;
     if (method !== "GET") {
-      for (const k of this.reads.keys()) if (k.startsWith(`${table}?`) || k === table) this.reads.delete(k);
+      // A write forgets the reads it could change: one setting, one cache key (a write to settings lands every few
+      // seconds, and forgetting the whole table each time left the memory with nothing to answer from).
+      const b = (body ?? {}) as Record<string, unknown>;
+      const only = table === "settings" && typeof b.rep_id === "string" && typeof b.key === "string" ? `settings?${this.q({ rep_id: `eq.${b.rep_id}`, key: `eq.${b.key}` })}`
+        : table === "brief_cache" && typeof b.key === "string" ? `brief_cache?${this.q({ key: `eq.${b.key}` })}`
+          : table === "brief_cache" && method === "DELETE" && pathAndQuery.includes("key=eq.") ? pathAndQuery.split("&")[0]
+            : null;
+      for (const k of this.reads.keys()) if (only ? k.startsWith(only) : k.startsWith(`${table}?`) || k === table) this.reads.delete(k);
       return this.fetchJson<T>(method, pathAndQuery, body, prefer);
     }
     if (!ttl) { this.counts.fetched++; return this.fetchJson<T>(method, pathAndQuery, body, prefer); }
