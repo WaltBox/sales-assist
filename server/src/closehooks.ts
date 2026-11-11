@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Deps } from "./assistant.js";
 import type { CloseWebhook, CloseWebhookEvent } from "./close.js";
 import { config } from "./config.js";
-import { advance, reviewsForCall } from "./queue.js";
 import { store } from "./store.js";
 
 /**
@@ -181,16 +180,3 @@ export async function handleCloseEvent(ev: CloseEvent, ctx: HookContext): Promis
   }));
   console.info(`${new Date().toISOString()} [close] ${kind} ${ev.leadId ?? "-"} by ${ev.userId ?? "-"} (${Date.now() - t0}ms)${notes.length ? `: ${notes.join("; ")}` : ""}`);
 }
-
-// A call changed (its transcript landed, or it ended): the review waiting on it builds now. This is what the older
-// /api/webhooks/close subscription did; the feed does it for every call event it gets.
-onCloseEvent("reviews", async (ev, ctx) => {
-  if (ev.objectType !== "activity.call" || !ev.objectId) return;
-  let n = 0;
-  for (const it of await reviewsForCall(ev.objectId)) {
-    if (it.state !== "building") continue;
-    const d = await ctx.depsForUser(it.repId);
-    if (d) { await advance(d, it.id); n++; }
-  }
-  return n ? `advanced ${n} review${n === 1 ? "" : "s"}` : undefined;
-});

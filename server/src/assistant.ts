@@ -450,9 +450,31 @@ export type CallState =
 
 const CONNECTED = new Set(["answered"]);
 
+/**
+ * What the side panel polls every few seconds while it's open on a lead. Since 11/10 the answer comes from the lead's
+ * record, which Close's webhook brings up to date within seconds of a dial, so a call made in Close shows at once
+ * and the poll costs no Close read. Close itself is asked only when the record hasn't been read from Close in the
+ * last two minutes (no event came, or there's no record), and then at most every twenty seconds a lead.
+ */
+const RECORD_FRESH_MS = 2 * 60_000;
+const CLOSE_CHECK_MS = 20_000;
+const closeAsked = new Map<string, number>();
+/** Tests only. */
+export function resetCallStateChecks() { closeAsked.clear(); }
 export async function callState(d: Deps, leadId: string, since: string): Promise<CallState> {
-  const calls = await d.close.calls({ leadId, since, max: 100 });
-  const mine = calls.find((c) => c.user_id === d.rep.closeUserId && c.direction === "outbound");
+  const { recordFor } = await import("./accountstate.js");
+  const rec = await recordFor(d, leadId).catch(() => null);
+  const fromRecord = rec ? stateOf(rec.facts.calls.filter((c) => c.date_created >= since).map((c) => ({ ...c, recording_transcript: c.transcript ? { utterances: [{ text: "" }] } : null, voicemail_transcript: null })), d) : null;
+  if (fromRecord && Date.now() - Date.parse(rec!.facts.at) < RECORD_FRESH_MS) return fromRecord;
+  const key = `${d.rep.closeUserId}:${leadId}`;
+  const asked = closeAsked.get(key) ?? 0;
+  if (fromRecord && Date.now() - asked < CLOSE_CHECK_MS) return fromRecord;
+  closeAsked.set(key, Date.now());
+  if (closeAsked.size > 2000) closeAsked.delete(closeAsked.keys().next().value!);
+  return stateOf(await d.close.calls({ leadId, since, max: 100 }), d);
+}
+function stateOf(calls: Array<Pick<CloseCall, "id" | "user_id" | "direction" | "status" | "date_created" | "disposition" | "duration" | "recording_transcript" | "voicemail_transcript">>, d: Deps): CallState {
+  const mine = [...calls].sort((a, b) => b.date_created.localeCompare(a.date_created)).find((c) => c.user_id === d.rep.closeUserId && c.direction === "outbound");
   if (!mine) return { state: "idle" };
   if (mine.status === "created" || mine.status === "in-progress") return { state: "on_call", callId: mine.id, startedAt: mine.date_created };
   const t = mine.recording_transcript ?? mine.voicemail_transcript;

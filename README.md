@@ -73,6 +73,7 @@ This machine uses a portable Node in `.node/`. To have `npm` on your PATH, run `
 | `PORT` | `8787` | |
 | `ALLOWED_ORIGINS` | — | comma-separated `chrome-extension://…` origins |
 | `REPS_FILE` | `server/reps.json` | |
+| `APP_URL` | Vercel's production URL | where Close posts its events (the app subscribes itself on the first cron run; owner's Team page → Subscribe does it by hand) |
 
 ## Development
 

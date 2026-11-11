@@ -260,7 +260,7 @@ export async function reconciledAt(repId: string): Promise<string | null> {
 // ---------- events: a change on a lead brings its records up to date ----------
 
 /** Bursts on one lead (a call's created, answered, completed, and the note) are one rebuild, a moment after the last. */
-const COALESCE_MS = 1_500;
+const COALESCE_MS = Number(process.env.RECORD_COALESCE_MS) || 1_500;
 type Pending = { timer: NodeJS.Timeout; done: Promise<void>; resolve: () => void; light: boolean; run: () => void };
 const pending = new Map<string, Pending>();
 export function scheduleRebuild(d: Deps, leadId: string, opts: { light?: boolean } = {}): Promise<void> {

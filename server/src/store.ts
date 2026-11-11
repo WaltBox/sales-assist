@@ -313,10 +313,17 @@ export class SupabaseStore implements Store {
     return rows[0] ? this.asState(rows[0]) : null;
   }
   async listAccountStates(repId: string, opts: { since?: string; select?: "full" | "meta" } = {}) {
-    const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({
-      rep_id: `eq.${repId}`, ...(opts.since ? { updated_at: `gt.${opts.since}` } : {}), select: opts.select === "meta" ? "rep_id,lead_id,company,updated_at,suspect" : "*", order: "updated_at.asc", limit: "5000",
-    })}`);
-    return rows.map(this.asState);
+    // Supabase hands back at most a thousand rows a read; a rep with more is read in pages.
+    const out: AccountStateRow[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({
+        rep_id: `eq.${repId}`, ...(opts.since ? { updated_at: `gt.${opts.since}` } : {}), select: opts.select === "meta" ? "rep_id,lead_id,company,updated_at,suspect" : "*",
+        order: "updated_at.asc,lead_id.asc", limit: "1000", offset: String(offset),
+      })}`);
+      out.push(...rows.map(this.asState));
+      if (rows.length < 1000) break;
+    }
+    return out;
   }
   async accountStatesForLead(leadId: string) {
     const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({ lead_id: `eq.${leadId}`, select: "*" })}`);

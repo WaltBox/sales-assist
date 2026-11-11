@@ -13,11 +13,11 @@ import { markReachedByHand, markReachedFromCalls, syncDialViews } from "./dialvi
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import { reconcileAccounts, reconciledAt } from "./accountstate.js";
-import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
+import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
 import { queueUntapped,
-  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, setLineCardFormat, sweep, waitingFor,
+  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, setLineCardFormat, sweep, waitingFor,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
@@ -127,7 +127,9 @@ export function createApp(appDeps: AppDeps) {
       process.env.VERCEL && !config.sessionSecret ? "SESSION_SECRET" : null,
       process.env.VERCEL && !config.cronSecret ? "CRON_SECRET" : null,
     ].filter(Boolean);
-    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", storeReads: hosted ? (store as unknown as { counts: { remembered: number; fetched: number } }).counts : null, reps: appDeps.reps.size, provider: config.provider === "openai" && process.env.OPENAI_API_KEY ? `openai (${config.openaiModel}, fast: ${config.openaiFastModel})` : `claude (${config.model})`, backup: config.provider === "openai" ? (process.env.ANTHROPIC_API_KEY ? "claude" : null) : (process.env.OPENAI_API_KEY ? config.openaiModel : null), missing });
+    res.json({ ok: missing.length === 0, model: config.model, demo: config.demo, store: hosted ? "supabase" : "file", storeReads: hosted ? (store as unknown as { counts: { remembered: number; fetched: number } }).counts : null, reps: appDeps.reps.size,
+      // The Close feed (11/10): what this server has taken in since it started, and when the last event came.
+      closeFeed: { received: hookStats.received, duplicates: hookStats.duplicates, rejected: hookStats.rejected, lastAt: hookStats.lastAt, lastKind: hookStats.lastKind, lastError: hookStats.lastError }, provider: config.provider === "openai" && process.env.OPENAI_API_KEY ? `openai (${config.openaiModel}, fast: ${config.openaiFastModel})` : `claude (${config.model})`, backup: config.provider === "openai" ? (process.env.ANTHROPIC_API_KEY ? "claude" : null) : (process.env.OPENAI_API_KEY ? config.openaiModel : null), missing });
   });
 
   // Reps: reps.json (local) plus whoever signed up (the store: a file locally, Supabase when hosted).
@@ -1024,6 +1026,18 @@ export function createApp(appDeps: AppDeps) {
     allDeps: async () => (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x),
     ownerDeps: async () => { const r = await repByEmail(config.ownerEmail).catch(() => null); return r ? depsFor(r).catch(() => null) : null; },
   };
+  // A call changed (its transcript landed, or it ended): the review waiting on it builds now. This is what the older
+  // /api/webhooks/close subscription did; the feed does it for every call event it gets.
+  onCloseEvent("reviews", async (ev) => {
+    if (ev.objectType !== "activity.call" || !ev.objectId) return;
+    let n = 0;
+    for (const it of await reviewsForCall(ev.objectId)) {
+      if (it.state !== "building") continue;
+      const d = await depsForUser(it.repId);
+      if (d) { await advance(d, it.id); n++; }
+    }
+    return n ? `advanced ${n} review${n === 1 ? "" : "s"}` : undefined;
+  });
   const closeWebhookRoute = async (req: Request, res: Response) => {
     const ts = req.header("close-sig-timestamp") ?? "", sig = req.header("close-sig-hash") ?? "";
     const raw = (req as Request & { rawBody?: Buffer }).rawBody;

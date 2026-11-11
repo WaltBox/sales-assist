@@ -1,6 +1,7 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
-import { ADMIN_DOC, dayStats, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles } from "./stats.js";
+import { onCloseEvent } from "./closehooks.js";
+import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles } from "./stats.js";
 import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
@@ -57,8 +58,10 @@ const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: n
 const RACE_KEY = "race:team";
 const LOCK_KEY = "race:building";
 /** How old the shared copy gets before someone rebuilds it. One rebuild reads ~90 Close calls per rep (10/27: running one
- * every 20s per panel, and two more after every dial, queued every Close call behind it: saves and notes took 7s each). */
-const REBUILD_MS = 2 * 60_000;
+ * every 20s per panel, and two more after every dial, queued every Close call behind it: saves and notes took 7s each).
+ * Since 11/10 Close's events move the lanes between rebuilds (each call, each line card, each RFQ email), so the
+ * rebuild is a check every quarter hour, not the way the board moves. */
+const REBUILD_MS = 15 * 60_000;
 let building: Promise<Race> | null = null;
 
 /** The race as last worked out: always the shared copy when there is one, rebuilt behind it by one server at a time.
@@ -463,26 +466,134 @@ type LiveCount = { dials: number; reached: number; lineCards: number };
 const liveCache = new Map<string, { at: number; value: LiveCount }>();
 const REACHED_TAPS = new Set(["reached_buyer", "got_name"]);
 
-/** Today's calls and line cards as this app saved them (each outcome tap, each send): our own store, no Close reads. */
+/**
+ * Today's calls and line cards as this app saved them (each outcome tap, each send) and as Close's events reported
+ * them (11/10: each call as it's dialed, each line card as it's sent, from Close itself): our own store, no Close reads.
+ */
 async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount> {
   const hit = liveCache.get(rid);
   if (hit && now.getTime() - hit.at < 2_500) return hit.value;
-  const { since } = localDay(tz, now);
-  const [items, sends] = await Promise.all([
+  const { day, since } = localDay(tz, now);
+  const [items, sends, told] = await Promise.all([
     store.listReviews<{ callId?: string | null; outcome?: string; createdAt: string }>(rid, since.toISOString()).catch(() => []),
     store.getSetting<Record<string, { at: string }>>(rid, "lineCardSends").catch(() => null),
+    store.getSetting<CallsToday>(rid, CALLS_KEY).catch(() => null),
   ]);
   // The store also hands back older items still in a working state (a failed build from last week): today's only
   // (10/28: Chase's game said 67 calls, Close 46; 30 of the app's were from earlier days).
   const calls = items.filter((it) => it.callId && it.createdAt >= since.toISOString());
+  const tapped = new Map(calls.map((it) => [it.callId!, String(it.outcome)]));
+  const fromClose = told && told.day === day ? told : null;
+  const dialed = new Set([...calls.map((it) => it.callId!), ...Object.keys(fromClose?.calls ?? {})]);
+  // Reached: what you tapped, or a call Close reported answered and long enough (a tapped voicemail isn't).
+  const reached = new Set([
+    ...calls.filter((it) => REACHED_TAPS.has(String(it.outcome))).map((it) => it.callId!),
+    ...Object.entries(fromClose?.calls ?? {}).filter(([id, c]) => c.reached && tapped.get(id) !== "voicemail").map(([id]) => id),
+  ]);
   const value = {
-    dials: new Set(calls.map((it) => it.callId)).size,
-    reached: calls.filter((it) => REACHED_TAPS.has(String(it.outcome))).length,
-    lineCards: Object.values(sends ?? {}).filter((x) => Date.parse(x.at) >= since.getTime()).length,
+    dials: dialed.size,
+    reached: reached.size,
+    lineCards: Math.max(Object.values(sends ?? {}).filter((x) => Date.parse(x.at) >= since.getTime()).length, Object.keys(fromClose?.lineCards ?? {}).length),
   };
   liveCache.set(rid, { at: now.getTime(), value });
   return value;
 }
+
+// ---------- Close's events move the game (11/10): a dial, a line card, an RFQ email, the moment Close has them ----------
+
+/** What Close's events said about today, per rep: each outbound call (and whether it was a real conversation) and
+ * each company a line card went to by hand. One setting a rep, reset when the day turns. */
+type CallsToday = { day: string; calls: Record<string, { at: string; reached?: boolean }>; lineCards: Record<string, string> };
+const CALLS_KEY = "callsToday";
+/** A call Close reported: counted as a dial at once; a conversation when it was answered and ran long enough. */
+export async function recordCallEvent(d: Deps, call: { id: string; direction?: string | null; date_created?: string | null; disposition?: string | null; duration?: number | null; status?: string | null }) {
+  if (call.direction && call.direction !== "outbound") return false;
+  const at = call.date_created ?? new Date().toISOString();
+  const day = localDay(d.rep.timeZone, new Date(at)).day;
+  if (day !== localDay(d.rep.timeZone, new Date()).day) return false;
+  const told = (await store.getSetting<CallsToday>(d.rep.closeUserId, CALLS_KEY).catch(() => null)) ?? null;
+  const cur: CallsToday = told && told.day === day ? told : { day, calls: {}, lineCards: {} };
+  const was = cur.calls[call.id];
+  const reached = call.disposition === "answered" && (call.duration ?? 0) >= 45;
+  cur.calls[call.id] = { at, reached: was?.reached || reached };
+  await store.putSetting(d.rep.closeUserId, CALLS_KEY, cur);
+  liveCache.delete(d.rep.closeUserId);
+  return true;
+}
+/** A line card Close reported sent by hand (not the sequence's): counted for its company at once. */
+export async function recordLineCardEvent(d: Deps, email: { id: string; lead_id?: string | null; date_sent?: string | null; date_created?: string | null }) {
+  const at = email.date_sent ?? email.date_created ?? new Date().toISOString();
+  const day = localDay(d.rep.timeZone, new Date(at)).day;
+  if (day !== localDay(d.rep.timeZone, new Date()).day || !email.lead_id) return false;
+  // The sequence's own sends are recorded by their Close email id: not a line card a person sent.
+  const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
+  if ((await store.listAutomations(d.rep.closeUserId, since, email.lead_id).catch(() => [])).some((r) => r.id === email.id)) return false;
+  const told = (await store.getSetting<CallsToday>(d.rep.closeUserId, CALLS_KEY).catch(() => null)) ?? null;
+  const cur: CallsToday = told && told.day === day ? told : { day, calls: {}, lineCards: {} };
+  cur.lineCards[email.lead_id] = at;
+  await store.putSetting(d.rep.closeUserId, CALLS_KEY, cur);
+  liveCache.delete(d.rep.closeUserId);
+  return true;
+}
+
+/**
+ * One incoming email, as the scan reads them: a buyer's real file, or an RFQ in the words, from a company we've
+ * emailed and not a file we sent them, is an RFQ now, the same as a tap. Null when it isn't one.
+ */
+export async function rfqFromEmail(team: Deps[], ownerId: string, e: Record<string, unknown>, opts: { have?: Set<string> } = {}): Promise<RaceTap | null> {
+  const { isAutoReply, isBounce, rfqInBody } = await import("./accounts.js");
+  if (e.direction !== "incoming" || /@westgatesupply\.com/i.test(String(e.sender ?? "")) || isBounce(e as never) || isAutoReply(e as never)) return null;
+  const t = team.find((x) => x.rep.closeUserId === e.user_id);
+  if (!t) return null;
+  const roster = await raceRoster(ownerId);
+  if (roster.excluded.includes(t.rep.email.toLowerCase())) return null;
+  const leadId = String(e.lead_id ?? "");
+  const now = new Date();
+  const id = leadId ? `${leadId}:${localDay(t.rep.timeZone, new Date(String(e.date_created ?? now.toISOString()))).day}` : "";
+  if (!leadId || (opts.have ?? new Set((await todaysTaps(ownerId, t.rep.timeZone, now)).map((x) => x.id))).has(id)) return null;
+  const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f));
+  const words = !files.length && rfqInBody(e.subject as string, e.body_text as string);
+  if (!files.length && !words) return null;
+  const history = await t.close.leadEmails(leadId).catch(() => []);
+  const sent = history.filter((h) => h.direction !== "incoming" && ["sent", "outbox"].includes(String(h.status)));
+  if (!sent.length) return null; // only companies we've reached out to, like the RFQ count
+  const ours = new Set(sent.flatMap((h) => ((h.attachments as Array<{ filename?: string }> | undefined) ?? []).map((a) => (a.filename ?? "").toLowerCase())));
+  if (files.length && files.every((f) => ours.has(f.toLowerCase()))) return null; // our own quote coming back
+  return recordRfqTap(team, ownerId, t, leadId, { how: files.length ? "file" : "email", at: String(e.date_created ?? now.toISOString()) }).catch(() => null);
+}
+
+/** What Close's events do to the game: a call moves the car, a line card scores, an RFQ email is celebrated. */
+onCloseEvent("race", async (ev, ctx) => {
+  if (ev.objectType === "activity.call" && ev.data && ev.userId) {
+    const d = await ctx.depsForUser(ev.userId);
+    if (!d) return "not a rep";
+    const c = ev.data as { id?: string; direction?: string; date_created?: string; disposition?: string; duration?: number; status?: string };
+    const counted = await recordCallEvent(d, { id: c.id ?? ev.objectId ?? "", direction: c.direction, date_created: c.date_created ?? ev.at, disposition: c.disposition, duration: c.duration, status: c.status });
+    if (!counted) return;
+    const owner = await ctx.ownerDeps();
+    if (owner) await forgetLive(owner.rep.closeUserId);
+    return "dial counted";
+  }
+  if (ev.objectType === "activity.email" && ev.data) {
+    const e = ev.data as Record<string, unknown>;
+    if (e.direction === "incoming") {
+      const owner = await ctx.ownerDeps();
+      if (!owner) return;
+      const tap = await rfqFromEmail(await ctx.allDeps(), owner.rep.closeUserId, e);
+      return tap ? `RFQ from ${tap.company} for ${tap.name}` : undefined;
+    }
+    if (ev.userId && ["sent", "outbox"].includes(String(e.status)) && ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD)) {
+      const d = await ctx.depsForUser(ev.userId);
+      if (!d) return;
+      const counted = await recordLineCardEvent(d, { id: String(e.id ?? ev.objectId ?? ""), lead_id: ev.leadId, date_sent: e.date_sent as string | null, date_created: e.date_created as string | null });
+      if (!counted) return;
+      const owner = await ctx.ownerDeps();
+      if (owner) await forgetLive(owner.rep.closeUserId);
+      return "line card counted";
+    }
+  }
+  return;
+});
 
 /** The saved race with each rep's lane brought up to what's been tapped since: Close and the app each miss some, so
  * each number is the higher of the two. An RFQ tapped (or found in an email) since the last rebuild counts on the
@@ -540,7 +651,8 @@ export async function postChat(ownerId: string, tz: string, who: { email: string
 // ---------- RFQs by email within seconds (Walt 10/27: "it takes like 15 minutes ... for the animation to come in") ----------
 
 const SCAN_KEY = "race:emailScan";
-const SCAN_MS = 30_000;
+/** Every five minutes since 11/10: Close's events bring RFQ emails within seconds; this catches what they missed. */
+const SCAN_MS = 5 * 60_000;
 
 /** Time for another look at new emails? Read by every live check, so it's one store read. */
 export async function rfqScanDue(): Promise<boolean> {
@@ -561,26 +673,11 @@ export async function scanForRfqs(team: Deps[], ownerId: string): Promise<RaceTa
   const reader = team.find((t) => t.rep.closeUserId === ownerId) ?? team[0];
   if (!reader) return [];
   const since = new Date(Math.max(Date.parse(last ?? "") || 0, now.getTime() - 10 * 60_000) - 60_000).toISOString();
-  const { isAutoReply, isBounce, rfqInBody } = await import("./accounts.js");
   const mails = await reader.close.listSince<Record<string, unknown>>("email", { since, fields: "id,lead_id,user_id,direction,sender,subject,date_created,attachments,body_text", max: 300 }).catch(() => []);
-  const roster = await raceRoster(ownerId);
   const have = new Set((await todaysTaps(ownerId, reader.rep.timeZone, now)).map((x) => x.id));
   const found: RaceTap[] = [];
   for (const e of mails) {
-    if (e.direction !== "incoming" || /@westgatesupply\.com/i.test(String(e.sender ?? "")) || isBounce(e as never) || isAutoReply(e as never)) continue;
-    const t = team.find((x) => x.rep.closeUserId === e.user_id);
-    if (!t || roster.excluded.includes(t.rep.email.toLowerCase())) continue;
-    const leadId = String(e.lead_id ?? "");
-    if (!leadId || have.has(`${leadId}:${localDay(t.rep.timeZone, new Date(String(e.date_created))).day}`)) continue;
-    const files = theirFiles(e.attachments).filter((f) => !ADMIN_DOC.test(f) && !OUR_QUOTE.test(f));
-    const words = !files.length && rfqInBody(e.subject as string, e.body_text as string);
-    if (!files.length && !words) continue;
-    const history = await t.close.leadEmails(leadId).catch(() => []);
-    const sent = history.filter((h) => h.direction !== "incoming" && ["sent", "outbox"].includes(String(h.status)));
-    if (!sent.length) continue; // only companies we've reached out to, like the RFQ count
-    const ours = new Set(sent.flatMap((h) => ((h.attachments as Array<{ filename?: string }> | undefined) ?? []).map((a) => (a.filename ?? "").toLowerCase())));
-    if (files.length && files.every((f) => ours.has(f.toLowerCase()))) continue; // our own quote coming back
-    const tap = await recordRfqTap(team, ownerId, t, leadId, { how: files.length ? "file" : "email", at: String(e.date_created) }).catch(() => null);
+    const tap = await rfqFromEmail(team, ownerId, e, { have });
     if (tap) { found.push(tap); have.add(tap.id); }
   }
   return found;

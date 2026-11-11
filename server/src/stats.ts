@@ -11,7 +11,7 @@ import { localParts, zonedTime } from "./rules.js";
 // counted from Close (calls, emails, notes, tasks) plus the rep's one-tap
 // outcomes, so a refresh always converges on Close's numbers.
 
-const LINE_CARD = "Westgate_Supply_Line_Card.pdf";
+export const LINE_CARD = "Westgate_Supply_Line_Card.pdf";
 const VM_GREETING = /leave (a|your) message|after the (tone|beep)|mailbox/i;
 const REACHED = new Set(["reached_buyer", "got_name"]);
 const DAY_MS = 24 * 3600 * 1000;
