@@ -2049,7 +2049,9 @@ function renderOnCall() {
       // is there before they hang up.
       objectiveCard(st) || el("div", { class: `stagegoal oncallgoal k-${stage.kind}` }, [el("span", { class: "label", text: stage.banner }), el("strong", { text: stage.goal })]),
       st.header && st.header.ladder && (st.header.ladder.stage === "reached" || st.header.ladder.promised) ? null : rfqButton(st),
-      st.rescue ? rescueBlock(st) : lineCardAsk(st),
+      // The line card folded to one line until the objective's button (or this row's) opens it (Walt 11/11: "send line
+      // card should maybe be hidden behind a button"); the rescue stays up when their card was never opened.
+      st.rescue ? rescueBlock(st) : lineCardRow(st),
       glanceBlock(st),
       fu ? el("div", {}, [
         el("p", { class: "label", text: "Say" }), el("p", { class: "say" }, fu.say),
@@ -2119,7 +2121,7 @@ function renderEnded() {
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
     // Send the line card from here once you've hung up, instead of staying on the call (Walt 9/29).
-    !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? el("div", { class: "afterlc" }, [lineCardAsk(st, true)]) : null,
+    !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? lineCardRow(st) : null,
     !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),
       followUpBlock(st.leadId, true),
