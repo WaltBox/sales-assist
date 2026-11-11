@@ -9,6 +9,7 @@ import { bumpBodyFor, FollowUpError, greetName, writeFollowUp, type BumpPlace } 
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { clearPick, memeFor, memesFor, memesSeen, memeTrack, type Meme } from "./memes.js";
+import { handedAway, handoffsStrict } from "./handoff.js";
 import { cadenceFor, campaignBook, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, isGenericAddress, liveCampaign, saveBook, sequenceFor, sequencePicker, STANDARD_ID, standardCampaign, type Campaign, type Sequence } from "./cadence.js";
 import { randomUUID } from "node:crypto";
 import { SequenceSchema } from "./schemas.js";
@@ -413,6 +414,10 @@ async function planDay(d: Deps, now: Date) {
   const recent = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - RAIL_LOOKBACK_DAYS * DAY).toISOString());
   const today = localDay(now, d.rep.timeZone);
   const plannedToday = recent.filter((a) => localDay(new Date(a.createdAt), d.rep.timeZone) === today && a.status !== "failed").length;
+  // Whose accounts these are (11/10): a company handed to a teammate gets their emails, never yours, and if the
+  // hand-off list can't be read, nothing goes out rather than something to someone else's account.
+  let hand: Awaited<ReturnType<typeof handoffsStrict>>;
+  try { hand = await handoffsStrict(); } catch (e) { return { planned: [], skipped: [], reason: `Couldn't read the hand-off list (${(e as Error).message}); nothing scheduled rather than emailing a teammate's accounts.` }; }
   const board = await accountsBoard(d, { fresh: true });
   const held = await heldAccounts(d);
   // Anyone who's sent an RFQ is past the line card stage: out of automatic emails for good (Walt 9/28).
@@ -426,11 +431,12 @@ async function planDay(d: Deps, now: Date) {
   // Due: the sequence says so (bumpDue), or the board's next step is an email (a promised RFQ, a quote follow-up).
   // A call flag is a call, not an email.
   const emailNext = (a: Account) => isEmailStep(a);
-  const { keep: dueAll, dropped } = dedupeDue(board.accounts.filter((a) => (emailNext(a) || a.bumpDue) && !a.rfq && !held.has(a.leadId) && !repliedRecently(a, now)), recent, { now, tz: d.rep.timeZone, arms: gaps });
+  const theirs = board.accounts.filter((a) => handedAway(hand, a.leadId, d.rep.closeUserId) && (emailNext(a) || a.bumpDue));
+  const { keep: dueAll, dropped } = dedupeDue(board.accounts.filter((a) => (emailNext(a) || a.bumpDue) && !a.rfq && !held.has(a.leadId) && !repliedRecently(a, now) && !handedAway(hand, a.leadId, d.rep.closeUserId)), recent, { now, tz: d.rep.timeZone, arms: gaps });
   // The most overdue first, so the daily cap pushes the freshest to tomorrow, not the oldest.
   const due = dueAll.sort((x, y) => (x.cadence.dueAt ?? "").localeCompare(y.cadence.dueAt ?? ""));
   const planned: Automation[] = [];
-  const skipped: Array<{ company: string; why: string }> = [...dropped, ...replied.filter((a) => a.next.kind === "bump" || a.bumpDue).map((a) => ({ company: a.company, why: `They replied ${a.lastReplyAt!.slice(0, 10)}: cooling down until ${new Date(Date.parse(a.lastReplyAt!) + REPLY_COOLDOWN_DAYS * DAY).toISOString().slice(0, 10)}.` }))];
+  const skipped: Array<{ company: string; why: string }> = [...dropped, ...theirs.map((a) => ({ company: a.company, why: `Handed to ${hand[a.leadId].toName.split(/\s+/)[0]}: their automatic emails, not yours.` })), ...replied.filter((a) => a.next.kind === "bump" || a.bumpDue).map((a) => ({ company: a.company, why: `They replied ${a.lastReplyAt!.slice(0, 10)}: cooling down until ${new Date(Date.parse(a.lastReplyAt!) + REPLY_COOLDOWN_DAYS * DAY).toISOString().slice(0, 10)}.` }))];
   // Memes (9/30): one per bump, never one the company has already had.
   const memes = await memesFor(d).catch((e) => { console.error("[memes]", (e as Error).message); return [] as Meme[]; });
   const seen = await memesSeen(d);
@@ -523,6 +529,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
   }
   const board = await accountsBoard(d, { fresh: true });
   const held = await heldAccounts(d);
+  const hand = await handoffsStrict();
   const recent = await store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - RAIL_LOOKBACK_DAYS * DAY).toISOString());
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());
   const arms = (await store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").catch(() => null)) ?? {};
@@ -541,6 +548,7 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
   const seqOf = (await sequencePicker(d.rep.closeUserId)).of;
   for (const [i, a] of keep.entries()) {
     const seq = seqOf(a.leadId);
+    if (handedAway(hand, a.leadId, d.rep.closeUserId)) { skipped.push({ company: a.company, why: `Handed to ${hand[a.leadId].toName.split(/\s+/)[0]}: their automatic emails, not yours.` }); continue; }
     const nth = a.cadence.nth;
     void everSent;
     if (nth >= MAX_BUMPS) { skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` }); continue; }
@@ -765,11 +773,12 @@ export type Forecast = { leadId: string; company: string; to: string | null; sen
 /** Every account whose next step turns into an automatic email in the next two weeks. */
 export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   const now = d.now?.() ?? new Date();
-  const [board, held, cool, recent] = await Promise.all([
+  const [board, held, cool, recent, hand] = await Promise.all([
     accountsBoard(d),
     heldAccounts(d),
     coolings(d),
     store.listAutomations(d.rep.closeUserId, new Date(now.getTime() - 7 * DAY).toISOString()),
+    handoffsStrict(),
   ]);
   const scheduled = new Set(recent.filter((a) => a.status === "scheduled").map((a) => a.leadId));
   // The meme each one will carry (picked once, so the page and the send agree) and the text it'll say.
@@ -782,6 +791,7 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   const seqOf = (await sequencePicker(d.rep.closeUserId)).of;
   for (const a of board.accounts) {
     const seq = seqOf(a.leadId);
+    if (handedAway(hand, a.leadId, d.rep.closeUserId)) continue; // a teammate's now: their emails, not yours
     if (scheduled.has(a.leadId)) continue; // already on its way: it's in the scheduled list
     if (a.rfq) continue; // sent an RFQ: out of the sequence; following up on the quote is the rep's job
     if (repliedRecently(a, now)) continue; // replied in the last 1.5 weeks: cooling down (10/12)

@@ -79,3 +79,33 @@ test("Standing rule (10/29): everything Walt's line cards bring in goes to Chase
     await store.putSetting("team", "handoffs", {});
   }
 });
+
+test("a company handed to a teammate never gets your automatic emails, and an unreadable hand-off list sends nothing (11/10)", async () => {
+  const { planBumps, forecast } = await import("../src/automations.js");
+  const close = new FakeClose({ calls: [roddaCall()] });
+  demoLineCards(close);
+  for (const e of close.sentEmails) e.user_id = "user_ha_walt";
+  for (const t of close.extraTasks) t.assigned_to = "user_ha_walt";
+  const walt: Deps = { close, llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", "user_ha_walt") };
+  await store.putSetting("team", "handoffs", {});
+  await store.putSetting("team", "leadOwnerFieldId", "cf_ha_owner");
+  await store.putSetting(walt.rep.closeUserId, "autoBumps", true);
+  await store.putSetting(walt.rep.closeUserId, "autoTestMode", false);
+  const before = await forecast(walt);
+  assert.ok(before.length > 0, "Walt has emails coming");
+  const crest = before[0];
+  // Written straight into the list, the way the standing rule does it, with Walt's board not yet rebuilt around it.
+  await store.putSetting("team", "handoffs", { [crest.leadId]: { from: "user_ha_walt", fromName: "Walt Boxwell", to: "user_ha_chase", toName: "Chase Bent", at: new Date().toISOString() } });
+  assert.ok(!(await forecast(walt)).some((f) => f.leadId === crest.leadId), "out of Walt's forecast at once");
+  const plan = await planBumps(walt, { force: true });
+  assert.ok(!plan.planned.some((p) => p.leadId === crest.leadId), "and never scheduled by Walt");
+  // The list can't be read: nothing goes out, rather than everything to whoever the board thinks owns it.
+  const real = store.getSetting.bind(store);
+  (store as { getSetting: typeof store.getSetting }).getSetting = (async (repId: string, key: string) => { if (repId === "team" && key === "handoffs") throw new Error("no answer in 10s"); return real(repId, key); }) as typeof store.getSetting;
+  try {
+    const blocked = await planBumps(walt, { force: true });
+    assert.equal(blocked.planned.length, 0);
+    assert.match(blocked.reason ?? "", /hand-off list/);
+  } finally { (store as { getSetting: typeof store.getSetting }).getSetting = real; }
+  await store.putSetting("team", "handoffs", {});
+});

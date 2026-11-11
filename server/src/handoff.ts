@@ -18,6 +18,17 @@ const KEY = "handoffs";
 export async function handoffs(): Promise<Record<string, Handoff>> {
   return (await store.getSetting<Record<string, Handoff>>("team", KEY).catch(() => null)) ?? {};
 }
+/**
+ * The hand-off list, or an error when it can't be read (11/10: for two weeks Walt's sequence kept emailing the 431
+ * companies he'd handed to Chase, every email he sent going to one of them). Anything that decides whose account a
+ * company is reads it this way: a list that can't be read is not an empty list.
+ */
+export async function handoffsStrict(): Promise<Record<string, Handoff>> {
+  const v = await store.getSetting<Record<string, Handoff>>("team", KEY);
+  return v && typeof v === "object" ? v : {};
+}
+/** Handed to someone else: not yours to email, whatever else the board says. */
+export const handedAway = (hand: Record<string, Handoff>, leadId: string, me: string) => !!hand[leadId] && hand[leadId].to !== me;
 
 /**
  * Standing rules (Walt 10/29: "make sure my heat map always goes to him"): every account one rep's line cards create

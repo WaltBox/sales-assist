@@ -5,7 +5,7 @@ import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequencePicker, type Cadence, type Sequence } from "./cadence.js";
 import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
-import { adoptByRule, cardOwner, handoffRules, handoffs } from "./handoff.js";
+import { adoptByRule, cardOwner, handoffRules, handoffsStrict } from "./handoff.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts, zonedTime } from "./rules.js";
@@ -522,7 +522,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     // The follow-up test (10/2): the account's own gap between automatic emails, once it's been dealt one.
     store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
     loadProfiles(d.rep.closeUserId),
-    handoffs(),
+    // Read strictly (11/10): a list that can't be read is an error, not "nothing was handed over".
+    handoffsStrict(),
     handoffRules(),
     // The rep's sequences from the builder (11/9), or the default; since 11/10 a company can be on one of its own.
     sequencePicker(d.rep.closeUserId),
