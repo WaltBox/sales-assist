@@ -92,6 +92,8 @@ export type Ladder = {
   label: string;
   /** The objective for this lead, in plain words. */
   objective: string;
+  /** The same as short numbered steps (Walt 11/11: "1. Reach Jim. 2. Retrieve RFQ"), for the card; empty when out. */
+  steps: string[];
   /** The one line to say, when there is one. */
   say: string | null;
   /** What the next rung pays, and what for. */
@@ -156,7 +158,19 @@ export function ladderFor(x: LadderIn): Ladder {
   const company = co(x.lead.display_name);
   const me = x.repFirst ?? "me";
   const next = (rung: Rung, points: number, label: string) => ({ rung, points, label });
-  const base = { buyer, statusLags, statusAhead, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x) };
+  const who = name ?? "the buyer";
+  const STEPS: Record<Stage, string[]> = {
+    out: [],
+    potential: ["Get the buyer's name", "Get their email"],
+    fit: ["Get the buyer's name", "Get their email"],
+    named: [`Send ${who} the card`, `Call ${who}: the last RFQ they sent out`],
+    card: [`Reach ${who}`, "Get the last RFQ they sent out"],
+    reached: ["Get the RFQ: the last one out, a quote, a PO, or three items", "Stay on until it lands, or set a day and hour"],
+    rfq: ["Price it today", "Ask what else they buy"],
+    quoted: ["Follow up on the quote", "Ask what else they buy"],
+    customer: ["Ask what else they buy"],
+  };
+  const base = { buyer, statusLags, statusAhead, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x), steps: STEPS[stage] };
   switch (stage) {
     case "out":
       return { ...base, stage, objective: "Don't dial. If that's wrong, change the status in Close.", say: null, next: null };

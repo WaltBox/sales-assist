@@ -691,6 +691,9 @@ body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bot
 .s-reached .rungpill { background: var(--red); color: #fff; border-color: var(--red); }
 .s-rfq .rungpill, .s-quoted .rungpill, .s-customer .rungpill { background: var(--navy); color: var(--paper); border-color: var(--navy); }
 .s-out .rungpill { background: var(--paper-dark); color: var(--muted); border-color: var(--ink-line); }
+.objsteps { margin: 0; padding: 0 0 0 26px; font-family: var(--sans); font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); display: flex; flex-direction: column; gap: 4px; }
+.objsteps li::marker { font-family: var(--display); color: var(--red); }
+.objnote { margin: 0; font-size: 13px; color: var(--muted); }
 .objtext { font-family: var(--sans); font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); margin: 0; }
 /* The one control (11/11): the fields for the name and email, or the one button, with what it pays beside it. */
 .objform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

@@ -1731,7 +1731,7 @@ function objectiveCard(st) {
   if (buyer && buyer.email) soFar.push(buyer.email);
   if (buyer && buyer.line) soFar.push(buyer.line);
   const box = (k) => (L.boxes || []).find((x) => x.key === k);
-  if (box("card") && box("card").done) soFar.push(box("card").hint ? `card ${box("card").hint}` : "card sent");
+  if (box("card") && box("card").done) soFar.push(box("card").hint && /^sent /.test(box("card").hint) ? `card ${box("card").hint}` : "card sent");
   if (box("reached") && box("reached").done) soFar.push("reached");
   const spot = st.spot && st.spot.here;
   return el("section", { class: `objective s-${L.stage}` }, [
@@ -1739,7 +1739,10 @@ function objectiveCard(st) {
       el("span", { class: "label objtitle", text: "Call Objective" }),
       el("span", { class: "rungpill", text: L.label }),
     ]),
-    el("p", { class: "objtext", text: L.objective }),
+    // Short numbered steps (Walt 11/11: "1. Reach Jim. 2. Retrieve RFQ"); the sentence only where there's no list,
+    // and as a note when Close's status is ahead of the facts.
+    L.steps && L.steps.length ? el("ol", { class: "objsteps" }, L.steps.map((s) => el("li", { text: s }))) : el("p", { class: "objtext", text: L.objective }),
+    L.steps && L.steps.length && L.statusAhead ? el("p", { class: "objnote", text: L.objective }) : null,
     control,
     f.error ? el("p", { class: "bad small", text: `Couldn't save: ${f.error}` }) : null,
     soFar.length ? el("p", { class: "objsofar", text: `In Close: ${soFar.join(" · ")}` }) : null,
