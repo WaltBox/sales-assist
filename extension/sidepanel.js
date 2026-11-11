@@ -1648,40 +1648,51 @@ function objectionTap(b) {
     el("p", { class: "say", text: b.objection_response }),
   ]);
 }
-/** Next up (11/11): the queue's next card, opened in Close. The server applies the voicemail breaker. */
-function nextUpButton(spot) {
-  const n = spot && spot.next;
-  if (!n) return null;
-  return el("button", { class: "btn small nextup", text: `Next up: ${n.company}  →`, title: n.why, onclick: async () => {
-    let id = n.leadId;
-    try { const fresh = await api("/api/dial-queue/next"); if (fresh && fresh.card) id = fresh.card.leadId; } catch {}
-    openLead(id);
-  } });
+/**
+ * Call Objective (Walt 11/11): the one thing this call is for, the checklist Close ticks as it happens (name, direct
+ * line, email, card, reached, RFQ) with what each pays, and the one action that moves it. No "next" button: they move
+ * lead to lead in Close. Paid once per company, so a lead already at Named buyer never shows "find the name" again.
+ */
+function objectiveCard(st) {
+  const L = st.header && st.header.ladder;
+  if (!L) return null;
+  const boxes = L.boxes || [];
+  const todo = boxes.filter((b) => !b.done);
+  const done = boxes.filter((b) => b.done);
+  const first = L.buyer ? L.buyer.name.split(/\s+/)[0] : null;
+  const spot = st.spot && st.spot.here;
+  // The action for this rung: send the card, or mark the RFQ (that button is already big and green below).
+  const action = L.stage === "named" || (L.stage === "fit" && L.buyer)
+    ? el("button", { class: "btn primary block objact", text: first ? `Send ${first} the line card` : "Send the line card", onclick: () => { st.lcOpen = true; render(); setTimeout(() => { const n = document.querySelector(".afterlc"); if (n) n.scrollIntoView({ behavior: "smooth", block: "start" }); }, 0); } })
+    : null;
+  const box = (b) => el("li", { class: `objbox${b.done ? " done" : ""}` }, [
+    el("i", { class: "objtick", "aria-hidden": "true" }),
+    el("span", { class: "objlabel", text: b.label }),
+    b.hint ? el("span", { class: "objhint", text: b.hint }) : null,
+    b.points ? el("span", { class: "objpts", text: b.done ? `+${b.points} ✓` : `+${b.points}` }) : null,
+  ]);
+  return el("section", { class: `objective s-${L.stage}` }, [
+    el("div", { class: "objhead" }, [
+      el("span", { class: "label objtitle", text: "Call Objective" }),
+      el("span", { class: "rungpill", text: L.label }),
+    ]),
+    el("p", { class: "objtext", text: L.objective }),
+    todo.length ? el("ul", { class: "objlist" }, todo.slice(0, 4).map(box)) : null,
+    done.length ? el("ul", { class: "objlist donelist" }, done.map(box)) : null,
+    action,
+    spot ? el("p", { class: "objqueue", text: `Queue ${spot.rank} of ${spot.of} · ${spot.why}` }) : null,
+    L.statusLags ? el("p", { class: "objqueue", text: "Close's status is behind; it moves when you tap an outcome." }) : null,
+  ]);
 }
-// The ladder (Walt 11/11): the rung this lead is on in Close, the one objective for it, and what the next rung pays.
-// Paid once per company, so a lead already at Named buyer shows the next rung, never "find the name" again.
+/** The call's context: which call this is, the last one, what's happened since (the ladder has the objective). */
 function stageBlock(st) {
   const g = callStage(st);
   const L = st.header && st.header.ladder;
-  const rung = L ? el("div", { class: `rung r-${L.stage}` }, [
-    el("span", { class: "rungpill", text: L.label }),
-    L.buyer ? el("span", { class: "rungbuyer", text: `${L.buyer.name}${L.buyer.title ? ` · ${L.buyer.title}` : ""}${L.buyer.direct ? "" : " · no direct line yet"}` }) : null,
-    L.statusLags ? el("span", { class: "rungnote", text: "Close's status is behind; it moves when you tap an outcome" }) : null,
-  ]) : null;
-  const spot = st.spot || null;
-  const queueLine = spot && (spot.here || spot.next) ? el("div", { class: "queueline" }, [
-    spot.here ? el("span", { class: "qhere", text: `Queue ${spot.here.rank} of ${spot.here.of} · ${spot.here.why}` }) : el("span", { class: "qhere muted", text: "Not in today's queue" }),
-    spot.breaker ? el("span", { class: "qbreak", text: spot.breaker === "mailboxes" ? "Two mailboxes in a row: next is someone who picks up" : "Three with no human: next is a quick win" }) : null,
-    nextUpButton(spot),
-  ]) : null;
-  return el("section", { class: `stagecard k-${g.kind}${L ? ` s-${L.stage}` : ""}` }, [
+  return el("section", { class: `stagecard k-${g.kind}` }, [
     el("div", { class: "stagebanner" }, [el("strong", { text: g.banner }), g.sub ? el("span", { text: g.sub }) : null]),
-    rung,
-    queueLine,
     g.last ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Last time" }), el("span", { text: g.last })]) : null,
     g.since ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Since then" }), el("span", { text: g.since })]) : null,
-    el("div", { class: "stagegoal" }, [el("span", { class: "label", text: L ? "Objective" : "Goal" }), el("strong", { text: L ? L.objective : g.goal })]),
-    L && L.next && L.next.points ? el("div", { class: "stagepts" }, [el("b", { text: `+${L.next.points}` }), el("span", { text: ` for ${L.next.label}` })]) : null,
+    L ? null : el("div", { class: "stagegoal" }, [el("span", { class: "label", text: "Goal" }), el("strong", { text: g.goal })]),
   ]);
 }
 
@@ -1735,6 +1746,7 @@ function renderPre() {
     opensChip(h),
     h.phone ? el("button", { class: "chip3 mono", title: "Copy number", text: h.phone, onclick: (e) => { navigator.clipboard.writeText(h.phone).catch(() => {}); e.currentTarget.textContent = "Copied"; setTimeout(render, 900); } }) : null,
   ]));
+  page.append(objectiveCard(st));
   page.append(stageBlock(st));
   page.append(el("section", { class: "askfor" }, [
     el("span", { class: "label", text: "Ask for" }), el("strong", { text: b.ask_for.name }),
@@ -2026,14 +2038,8 @@ function renderEnded() {
   }
   out.push(page);
   const next = listInfo && listInfo.next;
-  const qn = st.spot && st.spot.next;
   out.push(el("footer", { class: "footer" }, [
-    qn ? el("button", { class: "btn primary block", text: `Next up: ${qn.company}  →`, title: qn.why, disabled: o && o.busy, onclick: async () => {
-      let id = qn.leadId;
-      try { const fresh = await api("/api/dial-queue/next"); if (fresh && fresh.card) id = fresh.card.leadId; } catch {}
-      leaveEnded({ id, name: qn.company });
-    } })
-    : next ? el("button", { class: "btn primary block", text: `Next lead: ${next.name}  →`, disabled: o && o.busy, onclick: () => leaveEnded(next) })
+    next ? el("button", { class: "btn primary block", text: `Next lead: ${next.name}  →`, disabled: o && o.busy, onclick: () => leaveEnded(next) })
       : el("button", { class: "btn primary block", text: "Back to the call card", disabled: o && o.busy, onclick: () => leaveEnded(null) }),
     el("button", { class: "link", text: "See recent calls", onclick: () => { leaveEnded(null); view = "queue"; refreshQueue(); render(); } }),
   ]));

@@ -38,7 +38,7 @@ function setup(now = new Date("2026-11-12T14:30:00Z")) { // Thu 8:30am Central
 test("the stage from My leads: status, buyer and card, whichever is further; Avoid and the exits are out", () => {
   const base = { status: "Fit", buyer: null, cardSentAt: null, tier: "A" };
   assert.equal(stageOf(base), "fit");
-  const ron = { id: "c", name: "Ron", title: "Buyer", email: "r@x.test", phone: null, direct: true };
+  const ron = { id: "c", name: "Ron", title: "Buyer", email: "r@x.test", phone: null, direct: true, line: null };
   assert.equal(stageOf({ ...base, buyer: ron }), "named");
   assert.equal(stageOf({ ...base, buyer: ron, cardSentAt: "2026-11-10T16:00:00Z" }), "card");
   assert.equal(stageOf({ ...base, status: "Reached buyer", buyer: ron }), "reached");

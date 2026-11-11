@@ -52,7 +52,9 @@ const BUYER_TITLE = /purchas|buyer|procure|supply chain|material|sourcing|estima
 const NOT_A_PERSON = /^(main office|front desk|office|reception|general|info|sales|purchasing|accounting)$/i;
 /** A mailbox nobody owns: the part before the @ is a department word. */
 const GENERIC = /^(info|sales|accounting|accounts|ap|ar|office|main|admin|purchasing|procurement|contact|hello|support|front ?desk|billing|estimating|reception|general|service|orders|shop|quotes?|bids?|inquiries|mail|team|dispatch|hr|careers)@/i;
-export type Buyer = { id: string; name: string; title: string | null; email: string | null; phone: string | null; direct: boolean };
+export type Buyer = { id: string; name: string; title: string | null; email: string | null; phone: string | null; direct: boolean;
+  /** A line that reaches them (a direct, mobile or extension number), not the main office line. */
+  line: string | null };
 
 /** The best buyer on the lead: a named person with a buying title or a non-generic email; `direct` when there's a line or address that reaches them. */
 export function buyerOf(contacts: CloseContact[] | null | undefined): Buyer | null {
@@ -61,9 +63,10 @@ export function buyerOf(contacts: CloseContact[] | null | undefined): Buyer | nu
     const email = (c.emails ?? []).map((e) => e.email).find((e) => !GENERIC.test(e)) ?? null;
     const phone = (c.phones ?? []).find((p) => p.type && p.type !== "office")?.phone ?? (c.phones ?? [])[0]?.phone ?? null;
     const titled = BUYER_TITLE.test(c.title ?? "");
-    const direct = !!email || (c.phones ?? []).some((p) => p.type && p.type !== "office");
+    const line = (c.phones ?? []).find((p) => p.type && p.type !== "office")?.phone ?? null;
+    const direct = !!email || !!line;
     const score = (titled ? 4 : 0) + (email ? 2 : 0) + (direct ? 1 : 0);
-    return { buyer: { id: c.id, name: c.name, title: c.title ?? null, email, phone, direct }, score, titled };
+    return { buyer: { id: c.id, name: c.name, title: c.title ?? null, email, phone, direct, line }, score, titled };
   }).filter((x) => x.titled || x.buyer.email).sort((a, b) => b.score - a.score);
   return scored[0]?.buyer ?? null;
 }
@@ -95,7 +98,24 @@ export type Ladder = {
   buyer: Buyer | null;
   /** The rung Close's status says, when the lead's facts say further along (a buyer on the lead, but the status still "Fit"). */
   statusLags: boolean;
+  /** The checklist (Walt 11/11): what this call is for, ticked as Close reports it, with what each pays. */
+  boxes: Box[];
 };
+export type Box = { key: "name" | "line" | "email" | "card" | "reached" | "rfq"; label: string; done: boolean; points: number | null; hint: string | null };
+/** The boxes, by rung: the ones to do on this call come after the ones already ticked. */
+function boxesFor(stage: Stage, buyer: Buyer | null, x: LadderIn): Box[] {
+  if (stage === "out") return [];
+  const past = (r: Rung) => isOnOrPast(stage, r);
+  const first = buyer?.name.split(/\s+/)[0] ?? "the buyer";
+  return [
+    { key: "name", label: "Name", done: !!buyer, points: RUNG_POINTS.named, hint: buyer ? `${buyer.name}${buyer.title ? `, ${buyer.title}` : ""}` : "who buys pipe and fittings; a first name is fine" },
+    { key: "line", label: "Direct line", done: !!buyer?.line, points: null, hint: buyer?.line ?? "their extension or cell" },
+    { key: "email", label: "Email", done: !!buyer?.email, points: null, hint: buyer?.email ?? "theirs, not purchasing@" },
+    { key: "card", label: "Line card sent", done: !!x.cardSentAt || past("card"), points: RUNG_POINTS.card, hint: x.cardSentAt ? `sent ${new Date(x.cardSentAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : `to ${first}, not a shared inbox` },
+    { key: "reached", label: "Reached the buyer", done: past("reached"), points: RUNG_POINTS.reached, hint: past("reached") ? null : `${first} on the phone, a real conversation` },
+    { key: "rfq", label: "RFQ in", done: past("rfq"), points: RUNG_POINTS.rfq, hint: past("rfq") ? null : "the last one they sent out, or three items on the phone" },
+  ];
+}
 const RUNG_LABEL: Record<Stage, string> = {
   potential: "Not tiered yet", fit: "Discovery: find the buyer", named: "Named buyer", card: "Card sent", reached: "Reached the buyer", rfq: "RFQ received", quoted: "Quoted", customer: "Customer", out: "Not for dialing",
 };
@@ -121,7 +141,7 @@ export function ladderFor(x: LadderIn): Ladder {
   const company = co(x.lead.display_name);
   const me = x.repFirst ?? "me";
   const next = (rung: Rung, points: number, label: string) => ({ rung, points, label });
-  const base = { buyer, statusLags, label: RUNG_LABEL[stage] };
+  const base = { buyer, statusLags, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x) };
   switch (stage) {
     case "out":
       return { ...base, stage, objective: "Don't dial. If that's wrong, change the status in Close.", say: null, next: null };

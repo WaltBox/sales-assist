@@ -27,6 +27,20 @@
         "BRIEF_CACHE_FILE": "off"
       },
       "port": 8788
+    },
+    {
+      "name": "demo-ladder",
+      "runtimeExecutable": "/Users/westgate/Desktop/westgate-sales-assistant/.node/bin/node",
+      "runtimeArgs": [
+        "/Users/westgate/Desktop/westgate-sales-assistant/.claude/worktrees/fervent-kirch-037ce0/server/node_modules/tsx/dist/cli.mjs",
+        "/Users/westgate/Desktop/westgate-sales-assistant/.claude/worktrees/reverent-ardinghelli-60786d/server/src/index.ts"
+      ],
+      "env": {
+        "DEMO": "1",
+        "PORT": "8789",
+        "BRIEF_CACHE_FILE": "off"
+      },
+      "port": 8789
     }
   ]
 }
