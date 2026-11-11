@@ -375,6 +375,8 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .memescard { margin-top: 14px; }
 .memecard.skipped .pic img { opacity: .45; }
 .memecard .pill.off { background: var(--ink); color: var(--white); }
+.memecard .meta { flex-wrap: wrap; }
+.memecard .meta .acts { flex-wrap: wrap; justify-content: flex-start; row-gap: 2px; }
 .cmpenroll { display: flex; flex-direction: column; gap: 10px; background: var(--white); border: 1px solid var(--ink); padding: 12px 16px; margin: 10px 0 14px; }
 .cmpenroll-h { display: flex; flex-direction: column; gap: 2px; }
 .cmpenroll .chips { display: flex; flex-wrap: wrap; gap: 6px; }

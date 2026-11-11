@@ -1791,7 +1791,7 @@ function memeLibrary() {
         el("img", { src: (lib.previews[m.name] && lib.previews[m.name].url) || m.url, alt: m.name, loading: "lazy" }),
         m.spots && m.spots.length ? el("span", { class: "pill", title: "The text is drawn in for each buyer", text: "Text" }) : null,
         m.general ? el("span", { class: "pill team", title: m.mine ? "On the team list: every rep's rotation has it" : "A teammate shared this with everyone", text: "Team" }) : null,
-        m.skipped ? el("span", { class: "pill off", title: "Out of your rotation; the rest of the team still sends it", text: "Not yours" }) : null,
+        m.skipped ? el("span", { class: "pill off", title: "You've left this one out: it never goes in your emails. The rest of the team still sends it.", text: "You don't send it" }) : null,
       ]),
       lib.rename && lib.rename.name === m.name
         ? el("input", { class: "rename", value: lib.rename.value, autofocus: true, oninput: (e) => { lib.rename.value = e.target.value; },
@@ -1804,7 +1804,7 @@ function memeLibrary() {
         m.mine || m.general ? el("span", { class: "acts" }, [
           m.mine ? el("button", { class: "linkbtn small3", text: m.spots && m.spots.length ? "Edit text" : "Add text", onclick: () => openMemeEditor(m) }) : null,
           m.mine ? el("button", { class: "linkbtn small3", title: m.general ? "Take it off the team list; it leaves the others' rotations" : "Put it on the team list, in every rep's rotation", text: m.general ? "Unshare" : "Share", onclick: () => share(m) }) : null,
-          m.general ? el("button", { class: "linkbtn small3", title: m.skipped ? "Put it back in your rotation" : "Leave it out of your rotation; the rest of the team keeps it", text: m.skipped ? "Use it" : "Not for me", onclick: () => skip(m) }) : null,
+          m.general ? el("button", { class: "linkbtn small3", title: m.skipped ? "Put it back in your emails" : "Leave it out of your emails; the rest of the team keeps sending it", text: m.skipped ? "Send it again" : "Don't send it", onclick: () => skip(m) }) : null,
           m.mine ? el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }) : null,
         ]) : el("span", { class: "muted small3", text: "a teammate's" }),
       ]),
