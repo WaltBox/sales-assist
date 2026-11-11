@@ -132,7 +132,10 @@ export function ladderFor(x: LadderIn): Ladder {
   const status = rungOfStatus(x.lead.status_label);
   const buyer = buyerOf(x.lead.contacts);
   let stage: Stage = status ?? "potential";
-  if (stage !== "out" && x.tier === "Avoid" && !isOnOrPast(stage, "rfq")) stage = "out";
+  // The website read never overrides a person (Walt 11/11: "Qualified → Not a fit?"): an Avoid tier takes a lead off
+  // the ladder only while nobody has reached anyone there or sent them the card. Once a rep has, the tier shows on
+  // the card and the rep calls it on the next touch.
+  if (stage !== "out" && x.tier === "Avoid" && !isOnOrPast(stage, "card")) stage = "out";
   if (stage !== "out") {
     const facts: Rung = x.rfqAt ? "rfq" : x.reachedAt && buyer ? "reached" : x.cardSentAt && buyer ? "card" : buyer ? "named" : x.tier && x.tier !== "Unknown" ? "fit" : "potential";
     if (rungIndex(facts) > rungIndex(stage)) stage = facts;
