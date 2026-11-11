@@ -514,7 +514,7 @@ async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount>
 type CallsToday = {
   day: string;
   /** Each outbound call: when, which lead, and whether it was a conversation (answered, a minute or more). */
-  calls: Record<string, { at: string; leadId?: string; reached?: boolean }>;
+  calls: Record<string, { at: string; leadId?: string; reached?: boolean; vm?: boolean }>;
   /** Companies a card went to by hand (to a named person) today. */
   lineCards: Record<string, string>;
   /** Leads moved to Named buyer / Reached buyer by this rep today (the ladder, 11/11), lead → when. */
@@ -538,7 +538,8 @@ export async function recordCallEvent(d: Deps, call: { id: string; lead_id?: str
   await tally(d, day, (cur) => {
     const was = cur.calls[call.id];
     const reached = call.disposition === "answered" && (call.duration ?? 0) >= 60;
-    cur.calls[call.id] = { at, leadId: call.lead_id ?? was?.leadId, reached: was?.reached || reached };
+    const vm = (call.disposition ?? "").startsWith("vm") || call.disposition === "no-answer";
+    cur.calls[call.id] = { at, leadId: call.lead_id ?? was?.leadId, reached: was?.reached || reached, vm: was?.vm || vm };
   });
   return true;
 }

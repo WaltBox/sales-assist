@@ -13,6 +13,7 @@ import { markReachedByHand, markReachedFromCalls, syncDialViews } from "./dialvi
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import { reconcileAccounts, reconciledAt } from "./accountstate.js";
+import { cachedQueue, nextUp, queueSpot, syncQueue, syncQueues } from "./dialqueue.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
@@ -485,6 +486,13 @@ export function createApp(appDeps: AppDeps) {
   });
   // My leads (10/19): every lead whose Lead owner in Close is you, with where each stands. For the extension.
   app.get("/api/my-leads", authed, route(async (req, d) => myLeads(d, { fresh: req.query.fresh === "1" })));
+  // The dial queue (Walt 11/11): the rep's leads dealt as buyer calls, follow-ups, discovery and quick wins, with the
+  // voicemail breaker. Next up is what the panel's button opens; spot is where one lead sits; sync writes the order
+  // onto the leads in Close as queue_rank / queue_why and keeps "My queue" pointing at them.
+  app.get("/api/dial-queue", authed, route(async (req, d) => { const queue = await cachedQueue(d, { fresh: req.query.fresh === "1" }); return { ...queue, next: await nextUp(d, queue) }; }));
+  app.get("/api/dial-queue/next", authed, route((_req, d) => nextUp(d)));
+  app.get("/api/dial-queue/spot/:leadId", authed, route((req, d) => queueSpot(d, leadId(req))));
+  app.post("/api/dial-queue/sync", authed, route((_req, d) => syncQueue(d)));
   // The team (10/19): the owner sees who's signed up and can reset a teammate's password. A reset removes only
   // the login; the rep, their Close key and their data stay, and the sign-in screen asks them for a new password.
   const ownerOnly = (d: Deps) => { if (normalizeEmail(d.rep.email) !== config.ownerEmail) throw new AuthError(403, "Only the account owner can do that."); };
@@ -1096,6 +1104,8 @@ export function createApp(appDeps: AppDeps) {
         if (outOfTime(rep.email)) { lastAutoCheck = 0; break; }
         const d = await depsFor(rep).catch(() => null);
         if (!d) continue;
+        // The dial queue in Close (11/11): the day's order written onto the rep's leads, once a morning.
+        if (!config.demo) await syncQueues([d]).catch((err) => console.error(`queue ${rep.email}:`, (err as Error).message));
         // The account records (11/10): once a day, every one rebuilt from a rescan of Close, so a missed event is
         // caught up by morning. Close's webhooks keep them current the rest of the day.
         if (!config.demo) await reconcileAccounts(d).then((r) => { if (r.ran) console.info(`[records] ${rep.email}: reconciled ${r.written} accounts`); })

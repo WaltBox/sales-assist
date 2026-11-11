@@ -1,6 +1,8 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
-import { formatPhone } from "./rules.js";
+import { buyerOf, icpFieldIds, type Buyer } from "./ladder.js";
+import { formatPhone, localParts } from "./rules.js";
+import { localDay } from "./stats.js";
 import { store } from "./store.js";
 
 /**
@@ -25,6 +27,11 @@ export type MyLead = {
   task: { text: string; due: string; overdue: boolean } | null;
   /** Nobody has called or emailed them in the last 45 days. */
   untouched: boolean;
+  /** The ladder (11/11): the best buyer on the lead, the ICP tier, the state, and the hours (local) when a call was a conversation. */
+  buyer: Buyer | null; tier: string | null; state: string | null;
+  answeredHours: number[]; voicemails: number; calledToday: boolean; lastVoicemailAt: string | null;
+  /** Someone sent this lead the line card (any rep). */
+  cardSentAt: string | null;
 };
 export type MyLeads = { at: string; field: boolean; leads: MyLead[] };
 
@@ -52,16 +59,17 @@ export async function myLeads(d: Deps, opts: { fresh?: boolean } = {}): Promise<
   return buildMyLeads(d);
 }
 
-type RawLead = { id: string; display_name: string; status_label: string; contacts?: Array<{ name?: string | null; display_name?: string | null; title?: string | null; phones?: Array<{ phone: string }>; emails?: Array<{ email: string }> }> };
+type RawLead = { id: string; display_name: string; status_label: string; addresses?: Array<{ state?: string }>; contacts?: Array<{ id?: string; name?: string | null; display_name?: string | null; title?: string | null; phones?: Array<{ phone: string; type?: string }>; emails?: Array<{ email: string; type?: string }> }>; [k: `custom.${string}`]: unknown };
 
 async function buildMyLeads(d: Deps): Promise<MyLeads> {
   const me = d.rep.closeUserId;
   const now = d.now?.() ?? new Date();
   const fieldId = await ownerFieldId(d);
   if (!fieldId) return { at: now.toISOString(), field: false, leads: [] };
+  const icp = await icpFieldIds(d).catch(() => null);
   const raw: RawLead[] = [];
   for (let skip = 0; skip < 5000; skip += 200) {
-    const page = await d.close.searchLeads<RawLead>(`"custom.${fieldId}":"${me}"`, { skip, limit: 200, fields: "id,display_name,status_label,contacts" });
+    const page = await d.close.searchLeads<RawLead>(`"custom.${fieldId}":"${me}"`, { skip, limit: 200, fields: `id,display_name,status_label,contacts,addresses${icp ? `,custom.${icp.tier}` : ""}` });
     raw.push(...page.data);
     if (!page.has_more) break;
   }
@@ -69,7 +77,7 @@ async function buildMyLeads(d: Deps): Promise<MyLeads> {
   const since = new Date(now.getTime() - WINDOW_DAYS * DAY).toISOString();
   const [calls, emails, tasks, users] = await Promise.all([
     ids.size ? d.close.calls({ since, withTranscripts: false, max: 6000 }).catch(() => []) : [],
-    ids.size ? d.close.listSince<{ lead_id: string; direction: string; status: string; subject: string | null; date_sent: string | null; date_created: string; opens: Array<{ opened_at: string; opened_by: string | null }> | null }>("email", { since, fields: "lead_id,direction,status,subject,date_sent,date_created,opens", max: 6000 }).catch(() => []) : [],
+    ids.size ? d.close.listSince<{ lead_id: string; direction: string; status: string; subject: string | null; date_sent: string | null; date_created: string; opens: Array<{ opened_at: string; opened_by: string | null }> | null; attachments?: Array<{ filename?: string }> | null }>("email", { since, fields: "lead_id,direction,status,subject,date_sent,date_created,opens,attachments", max: 6000 }).catch(() => []) : [],
     d.close.openTasksFor(me).catch(() => []),
     d.close.users().catch(() => [] as Array<{ id: string; first_name: string }>),
   ]);
@@ -93,7 +101,18 @@ async function buildMyLeads(d: Deps): Promise<MyLeads> {
     const opens = lastOut ? (lastOut.opens ?? []).filter((o) => !ours(o.opened_by) || !o.opened_by).map((o) => o.opened_at).sort() : [];
     const replies = (emailsOf.get(l.id) ?? []).filter((e) => e.direction === "incoming").map(when).sort();
     const t = (tasksOf.get(l.id) ?? []).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
+    const today = localDay(d.rep.timeZone, now).day;
+    const mine = cs.filter((c) => c.user_id === me && c.direction === "outbound");
+    const isVm = (c: (typeof cs)[number]) => (c.disposition ?? "").startsWith("vm");
     return {
+      buyer: buyerOf((l.contacts ?? []).map((c, i) => ({ id: c.id ?? `c${i}`, name: c.name ?? c.display_name ?? "", title: c.title ?? null, emails: (c.emails ?? []).map((e) => ({ email: e.email, type: e.type ?? "office" })), phones: (c.phones ?? []).map((p) => ({ phone: p.phone, type: p.type ?? "office" })) }))),
+      tier: icp ? ((l[`custom.${icp.tier}`] as string | undefined) ?? null) : null,
+      state: l.addresses?.[0]?.state ?? null,
+      answeredHours: mine.filter((c) => c.disposition === "answered" && (c.duration ?? 0) >= 60).map((c) => localParts(new Date(c.date_created), d.rep.timeZone).hour),
+      voicemails: mine.filter(isVm).length,
+      calledToday: mine.some((c) => localDay(d.rep.timeZone, new Date(c.date_created)).day === today),
+      lastVoicemailAt: mine.filter(isVm).map((c) => c.date_created).sort().at(-1) ?? null,
+      cardSentAt: out.filter((e) => (e.attachments ?? []).some((a) => a.filename === "Westgate_Supply_Line_Card.pdf")).map(when).sort().at(-1) ?? null,
       leadId: l.id, company: l.display_name, status: l.status_label,
       contact: { name: name && name !== "Main Office" ? name : null, phone: c?.phones?.[0]?.phone ? formatPhone(c.phones[0].phone) : null, email: c?.emails?.[0]?.email ?? null },
       calls: cs.length,
