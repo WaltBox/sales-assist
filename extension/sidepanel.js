@@ -1746,7 +1746,8 @@ function renderPre() {
     opensChip(h),
     h.phone ? el("button", { class: "chip3 mono", title: "Copy number", text: h.phone, onclick: (e) => { navigator.clipboard.writeText(h.phone).catch(() => {}); e.currentTarget.textContent = "Copied"; setTimeout(render, 900); } }) : null,
   ]));
-  page.append(objectiveCard(st));
+  const objective = objectiveCard(st); // null against a server without the ladder (11/11): append(null) would print "null"
+  if (objective) page.append(objective);
   page.append(stageBlock(st));
   page.append(el("section", { class: "askfor" }, [
     el("span", { class: "label", text: "Ask for" }), el("strong", { text: b.ask_for.name }),
