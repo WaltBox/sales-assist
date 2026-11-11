@@ -21,10 +21,16 @@ export const NEW_CARD_SUBJECT = "New line card!";
 export const NEW_CARD_SENDERS = ["walt@westgatesupply.com", "chase@westgatesupply.com", "liam@westgatesupply.com"];
 /** When the new PDF went on the template: a line card sent after this is the new one. */
 export const NEW_CARD_SINCE = "2026-10-27T18:00:00Z";
+import { handoffsStrict } from "./handoff.js";
 const PLAN_KEY = "newCardPlan";
+/** Two waves share the machinery (11/10): the new card to everyone who only had the old one, and the new card from
+ *  whoever an account was handed to, so their sequence starts. */
+export type WaveKind = "newcard" | "handoff";
+const planKey = (kind: WaveKind) => (kind === "handoff" ? "handoffWavePlan" : PLAN_KEY);
 const DAY = 86_400_000;
 
 export type NewCardPlan = {
+  kind?: WaveKind;
   builtAt: string; since: string;
   leads: Array<{ leadId: string; company: string; repId: string; repName: string; lastCardAt: string }>;
   /** What happened to each lead: sent (the email id), or why it was skipped. */
@@ -34,8 +40,36 @@ export type NewCardPlan = {
 const isCard = (e: { attachments?: Array<{ filename?: string | null }> | null }) => (e.attachments ?? []).some((a) => /line.?card/i.test(a.filename ?? ""));
 const at = (e: { date_sent?: string | null; date_created?: string | null }) => String(e.date_sent ?? e.date_created ?? "");
 
-export async function newCardPlan(): Promise<NewCardPlan | null> {
-  return store.getSetting<NewCardPlan>("team", PLAN_KEY).catch(() => null);
+export async function newCardPlan(kind: WaveKind = "newcard"): Promise<NewCardPlan | null> {
+  return store.getSetting<NewCardPlan>("team", planKey(kind)).catch(() => null);
+}
+
+/**
+ * The hand-off wave (Walt 11/10): every company handed to a teammate who hasn't written to them since gets the new
+ * line card from that teammate, in a new thread, and their sequence starts from there. Until then a handed-over
+ * company gets nothing from anyone: the giver's emails stop at the hand-off, the receiver's start with their first.
+ * Read once with the owner's login, which sees the whole team's email; `lastCardAt` holds when it was handed over.
+ */
+export async function planHandoffWave(owner: Deps, team: Deps[]): Promise<NewCardPlan> {
+  const hand = await handoffsStrict();
+  const byUser = new Map(team.map((t) => [t.rep.closeUserId, t]));
+  const mails = await owner.close.listSince<Record<string, unknown>>("email", {
+    since: "2026-08-01T00:00:00Z", max: 12_000, fields: "id,lead_id,user_id,direction,status,date_sent,date_created,attachments",
+  });
+  const names = new Map<string, string>();
+  const leads: NewCardPlan["leads"] = [];
+  for (const [leadId, h] of Object.entries(hand)) {
+    const to = byUser.get(h.to);
+    if (!to) continue;
+    // They've written since the hand-off: their sequence is already running.
+    if (mails.some((e) => String(e.lead_id) === leadId && e.direction === "outgoing" && e.status === "sent" && String(e.user_id) === h.to && at(e as never) >= h.at)) continue;
+    if (!names.has(leadId)) names.set(leadId, ((await owner.close.lead(leadId).catch(() => null)) as { display_name?: string } | null)?.display_name ?? "An account");
+    leads.push({ leadId, company: names.get(leadId)!, repId: h.to, repName: to.rep.name, lastCardAt: h.at });
+  }
+  const old = await newCardPlan("handoff");
+  const plan: NewCardPlan = { kind: "handoff", builtAt: new Date().toISOString(), since: NEW_CARD_SINCE, leads: leads.sort((a, b) => a.lastCardAt.localeCompare(b.lastCardAt)), done: old?.done ?? {} };
+  await store.putSetting("team", planKey("handoff"), plan);
+  return plan;
 }
 
 /**
@@ -132,10 +166,11 @@ const greet = (name: string | null | undefined) => {
  * Close first. Runs from the morning job once a day per rep, or by hand from the page.
  */
 // all: the whole share in one go, past the daily cap (Walt 10/28: "blast the new line cards together in one big batch").
-export async function sendNewCard(d: Deps, opts: { max?: number; all?: boolean } = {}) {
+export async function sendNewCard(d: Deps, opts: { max?: number; all?: boolean; kind?: WaveKind } = {}) {
   const now = d.now?.() ?? new Date();
-  const plan = await newCardPlan();
-  if (!plan) return { planned: [] as Automation[], skipped: [] as Array<{ company: string; why: string }>, reason: "No new line card wave is planned." };
+  const kind: WaveKind = opts.kind ?? "newcard";
+  const plan = await newCardPlan(kind);
+  if (!plan) return { planned: [] as Automation[], skipped: [] as Array<{ company: string; why: string }>, reason: kind === "handoff" ? "No hand-off wave is planned." : "No new line card wave is planned." };
   const mine = plan.leads.filter((l) => l.repId === d.rep.closeUserId && !plan.done[l.leadId]);
   if (!mine.length) return { planned: [], skipped: [], reason: "Nothing waiting for you." };
   const today = localParts(now, d.rep.timeZone);
@@ -149,10 +184,11 @@ export async function sendNewCard(d: Deps, opts: { max?: number; all?: boolean }
   const memes = await memesFor(d).catch(() => [] as Meme[]);
   const seen = await memesSeen(d);
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
-  const finish = async (leadId: string, r: NewCardPlan["done"][string]) => { plan.done[leadId] = r; await store.putSetting("team", PLAN_KEY, plan); };
+  const finish = async (leadId: string, r: NewCardPlan["done"][string]) => { plan.done[leadId] = r; await store.putSetting("team", planKey(kind), plan); };
+  const me = d.rep.email.toLowerCase();
   for (const l of mine) {
     if (planned.length >= room) break;
-    const base = { repId: d.rep.closeUserId, leadId: l.leadId, company: l.company, kind: "bump" as const, label: "New line card", reason: "The new line card, to everyone who only had the old one.", createdAt: now.toISOString(), checkedAt: null };
+    const base = { repId: d.rep.closeUserId, leadId: l.leadId, company: l.company, kind: "bump" as const, label: "New line card", reason: kind === "handoff" ? "The new line card from you: the account is yours now, and your sequence starts here." : "The new line card, to everyone who only had the old one.", createdAt: now.toISOString(), checkedAt: null };
     try {
       const lead = (await d.close.lead(l.leadId).catch(() => null)) as { status_label?: string } | null;
       const mails = await d.close.leadEmails(l.leadId).catch(() => [] as LeadEmail[]);
@@ -160,7 +196,8 @@ export async function sendNewCard(d: Deps, opts: { max?: number; all?: boolean }
         : isOutStatus(lead.status_label) ? `${lead.status_label} in Close`
         : rfqByStatus(lead.status_label) ? "They've sent an RFQ"
         : (await coolingFor(d, l.leadId)) ? "Cooling off"
-        : mails.some((e) => e.direction === "outgoing" && at(e) >= plan.since && isCard(e)) ? "Already has the new card"
+        : kind === "handoff" && mails.some((e) => e.direction === "outgoing" && at(e) >= l.lastCardAt && String(e.sender ?? "").toLowerCase().includes(me)) ? "You've emailed them since the hand-off"
+        : kind === "newcard" && mails.some((e) => e.direction === "outgoing" && at(e) >= plan.since && isCard(e)) ? "Already has the new card"
         : mails.some((e) => e.direction === "incoming" && now.getTime() - Date.parse(at(e)) < REPLY_COOLDOWN_DAYS * DAY) ? "Wrote back in the last week and a half"
         : null;
       if (why) { skipped.push({ company: l.company, why }); await finish(l.leadId, { at: now.toISOString(), repId: d.rep.closeUserId, skipped: why }); continue; }
@@ -186,9 +223,13 @@ export async function newCardMorning(d: Deps) {
   const now = d.now?.() ?? new Date();
   const p = localParts(now, d.rep.timeZone);
   if (p.weekday === 0 || p.weekday === 6 || p.hour < 3) return null;
-  const plan = await newCardPlan();
-  if (!plan || !plan.leads.some((l) => l.repId === d.rep.closeUserId && !plan.done[l.leadId])) return null;
   const day = `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
-  if (!(await store.once(`newcard:${d.rep.closeUserId}:${day}`, 20 * 3600 * 1000))) return null;
-  return sendNewCard(d);
+  let out: Awaited<ReturnType<typeof sendNewCard>> | null = null;
+  for (const kind of ["newcard", "handoff"] as const) {
+    const plan = await newCardPlan(kind);
+    if (!plan || !plan.leads.some((l) => l.repId === d.rep.closeUserId && !plan.done[l.leadId])) continue;
+    if (!(await store.once(`newcard:${kind === "handoff" ? "handoff:" : ""}${d.rep.closeUserId}:${day}`, 20 * 3600 * 1000))) continue;
+    out = await sendNewCard(d, { kind });
+  }
+  return out;
 }

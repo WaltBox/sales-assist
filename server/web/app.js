@@ -1452,7 +1452,9 @@ function newCardCard() {
   if (nc === undefined) { loadNewCard(); return null; }
   if (!nc) return null;
   const sum = nc.summary;
-  if (!sum && !nc.owner) return null;
+  const ho = nc.handoff || { summary: null, mine: 0 };
+  const hs = ho.summary;
+  if (!sum && !hs && !nc.owner) return null;
   const first = (n) => n.split(/\s+/)[0];
   const run = async (path, body, msg) => {
     if (msg && !confirm(msg)) return;
@@ -1473,6 +1475,18 @@ function newCardCard() {
       sum && nc.mine ? el("button", { class: "btn small primary", disabled: state.mailBusy, text: `Send my share now (${nc.mine} waiting)`, onclick: () => run("/api/automations/new-card/send-now", {}, `Schedule up to your daily pace of these ${nc.mine} right now, for a morning slot their time? The rest go on the next mornings.`) }) : null,
       sum && !nc.mine ? el("span", { class: "muted small", text: "Nothing waiting for you." }) : null,
       state.newCardMsg ? el("span", { class: "muted small", text: state.newCardMsg }) : null,
+    ]),
+    // The hand-off wave (Walt 11/10): a handed-over company gets nothing from anyone until the rep it went to writes
+    // to them. This sends them the new line card from that rep, and their sequence starts from there.
+    el("div", { class: "pagehead row", style: "margin-top:14px" }, [el("p", { class: "label", text: "Handed-over accounts" }), el("span", { class: "muted small", text: hs ? `built ${shortDate(hs.builtAt)}` : "" })]),
+    hs
+      ? el("p", {}, [`${hs.total} handed-over compan${hs.total === 1 ? "y" : "ies"} whose new rep hasn't written to them yet. `, ...hs.reps.map((r, i) => el("span", {}, `${i ? " · " : ""}${first(r.name)}: ${r.sent} sent, ${r.waiting} to go${r.skipped ? `, ${r.skipped} skipped` : ""}`))])
+      : el("p", { text: "A company handed to a teammate gets nothing from anyone until they write to it: the old rep's emails stop at the hand-off, the new rep's start with their first. This sends the new line card from the new rep to every handed-over company they haven't written to, in a new thread with a meme, and their sequence picks up from there." }),
+    el("div", { class: "extrow" }, [
+      nc.owner ? el("button", { class: `btn small${hs ? "" : " primary"}`, disabled: state.mailBusy, text: hs ? "Rebuild the list" : "Build the list", onclick: () => run("/api/automations/new-card/plan", { kind: "handoff" }) }) : null,
+      hs && ho.mine ? el("button", { class: "btn small primary", disabled: state.mailBusy, text: `Send my share now (${ho.mine} waiting)`, onclick: () => run("/api/automations/new-card/send-now", { kind: "handoff" }, `Schedule the new line card from you to up to your daily pace of the ${ho.mine} handed-over companies waiting? The rest go on the next mornings.`) }) : null,
+      hs && ho.mine > 1 ? el("button", { class: "btn small", disabled: state.mailBusy, text: `Send all ${ho.mine} now`, onclick: () => run("/api/automations/new-card/send-now", { kind: "handoff", all: true }, `Schedule the new line card from you to all ${ho.mine} handed-over companies at once, past your daily pace?`) }) : null,
+      hs && !ho.mine ? el("span", { class: "muted small", text: "Nothing waiting for you." }) : null,
     ]),
   ]);
 }

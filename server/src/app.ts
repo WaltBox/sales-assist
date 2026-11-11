@@ -33,7 +33,7 @@ import { guardSending, SendingError, sendingAccount, sendThrough } from "./sendi
 import { FollowUpError, SITE_URL, writeFollowUp } from "./followup.js";
 import { createGuest, fillFromClose, getList, GuestError, guestFollowUps, guestFor, guestSend, guestView, listCsv, listGuests, listSummary, markListLead, markListLeads, putList, setGuestActive, setGuestCc, type Guest } from "./guests.js";
 import { backfillPromiseQuotes } from "./heat.js";
-import { NEW_CARD_SENDERS, newCardPlan, newCardMorning, newCardSummary, planNewCard, sendNewCard } from "./newcard.js";
+import { NEW_CARD_SENDERS, newCardPlan, newCardMorning, newCardSummary, planHandoffWave, planNewCard, sendNewCard } from "./newcard.js";
 import { postChat, raceLive, raceRoster, raceWithLive, recordRfqTap, rfqScanDue, scanForRfqs, setRaceRoster, teamRace } from "./race.js";
 import { AfterCallRequest, ApplyRequest, ChatRequest, LineCardFormatRequest, QueueApproveRequest, QueueChatRequest, QuickOutcomeRequest } from "./schemas.js";
 
@@ -740,16 +740,20 @@ export function createApp(appDeps: AppDeps) {
   // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.
   // "New line card!" (10/28): the owner plans the wave once; each rep's share goes out on their mornings, or now.
   app.get("/api/automations/new-card", authed, route(async (_req, d) => {
-    const plan = await newCardPlan();
-    return { summary: newCardSummary(plan), mine: plan ? plan.leads.filter((l) => l.repId === d.rep.closeUserId && !plan.done[l.leadId]).length : 0, owner: normalizeEmail(d.rep.email) === config.ownerEmail, senders: NEW_CARD_SENDERS };
+    const [plan, hp] = await Promise.all([newCardPlan(), newCardPlan("handoff")]);
+    const mine = (p: typeof plan) => (p ? p.leads.filter((l) => l.repId === d.rep.closeUserId && !p.done[l.leadId]).length : 0);
+    return { summary: newCardSummary(plan), mine: mine(plan), owner: normalizeEmail(d.rep.email) === config.ownerEmail, senders: NEW_CARD_SENDERS,
+      // The hand-off wave (11/10): the new card from whoever each account was handed to.
+      handoff: { summary: newCardSummary(hp), mine: mine(hp) } };
   }));
-  app.post("/api/automations/new-card/plan", authed, route(async (_req, d) => {
+  app.post("/api/automations/new-card/plan", authed, route(async (req, d) => {
     if (normalizeEmail(d.rep.email) !== config.ownerEmail) throw new GuestError(403, "Only the owner plans this.");
     const team = (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x);
+    if (req.body?.kind === "handoff") return { summary: newCardSummary(await planHandoffWave(d, team)) };
     const senders = team.filter((t) => NEW_CARD_SENDERS.includes(normalizeEmail(t.rep.email)));
     return { summary: newCardSummary(await planNewCard(d, senders)) };
   }));
-  app.post("/api/automations/new-card/send-now", authed, route((req, d) => sendNewCard(d, { max: Number(req.body?.max) || undefined })));
+  app.post("/api/automations/new-card/send-now", authed, route((req, d) => sendNewCard(d, { max: Number(req.body?.max) || undefined, all: req.body?.all === true, kind: req.body?.kind === "handoff" ? "handoff" : "newcard" })));
   app.post("/api/automations/send-now", authed, route((req, d) => sendBumpsNow(d, {
     leadIds: Array.isArray(req.body?.lead_ids) ? req.body.lead_ids.map(String) : [],
     variant: typeof req.body?.variant === "string" ? req.body.variant : null,

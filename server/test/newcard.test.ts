@@ -54,3 +54,36 @@ test("New line card! (10/28): from whoever sent the last card, skipping anyone w
   assert.ok(mine.length >= 1);
   assert.equal((mine[0].body as { cc?: string[] | null }).cc ?? null, null, "Walt doesn't CC himself");
 });
+
+test("the hand-off wave (11/10): the new card goes from whoever the account was handed to, unless they've written since", async () => {
+  const { planHandoffWave } = await import("../src/newcard.js");
+  const close = new FakeClose({ calls: [roddaCall()] });
+  demoLineCards(close); // every card from Walt
+  const walt: Deps = { close, llm: demoLlm, rep: rep("Walt Boxwell", "walt@westgatesupply.com", DEMO_USER_ID) } as never;
+  const chase: Deps = { close, llm: demoLlm, rep: rep("Chase Bent", "chase@westgatesupply.com", "user_hw_chase") } as never;
+  for (const e of close.sentEmails) { e.date_sent = "2026-10-20T15:00:00Z"; e.date_created = "2026-10-20T15:00:00Z"; }
+  const ids = [...new Set(close.sentEmails.filter((e) => e.direction === "outgoing").map((e) => String(e.lead_id)))];
+  const h = (leadId: string) => ({ from: DEMO_USER_ID, fromName: "Walt Boxwell", to: "user_hw_chase", toName: "Chase Bent", at: "2026-10-28T22:00:00Z" });
+  // Three handed to Chase; he has already written to the third.
+  await store.putSetting("team", "handoffs", { [ids[0]]: h(ids[0]), [ids[1]]: h(ids[1]), [ids[2]]: h(ids[2]) });
+  close.sentEmails.push({ id: "acti_hw_chase", lead_id: ids[2], user_id: "user_hw_chase", status: "sent", direction: "outgoing", sender: "Chase Bent <chase@westgatesupply.com>", subject: "New line card!", date_sent: "2026-11-01T15:00:00Z", date_created: "2026-11-01T15:00:00Z", attachments: [] });
+  await store.putSetting("team", "handoffWavePlan", null as never);
+  const oldWave = JSON.stringify(await store.getSetting("team", "newCardPlan"));
+
+  const plan = await planHandoffWave(walt, [walt, chase]);
+  assert.deepEqual(plan.leads.map((l) => l.leadId).sort(), [ids[0], ids[1]].sort(), "the two Chase hasn't written to");
+  assert.ok(plan.leads.every((l) => l.repId === "user_hw_chase"));
+  assert.equal(newCardSummary(plan)?.reps.find((r) => r.repId === "user_hw_chase")?.waiting, 2);
+  // The old wave's record is untouched.
+  assert.equal(JSON.stringify(await store.getSetting("team", "newCardPlan")), oldWave);
+
+  const r = await sendNewCard(chase, { kind: "handoff", all: true });
+  assert.equal(r.planned.length, 2, JSON.stringify(r.skipped));
+  assert.match(r.planned[0].reason, /yours now/);
+  const drafts = close.writes.filter((w) => w.op === "email" && (w.body as { subject: string }).subject === NEW_CARD_SUBJECT);
+  assert.equal(drafts.length, 2);
+  assert.ok(drafts.every((w) => (w.body as { sender: string }).sender.includes("Chase")), "from Chase");
+  assert.equal((await sendNewCard(chase, { kind: "handoff" })).planned.length, 0, "not twice");
+  assert.equal((await sendNewCard(walt, { kind: "handoff" })).reason, "Nothing waiting for you.");
+  await store.putSetting("team", "handoffs", {});
+});
