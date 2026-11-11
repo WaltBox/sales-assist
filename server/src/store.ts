@@ -41,9 +41,25 @@ export type Automation = {
   step?: string | null;
 };
 
+/**
+ * One account record per rep and lead (11/10): what Close knows about the lead (the facts the board needs, trimmed)
+ * and what the app made of it (the Account row the pages read). Kept current by Close's webhooks; rebuilt from a
+ * rescan nightly. `suspect` marks one an event couldn't bring up to date, so the reconcile does it first.
+ */
+export type AccountStateRow = { repId: string; leadId: string; company: string | null; updatedAt: string; suspect: boolean; data: unknown };
+
 export interface Store {
   putAutomation(a: Automation): Promise<void>;
-  listAutomations(repId: string, since: string): Promise<Automation[]>;
+  /** A rep's rows since a date; with a lead, only that lead's. */
+  listAutomations(repId: string, since: string, leadId?: string): Promise<Automation[]>;
+
+  getAccountState(repId: string, leadId: string): Promise<AccountStateRow | null>;
+  /** A rep's records; with `since`, only those written after that moment (the board's incremental read). */
+  listAccountStates(repId: string, opts?: { since?: string; select?: "full" | "meta" }): Promise<AccountStateRow[]>;
+  /** Every rep's record for one lead (an event on a lead updates each rep who has it). */
+  accountStatesForLead(leadId: string): Promise<AccountStateRow[]>;
+  putAccountState(row: AccountStateRow): Promise<void>;
+  deleteAccountState(repId: string, leadId: string): Promise<void>;
   getSetting<T>(repId: string, key: string): Promise<T | null>;
   putSetting<T>(repId: string, key: string, value: T): Promise<void>;
 
@@ -83,6 +99,7 @@ const KEEP = ["building", "ready", "failed"];
 
 type Mem = {
   automations: Record<string, Automation>;
+  accountStates: Record<string, AccountStateRow>;
   settings: Record<string, unknown>;
   users: Record<string, User>;
   reps: Record<string, StoredRep>;
@@ -92,7 +109,7 @@ type Mem = {
 };
 
 export class FileStore implements Store {
-  private m: Mem = { automations: {}, settings: {}, users: {}, reps: {}, reviews: {}, cache: {}, rejections: [] };
+  private m: Mem = { automations: {}, accountStates: {}, settings: {}, users: {}, reps: {}, reviews: {}, cache: {}, rejections: [] };
   constructor(private file: string | null) {
     if (!file) return;
     try {
@@ -114,9 +131,17 @@ export class FileStore implements Store {
     }
   }
   async putAutomation(a: Automation) { this.m.automations[a.id] = structuredClone(a); this.save(); }
-  async listAutomations(repId: string, since: string) {
-    return Object.values(this.m.automations).filter((a) => a.repId === repId && a.createdAt >= since).map((a) => structuredClone(a)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  async listAutomations(repId: string, since: string, leadId?: string) {
+    return Object.values(this.m.automations).filter((a) => a.repId === repId && a.createdAt >= since && (!leadId || a.leadId === leadId)).map((a) => structuredClone(a)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
+  async getAccountState(repId: string, leadId: string) { return structuredClone(this.m.accountStates[`${repId}:${leadId}`]) ?? null; }
+  async listAccountStates(repId: string, opts: { since?: string; select?: "full" | "meta" } = {}) {
+    return Object.values(this.m.accountStates).filter((r) => r.repId === repId && (!opts.since || r.updatedAt > opts.since))
+      .map((r) => structuredClone(opts.select === "meta" ? { ...r, data: null } : r));
+  }
+  async accountStatesForLead(leadId: string) { return Object.values(this.m.accountStates).filter((r) => r.leadId === leadId).map((r) => structuredClone(r)); }
+  async putAccountState(row: AccountStateRow) { this.m.accountStates[`${row.repId}:${row.leadId}`] = structuredClone(row); this.save(); }
+  async deleteAccountState(repId: string, leadId: string) { delete this.m.accountStates[`${repId}:${leadId}`]; this.save(); }
   async getSetting<T>(repId: string, key: string) { return (structuredClone(this.m.settings[`${repId}:${key}`]) as T) ?? null; }
   async putSetting<T>(repId: string, key: string, value: T) { this.m.settings[`${repId}:${key}`] = structuredClone(value); this.save(); }
   async getUser(email: string) { return structuredClone(this.m.users[email]) ?? null; }
@@ -183,7 +208,7 @@ export class FileStore implements Store {
 // table forgets that table's reads, so a copy of the server never serves what it just changed as old news; another
 // copy can be behind by at most the table's few seconds. Reads in flight are shared, so a burst of the same read
 // is one request.
-const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000 };
+const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000, account_state: 3_000 };
 /** Timestamps in a query rounded down to ten seconds, so "since now" asked twice in a row is the same read. */
 const readKey = (pathAndQuery: string) => pathAndQuery.replace(/(\d{4}-\d{2}-\d{2}T\d{2}(?::|%3A)\d{2}(?::|%3A))(\d)\d(?:\.\d{1,3})?Z/g, "$10.000Z");
 // The last good answer to each read, kept a while past its memory (11/10, evening: Supabase's REST layer stalled for
@@ -214,7 +239,9 @@ export class SupabaseStore implements Store {
       const only = table === "settings" && typeof b.rep_id === "string" && typeof b.key === "string" ? `settings?${this.q({ rep_id: `eq.${b.rep_id}`, key: `eq.${b.key}` })}`
         : table === "brief_cache" && typeof b.key === "string" ? `brief_cache?${this.q({ key: `eq.${b.key}` })}`
           : table === "brief_cache" && method === "DELETE" && pathAndQuery.includes("key=eq.") ? pathAndQuery.split("&")[0]
-            : null;
+            // One account record written: the rep's record reads are what it changes (a lead's, and the rep's lists).
+            : table === "account_state" && typeof b.rep_id === "string" ? `account_state?${this.q({ rep_id: `eq.${b.rep_id}` })}`
+              : null;
       for (const k of this.reads.keys()) if (only ? k.startsWith(only) : k.startsWith(`${table}?`) || k === table) this.reads.delete(k);
       return this.fetchJson<T>(method, pathAndQuery, body, prefer);
     }
@@ -274,9 +301,33 @@ export class SupabaseStore implements Store {
   async putAutomation(a: Automation) {
     await this.req("POST", "automations?on_conflict=id", { id: a.id, rep_id: a.repId, lead_id: a.leadId, created_at: a.createdAt, status: a.status, data: a }, "resolution=merge-duplicates,return=minimal");
   }
-  async listAutomations(repId: string, since: string) {
-    const rows = await this.req<Array<{ data: Automation }>>("GET", `automations?${this.q({ rep_id: `eq.${repId}`, created_at: `gte.${since}`, select: "data", order: "created_at.desc", limit: "500" })}`);
+  async listAutomations(repId: string, since: string, leadId?: string) {
+    const rows = await this.req<Array<{ data: Automation }>>("GET", `automations?${this.q({ rep_id: `eq.${repId}`, created_at: `gte.${since}`, ...(leadId ? { lead_id: `eq.${leadId}` } : {}), select: "data", order: "created_at.desc", limit: "500" })}`);
     return rows.map((r) => r.data);
+  }
+
+  private asState = (r: { rep_id: string; lead_id: string; company: string | null; updated_at: string; suspect: boolean; data?: unknown }): AccountStateRow =>
+    ({ repId: r.rep_id, leadId: r.lead_id, company: r.company, updatedAt: r.updated_at, suspect: !!r.suspect, data: r.data ?? null });
+  async getAccountState(repId: string, leadId: string) {
+    const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({ rep_id: `eq.${repId}`, lead_id: `eq.${leadId}`, select: "*" })}`);
+    return rows[0] ? this.asState(rows[0]) : null;
+  }
+  async listAccountStates(repId: string, opts: { since?: string; select?: "full" | "meta" } = {}) {
+    const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({
+      rep_id: `eq.${repId}`, ...(opts.since ? { updated_at: `gt.${opts.since}` } : {}), select: opts.select === "meta" ? "rep_id,lead_id,company,updated_at,suspect" : "*", order: "updated_at.asc", limit: "5000",
+    })}`);
+    return rows.map(this.asState);
+  }
+  async accountStatesForLead(leadId: string) {
+    const rows = await this.req<Array<Parameters<typeof this.asState>[0]>>("GET", `account_state?${this.q({ lead_id: `eq.${leadId}`, select: "*" })}`);
+    return rows.map(this.asState);
+  }
+  async putAccountState(row: AccountStateRow) {
+    await this.req("POST", "account_state?on_conflict=rep_id,lead_id", { rep_id: row.repId, lead_id: row.leadId, company: row.company, updated_at: row.updatedAt, suspect: row.suspect, data: row.data }, "resolution=merge-duplicates,return=minimal");
+  }
+  async deleteAccountState(repId: string, leadId: string) {
+    // The write-forget keys on rep_id in the body; a delete has none, so the rep's reads are dropped by hand.
+    await this.req("DELETE", `account_state?${this.q({ rep_id: `eq.${repId}`, lead_id: `eq.${leadId}` })}`, { rep_id: repId }, "return=minimal");
   }
   async getSetting<T>(repId: string, key: string) {
     const rows = await this.req<Array<{ value: T }>>("GET", `settings?${this.q({ rep_id: `eq.${repId}`, key: `eq.${key}`, select: "value" })}`);

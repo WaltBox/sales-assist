@@ -76,7 +76,23 @@ create table if not exists settings (
   primary key (rep_id, key)
 );
 
+-- One record per rep and account (11/10): what Close knows about the lead, trimmed to what the board needs, and
+-- what the app made of it (heat, cadence, next step). Close's webhooks keep it current; a nightly rescan rebuilds
+-- it. The pages read these rows instead of rescanning 45 days of Close every ten minutes.
+create table if not exists account_state (
+  rep_id     text not null,          -- Close user id
+  lead_id    text not null,
+  company    text,
+  updated_at timestamptz not null default now(),
+  suspect    boolean not null default false,  -- an event couldn't bring it up to date: the reconcile does it first
+  data       jsonb,
+  primary key (rep_id, lead_id)
+);
+create index if not exists account_state_rep_updated on account_state (rep_id, updated_at);
+create index if not exists account_state_lead on account_state (lead_id);
+
 alter table automations      enable row level security;
+alter table account_state    enable row level security;
 alter table settings         enable row level security;
 alter table reps             enable row level security;
 alter table users            enable row level security;

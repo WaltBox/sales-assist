@@ -1,6 +1,7 @@
+import { createHmac } from "node:crypto";
 import type { Close, Llm } from "./assistant.js";
 import type { CloseCall, CloseLead, CloseTask, LeadEmail } from "./close.js";
-import { customFields, DEMO_USER_ID, roddaCall, roddaLead, statuses } from "./fixtures.js";
+import { customFields, DEMO_LEAD_ID, DEMO_USER_ID, roddaCall, roddaLead, statuses } from "./fixtures.js";
 import { AfterCallExtrasSchema, AfterCallSchema, BriefSchema, ChatSchema, FollowUpSchema, type Proposals } from "./schemas.js";
 import { LineCardRequestSchema, OpenerSchema } from "./linecardflow.js";
 import { PurchasingSchema } from "./purchasing.js";
@@ -46,8 +47,40 @@ export class FakeClose implements Close {
   async leadName(id: string) { return this.names.get(id) ?? this.lead_.display_name; }
   async leadStatuses() { return statuses; }
   async leadCustomFields() { return [...customFields, ...this.customFields_]; }
-  async notes() { return []; }
-  async openTasks(): Promise<CloseTask[]> { return []; }
+  /** Notes on other leads (the account records, 11/10): `notes_` is read per lead; the writes are read too. */
+  notes_: Array<{ id: string; lead_id: string; note: string; date_created: string; user_id?: string }> = [];
+  async notes(leadId?: string, limit = 10) {
+    const written = this.writes.filter((w) => w.op === "note" && (w.body as { leadId: string }).leadId === leadId)
+      .map((w) => ({ id: w.id!, note: (w.body as { note: string }).note, date_created: this.stamp(w), user_name: "Walt Boxwell" }));
+    return [...this.notes_.filter((n) => n.lead_id === leadId).map(({ lead_id: _l, user_id: _u, ...n }) => n), ...written]
+      .sort((a, b) => b.date_created.localeCompare(a.date_created)).slice(0, limit);
+  }
+  async openTasks(leadId?: string): Promise<CloseTask[]> {
+    return [...this.tasks_.values(), ...this.extraTasks].filter((t) => !t.is_complete && t.lead_id === leadId).map((t) => structuredClone(t));
+  }
+  // ---------- webhook subscriptions (11/10): kept in memory, like Close would ----------
+  webhooks_: Array<{ id: string; url: string; status: string; events: Array<{ object_type: string; action: string }>; signature_key: string }> = [];
+  async webhooks() { return this.webhooks_.map(({ signature_key: _k, ...w }) => structuredClone(w)); }
+  async createWebhook(body: { url: string; events: Array<{ object_type: string; action: string }> }) {
+    const n = ++FakeClose.ids;
+    const w = { id: `whsub_demo${n}`, url: body.url, status: "active", events: body.events, signature_key: "ab".repeat(31) + String(n % 100).padStart(2, "0") };
+    this.webhooks_.push(w);
+    this.record("webhook", body);
+    return structuredClone(w);
+  }
+  async updateWebhook(id: string, body: { status?: "active" | "paused"; events?: Array<{ object_type: string; action: string }>; url?: string }) {
+    const w = this.webhooks_.find((x) => x.id === id);
+    if (!w) throw new Error("not found");
+    Object.assign(w, body);
+    this.record("webhook-update", { id, ...body });
+    const { signature_key: _k, ...rest } = w;
+    return structuredClone(rest);
+  }
+  async deleteWebhook(id: string) {
+    this.webhooks_ = this.webhooks_.filter((x) => x.id !== id);
+    this.record("webhook-delete", { id });
+    return {};
+  }
   /** The simulated call: dialing 6s after the panel first polls, ends at 14s, transcript arrives at 20s. */
   private liveCall(): CloseCall | null {
     if (!this.simulateDial || this.firstWatch === null) return null;
@@ -170,13 +203,13 @@ export class FakeClose implements Close {
   olderNotes: Array<Record<string, unknown>> = [];
   private stamps = new WeakMap<object, string>();
   clock: () => Date = () => new Date();
+  private stamp(w: object) { if (!this.stamps.has(w)) this.stamps.set(w, this.clock().toISOString()); return this.stamps.get(w)!; }
   async listSince<T>(kind: "email" | "note" | "task", q: { since: string }): Promise<T[]> {
     if (kind === "email") return this.sentEmails.filter((e) => String(e.date_created ?? e.date_sent) >= q.since) as T[];
-    const stamp = (w: object) => { if (!this.stamps.has(w)) this.stamps.set(w, this.clock().toISOString()); return this.stamps.get(w)!; };
-    const older = kind === "note" ? this.olderNotes.filter((n) => String(n.date_created) >= q.since) as T[] : [];
+    const older = kind === "note" ? [...this.olderNotes, ...this.notes_.map((n) => ({ ...n, user_id: n.user_id ?? DEMO_USER_ID }))].filter((n) => String(n.date_created) >= q.since) as T[] : [];
     return [...older, ...this.writes.filter((w) => w.op === kind).map((w) => {
       const b = w.body as Record<string, unknown>;
-      return { id: `demo_${kind}`, lead_id: b.leadId, note: b.note, user_id: DEMO_USER_ID, created_by: DEMO_USER_ID, date_created: stamp(w) } as T;
+      return { id: `demo_${kind}`, lead_id: b.leadId, note: b.note, user_id: DEMO_USER_ID, created_by: DEMO_USER_ID, date_created: this.stamp(w) } as T;
     })];
   }
 }
@@ -340,4 +373,26 @@ export function demoLineCards(fake: FakeClose, now = new Date()) {
     fake.sentEmails.push({ id: `acti_${id}`, lead_id: id, user_id: DEMO_USER_ID, status: "sent", direction: "outgoing", subject: "Westgate Supply – line card", date_sent: at(days), date_created: at(days), opens, to: [to], attachments: card });
     if (repliedDaysAgo !== null) fake.sentEmails.push({ id: `acti_r_${id}`, lead_id: id, user_id: DEMO_USER_ID, status: "inbox", direction: "incoming", subject: "RE: Westgate Supply – line card", date_sent: at(repliedDaysAgo), date_created: at(repliedDaysAgo), sender: to, opens: [] });
   }
+}
+
+
+// ---------- Close webhook events, for the tests (11/10) ----------
+
+/** The body Close posts for one event: `event` as the docs describe it, with the object in `data`. */
+export function fakeCloseEvent(ev: { object_type: string; action: string; lead_id?: string | null; user_id?: string | null; object_id?: string; data?: Record<string, unknown> | null; id?: string; date_created?: string }) {
+  FakeClose.ids++;
+  return {
+    subscription_id: "whsub_demo1",
+    event: {
+      id: ev.id ?? `ev_demo${FakeClose.ids}`, date_created: ev.date_created ?? new Date().toISOString(), date_updated: ev.date_created ?? new Date().toISOString(),
+      organization_id: "orga_demo", user_id: ev.user_id === undefined ? DEMO_USER_ID : ev.user_id, request_id: null, api_key_id: null,
+      object_type: ev.object_type, object_id: ev.object_id ?? (ev.data?.id as string | undefined) ?? `obj_demo${FakeClose.ids}`, lead_id: ev.lead_id === undefined ? DEMO_LEAD_ID : ev.lead_id,
+      action: ev.action, changed_fields: [], data: ev.data ?? null, previous_data: null, meta: {},
+    },
+  };
+}
+/** The two headers Close signs a delivery with: a timestamp and HMAC-SHA256 over timestamp + body, keyed with the hex signature key. */
+export function signCloseEvent(signatureKey: string, body: string, at = new Date()) {
+  const ts = String(Math.floor(at.getTime() / 1000));
+  return { "close-sig-timestamp": ts, "close-sig-hash": createHmac("sha256", Buffer.from(signatureKey, "hex")).update(ts).update(body).digest("hex") };
 }

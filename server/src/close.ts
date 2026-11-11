@@ -429,7 +429,31 @@ export class CloseClient {
   updateLeadStatus(leadId: string, statusId: string) {
     return this.request<{ id: string }>("PUT", `/lead/${encodeURIComponent(leadId)}/`, { status_id: statusId });
   }
+
+  // ---------- webhook subscriptions (11/10): Close tells the app what happened, instead of the app rescanning ----------
+  // One subscription for the organization, made with the owner's key. The signature_key comes back once, on
+  // creation, and is kept in the team settings; a subscription whose key we've lost is deleted and made again.
+
+  async webhooks(): Promise<CloseWebhook[]> {
+    return (await this.request<{ data: CloseWebhook[] }>("GET", "/webhook/")).data;
+  }
+  createWebhook(body: { url: string; events: CloseWebhookEvent[] }) {
+    return this.request<CloseWebhook & { signature_key: string }>("POST", "/webhook/", body);
+  }
+  /** Re-activate a paused subscription (Close pauses one after three days of failed deliveries), or change its events. */
+  updateWebhook(id: string, body: { status?: "active" | "paused"; events?: CloseWebhookEvent[]; url?: string }) {
+    return this.request<CloseWebhook>("PUT", `/webhook/${encodeURIComponent(id)}/`, body);
+  }
+  deleteWebhook(id: string) {
+    return this.request<unknown>("DELETE", `/webhook/${encodeURIComponent(id)}/`);
+  }
 }
+
+export type CloseWebhookEvent = { object_type: string; action: string };
+export type CloseWebhook = {
+  id: string; url: string; status: string; events: CloseWebhookEvent[];
+  date_created?: string; health_status?: string | null; pause_reason?: string | null; latest_error?: unknown;
+};
 
 /** Plain-text transcript in the same "Speaker @ m:ss: text" shape Close shows in the app. */
 export function transcriptText(t: CloseTranscript | null | undefined): string | null {

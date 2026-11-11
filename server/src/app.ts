@@ -2,7 +2,6 @@ import fs from "node:fs";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import {
   afterCall, afterCallExtras, applyProposals, callState, DuplicateApplyError, leadBrief, leadChat, listStatus, repLines, repStats, saveSaid, warmAfterLead, warmAhead, warmLeads, type Close, type Deps, type Llm,
@@ -13,10 +12,11 @@ import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshPro
 import { markReachedByHand, markReachedFromCalls, syncDialViews } from "./dialviews.js";
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
+import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
 import { queueUntapped,
-  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, reviewsForCall, setLineCardFormat, sweep, waitingFor,
+  advance, approveAll, approveItem, chatItem, countItems, discardItem, itemTranscript, listQueue, noteItem, QueueError, queueShotDown, quickOutcome, rebuildItem, rescheduleTask, setLineCardFormat, sweep, waitingFor,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
@@ -1014,23 +1014,43 @@ export function createApp(appDeps: AppDeps) {
     return applyProposals(d, leadId(req), body.proposals, body.rating ?? null);
   }));
 
-  // Close tells us when a call changes (its transcript landed): build that call's review now.
-  app.post("/api/webhooks/close", async (req: Request, res: Response) => {
-    if (!verifyClose(req)) {
-      res.status(401).json({ error: "bad signature" });
-      return;
-    }
+  // Close tells the app what happened (11/10): every call, email, note, status change, lead change and finished
+  // task, within seconds. The delivery is checked against the subscription's key, answered at once, and handled
+  // behind the answer. A delivery signed with a key we don't hold, or more than five minutes old, is refused; one
+  // already handled (Close retries, and sends some twice) is answered and dropped.
+  const hookContext: HookContext = {
+    depsForUser,
+    allDeps: async () => (await Promise.all((await allReps()).map((r) => depsFor(r).catch(() => null)))).filter((x): x is Deps => !!x),
+    ownerDeps: async () => { const r = await repByEmail(config.ownerEmail).catch(() => null); return r ? depsFor(r).catch(() => null) : null; },
+  };
+  const closeWebhookRoute = async (req: Request, res: Response) => {
+    const ts = req.header("close-sig-timestamp") ?? "", sig = req.header("close-sig-hash") ?? "";
+    const raw = (req as Request & { rawBody?: Buffer }).rawBody;
+    if (!raw || !signatureMatches(raw, ts, sig, await webhookKeys())) { hookStats.rejected++; res.status(401).json({ error: "bad signature" }); return; }
+    if (!timestampFresh(ts)) { hookStats.rejected++; res.status(401).json({ error: "stale signature" }); return; }
+    const ev = parseCloseEvent(req.body);
+    if (!ev) { res.status(400).json({ error: "not a Close event" }); return; }
+    if (!(await firstTime(ev))) { hookStats.duplicates++; res.json({ ok: true, duplicate: true }); return; }
     res.json({ ok: true });
-    const ev = (req.body?.event ?? {}) as { object_type?: string; object_id?: string };
-    if (ev.object_type !== "activity.call" || !ev.object_id) return;
-    background((async () => {
-      for (const it of await reviewsForCall(ev.object_id!)) {
-        if (it.state !== "building") continue;
-        const d = await depsForUser(it.repId);
-        if (d) await advance(d, it.id);
-      }
-    })(), "webhook");
-  });
+    background(handleCloseEvent(ev, hookContext), "close event");
+  };
+  app.post(WEBHOOK_PATH, closeWebhookRoute);
+  // The older subscription (the close-webhook script, call updates only) posts here; same feed.
+  app.post("/api/webhooks/close", closeWebhookRoute);
+  // The owner's view of the feed: the subscription Close has, whether we hold its key, what's come in since this
+  // server started. Subscribe makes or renews it now (the cron also checks once an hour).
+  app.get("/api/close/webhook", authed, route(async (_req, d) => {
+    ownerOnly(d);
+    const sub = await storedWebhook();
+    const close = await d.close.webhooks().catch((e) => ({ error: (e as Error).message }));
+    return { subscription: sub ? { id: sub.id, url: sub.url, events: sub.events, createdAt: sub.createdAt, by: sub.by } : null, close, stats: hookStats, keys: (await webhookKeys()).length };
+  }));
+  app.post("/api/close/webhook/subscribe", authed, route(async (req, d) => {
+    ownerOnly(d);
+    const url = typeof req.body?.url === "string" && /^https:\/\//.test(req.body.url) ? req.body.url.replace(/\/$/, "") : null;
+    const r = await ensureCloseWebhook(d, { force: true, url });
+    return { ...r, close: r.close.map((w) => ({ id: w.id, url: w.url, status: w.status, events: w.events })) };
+  }));
 
   // Catch-up: anything still waiting gets built (Vercel Cron, or every 15s on a local server).
   let lastAutoCheck = 0;
@@ -1043,6 +1063,12 @@ export function createApp(appDeps: AppDeps) {
   const catchUp = async () => {
     const deadline = Date.now() + BUDGET_MS;
     const outOfTime = (where: string) => { const out = Date.now() > deadline; if (out) console.warn(`[catch-up] out of time at ${where}; the rest waits for the next run`); return out; };
+    // The Close feed (11/10): the subscription is made the first time the hosted app runs this, and switched back on
+    // if Close paused it. Only where Close can reach us (never from a Mac copy, which would point Close at nothing).
+    if (!config.demo && (process.env.VERCEL || process.env.APP_URL)) {
+      const owner = await hookContext.ownerDeps().catch(() => null);
+      if (owner) await ensureCloseWebhook(owner).then((r) => { if (r.problem && !r.ok) console.warn(`[close hooks] ${r.problem}`); }).catch((err) => console.error("close hooks:", (err as Error).message));
+    }
     // Automatic emails: plan the morning's bumps, and re-check the ones about to go (every few minutes).
     if (Date.now() - lastAutoCheck > 3 * 60_000) {
       lastAutoCheck = Date.now();
@@ -1130,13 +1156,3 @@ class AuthError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-/** Close signs webhooks: HMAC-SHA256 over timestamp + raw body, keyed with the subscription's signature_key (hex). */
-function verifyClose(req: Request): boolean {
-  if (!config.closeWebhookKey) return false;
-  const ts = req.header("close-sig-timestamp") ?? "";
-  const sig = req.header("close-sig-hash") ?? "";
-  const raw = (req as Request & { rawBody?: Buffer }).rawBody;
-  if (!ts || !sig || !raw) return false;
-  const want = createHmac("sha256", Buffer.from(config.closeWebhookKey, "hex")).update(ts).update(raw).digest("hex");
-  return want.length === sig.length && timingSafeEqual(Buffer.from(want), Buffer.from(sig));
-}
