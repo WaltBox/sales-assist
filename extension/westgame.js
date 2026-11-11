@@ -472,7 +472,10 @@
       const me = l.email === g.race.you;
       const pct = pctOf(l, max);
       // The ladder's four counts under the car (Walt 11/11): names, cards to them, buyers reached, RFQs.
-      const bits = l.error ? [l.error] : [plural(l.dials, "call", "calls"), plural(l.named || 0, "name", "names"), plural(l.lineCards, "card", "cards"), plural(l.reached, "buyer reached", "buyers reached"), plural(l.rfqs, "RFQ", "RFQs")];
+      // Cards past the day's cap still show, marked as unpaid (Walt 11/11).
+      const cap = (g.race && g.race.points && g.race.points.cardCap) || 15;
+      const cards = l.lineCards > cap ? `${l.lineCards} cards (${cap} paid)` : plural(l.lineCards, "card", "cards");
+      const bits = l.error ? [l.error] : [plural(l.dials, "call", "calls"), plural(l.named || 0, "name", "names"), cards, plural(l.reached, "buyer reached", "buyers reached"), plural(l.rfqs, "RFQ", "RFQs")];
       const row = h("button", { class: `wg-lane${me ? " me" : ""}${g.lane === l.email ? " on" : ""}${l.error ? " broken" : ""}`, onclick: () => { g.lane = g.lane === l.email ? null : l.email; render(); } }, [
         h("span", { class: "wg-ltop" }, [
           h("span", { class: "wg-place", text: String(i + 1) }),

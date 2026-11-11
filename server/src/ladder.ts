@@ -46,6 +46,11 @@ export const RUNG_POINTS = { dial: 1, named: 3, card: 2, reached: 5, rfq: 30, fi
  * RFQs, which is Chase's best day so far (10/27: 119 calls, 4 RFQs) and nothing less.
  */
 export const LADDER_GOAL = 350;
+/**
+ * Cards paid per day (Walt 11/11, Chase at 26 cards by 11 AM: "they are already moving super quickly through these
+ * towards the finish line"). Every card still sends and shows; past this many companies in a day a card pays nothing.
+ */
+export const CARD_CAP = 15;
 
 // ---------- the named buyer: a person with a buying title and a way to reach them directly ----------
 

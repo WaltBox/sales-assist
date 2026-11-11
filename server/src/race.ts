@@ -25,7 +25,7 @@ import { store } from "./store.js";
 // buyer reached 5, an RFQ 30 and 10 more when it's the first from a new company. Each rung once per company; the
 // game reads them from Close (status moves, the card email, the RFQ), never from a tap alone. Finish 350: "should
 // actually be quite hard": 130 dials and RFQs on top; a volume day with no RFQ tops out around 230.
-export const POINTS = { dial: RUNG_POINTS.dial, named: RUNG_POINTS.named, reached: RUNG_POINTS.reached, lineCard: RUNG_POINTS.card, rfq: RUNG_POINTS.rfq, firstRfq: RUNG_POINTS.firstRfq } as const;
+export const POINTS = { dial: RUNG_POINTS.dial, named: RUNG_POINTS.named, reached: RUNG_POINTS.reached, lineCard: RUNG_POINTS.card, rfq: RUNG_POINTS.rfq, firstRfq: RUNG_POINTS.firstRfq, cardCap: CARD_CAP } as const;
 export const GOAL = LADDER_GOAL;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
@@ -60,8 +60,9 @@ export async function setRaceRoster(ownerId: string, email: string, racing: bool
   return { excluded };
 }
 
-const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number; named?: number }) =>
-  x.dials * POINTS.dial + (x.named ?? 0) * POINTS.named + x.reached * POINTS.reached + x.lineCards * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
+// Cards pay up to the cap a day (a week: five days' worth); the count itself is never capped.
+const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number; named?: number }, days = 1) =>
+  x.dials * POINTS.dial + (x.named ?? 0) * POINTS.named + x.reached * POINTS.reached + Math.min(x.lineCards, CARD_CAP * days) * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
 
 const RACE_KEY = "race:team";
 const LOCK_KEY = "race:building";
@@ -170,7 +171,7 @@ function weekOf(week: { dials: number; reached: number; lineCards: number; named
   if (!week) return null;
   const w = { dials: Math.max(week.dials, today.dials), named: Math.max(week.named ?? 0, today.named ?? 0), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards),
     rfqs: Math.max(weekRfqs, today.rfqs), firstRfqs: Math.max(weekFirst, today.firstRfqs ?? 0) };
-  return { ...w, points: scoreOf(w) };
+  return { ...w, points: scoreOf(w, 5) };
 }
 
 /** Monday of the week containing `day` (YYYY-MM-DD). */
