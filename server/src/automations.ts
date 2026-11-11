@@ -9,7 +9,7 @@ import { bumpBodyFor, FollowUpError, greetName, writeFollowUp, type BumpPlace } 
 import { businessDaysBetween, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
 import { clearPick, memeFor, memesFor, memesSeen, memeTrack, type Meme } from "./memes.js";
-import { cadenceFor, campaignBook, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, isGenericAddress, liveCampaign, saveBook, sequenceFor, STANDARD_ID, standardCampaign, type Campaign, type Sequence } from "./cadence.js";
+import { cadenceFor, campaignBook, cloneSequence, DEFAULT_SEQUENCE, isDefaultSequence, isGenericAddress, liveCampaign, saveBook, sequenceFor, sequencePicker, STANDARD_ID, standardCampaign, type Campaign, type Sequence } from "./cadence.js";
 import { randomUUID } from "node:crypto";
 import { SequenceSchema } from "./schemas.js";
 import { sequenceProblems, type SequenceProblem } from "./validate.js";
@@ -108,7 +108,7 @@ export function checkSequence(input: unknown): { seq: Sequence | null; errors: S
 }
 // ---------- Sequences (Walt 11/10): several a rep, one live ----------
 export type CampaignStats = { sent: number; rfqs: number; stops: number; steps: Record<string, { sent: number; rfqs: number; stops: number }> };
-export type CampaignView = Campaign & { live: boolean; readOnly: boolean; stats: CampaignStats };
+export type CampaignView = Campaign & { live: boolean; readOnly: boolean; stats: CampaignStats; /** The companies put on it by hand (11/10). */ enrolled: string[] };
 const noStats = (): CampaignStats => ({ sent: 0, rfqs: 0, stops: 0, steps: {} });
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const asSequence = (c: Campaign): Sequence => SequenceSchema.parse(c);
@@ -116,8 +116,9 @@ export async function listCampaigns(d: Deps, now: Date = d.now?.() ?? new Date()
   const book = await campaignBook(d.rep.closeUserId);
   const stats = await campaignStats(d, now).catch(() => ({} as Record<string, CampaignStats>));
   const liveId = book.campaigns.some((c) => c.id === book.liveId) ? book.liveId : STANDARD_ID;
+  const enrolledOn = (id: string) => Object.entries(book.enrolled ?? {}).filter(([, on]) => on === id).map(([lead]) => lead);
   return {
-    campaigns: [standardCampaign(), ...book.campaigns].map((c) => ({ ...c, live: c.id === liveId, readOnly: c.id === STANDARD_ID, stats: stats[c.name] ?? noStats() })),
+    campaigns: [standardCampaign(), ...book.campaigns].map((c) => ({ ...c, live: c.id === liveId, readOnly: c.id === STANDARD_ID, stats: stats[c.name] ?? noStats(), enrolled: enrolledOn(c.id) })),
     standard: DEFAULT_SEQUENCE,
   };
 }
@@ -215,7 +216,26 @@ export async function deleteCampaign(d: Deps, id: string) {
   if (!cur) throw new FollowUpError("That sequence isn't there anymore.");
   if (book.liveId === id) throw new FollowUpError(`"${cur.name}" is live. Set another sequence live first.`);
   book.campaigns = book.campaigns.filter((c) => c.id !== id);
+  // The companies on it go back to the live sequence.
+  book.enrolled = Object.fromEntries(Object.entries(book.enrolled ?? {}).filter(([, on]) => on !== id));
   await saveBook(d.rep.closeUserId, book);
+  forgetBoard(d.rep.closeUserId);
+  return listCampaigns(d);
+}
+/**
+ * Put companies on a sequence, or take them off it (Walt 11/10). A company on a sequence follows that one and no
+ * other; taken off, it follows the live one again like everyone else.
+ */
+export async function enrollCampaign(d: Deps, id: string, leadIds: string[], on: boolean) {
+  const book = await campaignBook(d.rep.closeUserId);
+  if (id !== STANDARD_ID && !book.campaigns.some((c) => c.id === id)) throw new FollowUpError("That sequence isn't there anymore.");
+  const ids = [...new Set(leadIds.map((x) => String(x ?? "").trim()).filter((x) => /^lead_/.test(x)))];
+  if (!ids.length) throw new FollowUpError("Pick a company first.");
+  const enrolled = { ...(book.enrolled ?? {}) };
+  for (const lead of ids) { if (on) enrolled[lead] = id; else if (enrolled[lead] === id) delete enrolled[lead]; }
+  book.enrolled = enrolled;
+  await saveBook(d.rep.closeUserId, book);
+  forgetBoard(d.rep.closeUserId);
   return listCampaigns(d);
 }
 /** Which step an account is on, kept on each row it writes (11/10), so a sequence's numbers show per step. */
@@ -417,8 +437,9 @@ async function planDay(d: Deps, now: Date) {
   const picks = (await store.getSetting<Record<string, string | null>>(d.rep.closeUserId, "memePicks").catch(() => null)) ?? {};
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());
   const cap = await dailyCapFor(d);
-  const seq = await sequenceFor(d.rep.closeUserId);
+  const seqOf = (await sequencePicker(d.rep.closeUserId)).of;
   for (const [i, a] of due.entries()) {
+    const seq = seqOf(a.leadId);
     if (plannedToday + planned.length >= cap) {
       skipped.push({ company: a.company, why: `Daily limit of ${cap} reached; it goes out on a later morning.` });
       continue;
@@ -517,8 +538,9 @@ export async function sendBumpsNow(d: Deps, opts: { leadIds: string[]; variant?:
   // You picked these by hand: the sequence's gap doesn't hold them back, only "not twice in two business days".
   const { keep, dropped } = dedupeDue(eligible, recent, { now, tz: d.rep.timeZone, arms: Object.fromEntries(eligible.map((a) => [a.leadId, Math.min(a.cadence.gap, BUMP_AFTER_BUSINESS_DAYS)])) });
   skipped.push(...dropped);
-  const seq = await sequenceFor(d.rep.closeUserId);
+  const seqOf = (await sequencePicker(d.rep.closeUserId)).of;
   for (const [i, a] of keep.entries()) {
+    const seq = seqOf(a.leadId);
     const nth = a.cadence.nth;
     void everSent;
     if (nth >= MAX_BUMPS) { skipped.push({ company: a.company, why: `${MAX_BUMPS} automatic emails already; call them.` }); continue; }
@@ -757,8 +779,9 @@ export async function forecast(d: Deps, days = 14): Promise<Forecast[]> {
   const everSent = await store.listAutomations(d.rep.closeUserId, new Date(0).toISOString());
   const horizon = now.getTime() + days * DAY;
   const out: Forecast[] = [];
-  const seq = await sequenceFor(d.rep.closeUserId);
+  const seqOf = (await sequencePicker(d.rep.closeUserId)).of;
   for (const a of board.accounts) {
+    const seq = seqOf(a.leadId);
     if (scheduled.has(a.leadId)) continue; // already on its way: it's in the scheduled list
     if (a.rfq) continue; // sent an RFQ: out of the sequence; following up on the quote is the rep's job
     if (repliedRecently(a, now)) continue; // replied in the last 1.5 weeks: cooling down (10/12)

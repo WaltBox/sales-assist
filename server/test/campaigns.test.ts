@@ -134,3 +134,30 @@ test("a new sequence from the editor (11/10): previewed without a name it says s
   assert.equal(again.ok, false);
   assert.ok(again.errors.some((e) => e.path === "name"));
 });
+
+test("companies put on a second sequence follow it and nothing else; everyone else follows the live one (Walt 11/10)", async () => {
+  const { d } = setup("user_cmp_enroll");
+  const { enrollCampaign } = await import("../src/automations.js");
+  const { sequencePicker } = await import("../src/cadence.js");
+  const slow = await createCampaign(d, { from: null, name: "Slow burn" });
+  const list = await enrollCampaign(d, slow.id, ["lead_a", "lead_b"], true);
+  assert.deepEqual(list.campaigns.find((c) => c.id === slow.id)!.enrolled, ["lead_a", "lead_b"]);
+  assert.equal(list.campaigns.find((c) => c.id === STANDARD_ID)!.live, true, "Standard is still the live one");
+  const pick = await sequencePicker(d.rep.closeUserId);
+  assert.equal(pick.of("lead_a").name, "Slow burn");
+  assert.equal(pick.of("lead_z").name, DEFAULT_SEQUENCE.name, "not put anywhere: the live one");
+  assert.equal((await sequenceFor(d.rep.closeUserId, "lead_b")).name, "Slow burn");
+  // Taken off: back with everyone.
+  await enrollCampaign(d, slow.id, ["lead_b"], false);
+  assert.equal((await sequencePicker(d.rep.closeUserId)).of("lead_b").name, DEFAULT_SEQUENCE.name);
+  // Another sequence set live doesn't move a company put on Slow burn by hand.
+  const fast = await createCampaign(d, { from: null, name: "Fast" });
+  await setLiveCampaign(d, fast.id);
+  const p2 = await sequencePicker(d.rep.closeUserId);
+  assert.deepEqual([p2.of("lead_a").name, p2.of("lead_z").name], ["Slow burn", "Fast"]);
+  // Deleting the sequence sends its companies back to the live one.
+  await deleteCampaign(d, slow.id);
+  assert.equal((await sequencePicker(d.rep.closeUserId)).of("lead_a").name, "Fast");
+  await assert.rejects(enrollCampaign(d, "nope", ["lead_a"], true), /isn't there/);
+  await assert.rejects(enrollCampaign(d, fast.id, [], true), /Pick a company/);
+});

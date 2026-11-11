@@ -126,7 +126,8 @@ export const isDefaultSequence = (s: Sequence) => JSON.stringify(s) === JSON.str
 // the built-in Standard is never stored and is live when nothing else is. The builder's earlier single "sequence"
 // setting (11/9) becomes the first saved one, live, the first time the book is read.
 export type Campaign = Sequence & { id: string; createdAt: string; updatedAt: string };
-export type CampaignBook = { campaigns: Campaign[]; liveId: string | null };
+/** `enrolled` (Walt 11/10): companies put on a sequence by hand, lead id → sequence id. Everyone else follows the live one. */
+export type CampaignBook = { campaigns: Campaign[]; liveId: string | null; enrolled?: Record<string, string> };
 export const STANDARD_ID = "standard";
 const BOOK_KEY = "campaigns";
 export const standardCampaign = (): Campaign => ({ ...cloneSequence(DEFAULT_SEQUENCE), id: STANDARD_ID, createdAt: "", updatedAt: "" });
@@ -136,7 +137,8 @@ export async function campaignBook(repId: string): Promise<CampaignBook> {
   if (saved && Array.isArray(saved.campaigns)) {
     const campaigns = saved.campaigns.filter(parses);
     if (campaigns.length < saved.campaigns.length) console.warn(`[sequence] ${repId}: a saved sequence doesn't parse; skipping it`);
-    return { campaigns, liveId: typeof saved.liveId === "string" ? saved.liveId : null };
+    const enrolled = saved.enrolled && typeof saved.enrolled === "object" ? saved.enrolled : {};
+    return { campaigns, liveId: typeof saved.liveId === "string" ? saved.liveId : null, enrolled };
   }
   const old = await store.getSetting<unknown>(repId, "sequence").catch(() => null);
   const r = old ? SequenceSchema.safeParse(old) : null;
@@ -154,8 +156,22 @@ export async function liveCampaign(repId: string): Promise<Campaign> {
   const book = await campaignBook(repId);
   return book.campaigns.find((c) => c.id === book.liveId) ?? standardCampaign();
 }
-/** The live sequence: what the board, the morning plan and every bump read. */
-export async function sequenceFor(repId: string): Promise<Sequence> {
+/**
+ * Which sequence each company follows (Walt 11/10: "the non-original one has companies manually selected in, otherwise
+ * people may be enrolled in both"): the live one for everyone, except a company put on another sequence by hand, which
+ * follows that one and nothing else. Read the book once, then ask per lead.
+ */
+export async function sequencePicker(repId: string): Promise<{ live: Sequence; of: (leadId: string) => Sequence; book: CampaignBook }> {
+  const book = await campaignBook(repId);
+  const asSeq = (c: Campaign): Sequence => (c.id === STANDARD_ID ? DEFAULT_SEQUENCE : c);
+  const live = asSeq(book.campaigns.find((c) => c.id === book.liveId) ?? standardCampaign());
+  const byId = new Map<string, Sequence>([[STANDARD_ID, DEFAULT_SEQUENCE], ...book.campaigns.map((c) => [c.id, asSeq(c)] as const)]);
+  const enrolled = book.enrolled ?? {};
+  return { live, book, of: (leadId) => (leadId in enrolled ? byId.get(enrolled[leadId]) ?? live : live) };
+}
+/** The live sequence: what the board, the morning plan and every bump read. With a lead: the one that company follows. */
+export async function sequenceFor(repId: string, leadId?: string): Promise<Sequence> {
+  if (leadId) return (await sequencePicker(repId)).of(leadId);
   const c = await liveCampaign(repId);
   if (c.id === STANDARD_ID) return DEFAULT_SEQUENCE;
   return SequenceSchema.parse(c);

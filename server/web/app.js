@@ -1757,6 +1757,12 @@ function memeLibrary() {
     try { await api("/api/memes/delete", { name: m.name }); lib.msg = `Retired ${m.name}`; } catch (e) { lib.msg = e.message; }
     await loadLibrary();
   };
+  // Your own arsenal (Walt 11/10): a team meme you'd rather not send is left out of your rotation, and nobody else's.
+  const skip = async (m) => {
+    lib.busy = true; render();
+    try { await api(`/api/memes/${encodeURIComponent(m.name)}/skip`, { on: !m.skipped }); lib.msg = m.skipped ? `${m.name} is back in your rotation` : `${m.name} is out of your rotation; everyone else still has it`; } catch (e) { lib.msg = e.message; }
+    await loadLibrary();
+  };
   return el("section", { class: "library", ondragover: (e) => { e.preventDefault(); e.currentTarget.classList.add("over"); }, ondragleave: (e) => e.currentTarget.classList.remove("over"),
     ondrop: (e) => { e.preventDefault(); e.currentTarget.classList.remove("over"); if (e.dataTransfer.files.length) stageMemeFiles([...e.dataTransfer.files]); } }, [
     el("div", { class: "head" }, [
@@ -1779,12 +1785,13 @@ function memeLibrary() {
     return [el("h3", { class: "grouph", text: `${title} · ${memes.length}` }), ...memes.map(card)];
   }
   function card(m) {
-    return el("div", { class: `memecard${m.mine ? "" : " theirs"}` }, [
+    return el("div", { class: `memecard${m.mine ? "" : " theirs"}${m.skipped ? " skipped" : ""}` }, [
       // A meme with text (11/10) shows drawn with the sample fill-ins, and wears a tag so you can tell.
       el("div", { class: "pic" }, [
         el("img", { src: (lib.previews[m.name] && lib.previews[m.name].url) || m.url, alt: m.name, loading: "lazy" }),
         m.spots && m.spots.length ? el("span", { class: "pill", title: "The text is drawn in for each buyer", text: "Text" }) : null,
         m.general ? el("span", { class: "pill team", title: m.mine ? "On the team list: every rep's rotation has it" : "A teammate shared this with everyone", text: "Team" }) : null,
+        m.skipped ? el("span", { class: "pill off", title: "Out of your rotation; the rest of the team still sends it", text: "Not yours" }) : null,
       ]),
       lib.rename && lib.rename.name === m.name
         ? el("input", { class: "rename", value: lib.rename.value, autofocus: true, oninput: (e) => { lib.rename.value = e.target.value; },
@@ -1794,10 +1801,11 @@ function memeLibrary() {
           : el("span", { class: "name", title: "A teammate's; they or Walt can rename it", text: stem(m.name) }),
       el("div", { class: "meta" }, [
         el("span", { class: "mono muted", title: "Sent: Close has sent it. Queued: scheduled in Close, not out yet. Your sends only.", text: [m.sent ? `sent ${m.sent}` : null, m.queued ? `queued ${m.queued}` : null].filter(Boolean).join(" · ") || "not used yet" }),
-        m.mine ? el("span", { class: "acts" }, [
-          el("button", { class: "linkbtn small3", text: m.spots && m.spots.length ? "Edit text" : "Add text", onclick: () => openMemeEditor(m) }),
-          el("button", { class: "linkbtn small3", title: m.general ? "Take it off the team list; it leaves the others' rotations" : "Put it on the team list, in every rep's rotation", text: m.general ? "Unshare" : "Share", onclick: () => share(m) }),
-          el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }),
+        m.mine || m.general ? el("span", { class: "acts" }, [
+          m.mine ? el("button", { class: "linkbtn small3", text: m.spots && m.spots.length ? "Edit text" : "Add text", onclick: () => openMemeEditor(m) }) : null,
+          m.mine ? el("button", { class: "linkbtn small3", title: m.general ? "Take it off the team list; it leaves the others' rotations" : "Put it on the team list, in every rep's rotation", text: m.general ? "Unshare" : "Share", onclick: () => share(m) }) : null,
+          m.general ? el("button", { class: "linkbtn small3", title: m.skipped ? "Put it back in your rotation" : "Leave it out of your rotation; the rest of the team keeps it", text: m.skipped ? "Use it" : "Not for me", onclick: () => skip(m) }) : null,
+          m.mine ? el("button", { class: "linkbtn small3", text: "Retire", onclick: () => retire(m) }) : null,
         ]) : el("span", { class: "muted small3", text: "a teammate's" }),
       ]),
       m.stats && m.stats.sent ? el("div", { class: "mstats", title: "Of the companies that got this meme in a bump from you: opened the email, wrote back, sent an RFQ, within 2 weeks. Seen: the meme image loaded in their mail app. Clicked: they followed the link under it." }, [
@@ -2299,7 +2307,7 @@ function campaignsCard() {
             el("b", { text: c.name }),
             c.live ? el("span", { class: "pill live", text: "Live" }) : c.readOnly ? el("span", { class: "pill", text: "Built in" }) : null,
           ]),
-          el("span", { class: "sub2 wrap", text: campaignShape(c) }),
+          el("span", { class: "sub2 wrap", text: `${campaignShape(c)} · ${campaignWho(c)}` }),
           el("div", { class: "cmpnums", title: "The last 60 days" }, [num(c.stats.sent, "emails"), num(c.stats.rfqs, "RFQs"), num(c.stats.stops, "stops")]),
           el("div", { class: "acts" }, [
             !c.live ? el("button", { class: "btn small", disabled: busy(), text: "Set live", onclick: (e) => { e.stopPropagation(); act(`/api/campaigns/${c.id}/live`, `From the next plan, the emails follow "${c.name}". Today's scheduled emails go as they are.`); } }) : null,
@@ -2315,6 +2323,12 @@ function campaignsCard() {
 // email's card instead of on a second track. Timing and the parts of every email are settings behind one button.
 // Typing never re-renders (it would drop the cursor): adding, removing and moving do.
 const CMP_PATHS = { timing: ["rhythm", "monthly", "clickHoldDays"], wrap: ["wrap", "send"] };
+// Who follows a sequence (11/10): the live one, everyone not put on another; the others, only the companies put on them.
+function campaignWho(c) {
+  const n = (c.enrolled || []).length;
+  if (c.live) return n ? `everyone, and ${n} put on it by hand` : "everyone";
+  return n ? `${n} compan${n === 1 ? "y" : "ies"} put on it` : "nobody on it yet";
+}
 function campaignEditor() {
   const cs = state.campaigns;
   const isNew = state.campaignOpen === "new";
@@ -2591,10 +2605,37 @@ function campaignEditor() {
     !ro && q.talked.steps.length < 6 ? el("button", { class: "cmpadd", text: "+ Add an email", onclick: () => { q.talked.steps.push({ gap: 5, line: "" }); dirty(); rerender(); } }) : null,
     rhythmCard,
   ]);
+  // Who follows this sequence (Walt 11/10: "the non-original one has companies manually selected in"). The live one
+  // is for everyone; any other runs only for the companies put on it here, so nobody is on two at once.
+  const enrollCard = () => {
+    const list = c.enrolled || [];
+    const accts = (state.board && state.board.accounts) || [];
+    const nameOf = (id) => { const a = accts.find((x) => x.leadId === id); return a ? a.company : id; };
+    const put = async (ids, on) => {
+      state.mailBusy = true; render();
+      try { state.campaigns = await api(`/api/campaigns/${c.id}/enroll`, { leadIds: ids, on }); } catch (e) { alert(e.message); }
+      state.mailBusy = false; state.cEnrollQ = ""; render();
+    };
+    const hitsFor = (q) => (q ? accts.filter((a) => !list.includes(a.leadId) && (a.company || "").toLowerCase().includes(q)).slice(0, 8) : []);
+    const hitRows = (q) => hitsFor(q).map((a) => el("button", { class: "cmphit", type: "button", onclick: () => put([a.leadId], true) }, [el("b", { text: a.company }), el("span", { class: "sub2", text: a.contact && a.contact.email ? a.contact.email : "" })]));
+    const hits = el("div", { class: "cmphits" }, hitRows(""));
+    // Typing refreshes the matches only, never the page (the cursor would drop).
+    const search = el("input", { type: "text", class: "seqtext", placeholder: accts.length ? "Add a company: start typing its name" : "Reading your accounts…", value: state.cEnrollQ || "",
+      oninput: (e) => { state.cEnrollQ = e.target.value; hits.replaceChildren(...hitRows(e.target.value.trim().toLowerCase())); } });
+    return el("section", { class: "cmpcard cmpenroll" }, [
+      el("div", { class: "cmpenroll-h" }, [
+        el("b", { text: c.live ? "Who follows it: everyone" : `Who follows it: ${list.length} compan${list.length === 1 ? "y" : "ies"}` }),
+        el("span", { class: "sub2 wrap", text: c.live ? "The live sequence is for every company not put on another one." : "Only the companies you put here. Everyone else follows the live sequence, so nobody is on two at once." }),
+      ]),
+      list.length ? el("div", { class: "cmpchips chips" }, list.map((id) => el("span", { class: "chip3 on" }, [nameOf(id), el("button", { class: "x", type: "button", title: "Take them off this sequence", text: "×", disabled: state.mailBusy, onclick: () => put([id], false) })]))) : null,
+      el("div", { class: "cmpfind" }, [search, hits]),
+    ]);
+  };
   return el("section", { class: "cmpedit" }, [
     top,
     state.cMsg ? el("p", { class: `seqnote${state.cMsg.bad ? " bad" : " good"}`, text: state.cMsg.text }) : null,
     state.cSheet ? sheet() : null,
+    !isNew && !ro ? enrollCard() : null,
     flow,
   ]);
 }
@@ -2740,7 +2781,7 @@ function emailsSection() {
       au ? el("div", { class: "acts" }, [
         el("button", { class: `switch btn-switch${au.enabled ? " on" : ""}`, disabled: state.mailBusy, title: au.enabled ? "Turn the sequence off" : "Turn the sequence on", onclick: toggle }, [el("i"), au.enabled ? "On · turn off" : "Off · turn on"]),
         el("button", { class: `btn small${au.dailyCap < au.fullCap ? " slowon" : ""}`, disabled: state.mailBusy, text: au.dailyCap < au.fullCap ? `Slowed: ${au.dailyCap} a day` : "Slow down", onclick: () => { state.paceOpen = !state.paceOpen; render(); } }),
-        el("button", { class: "btn small", disabled: state.mailBusy, text: state.mailBusy ? "Working…" : "Plan today now", onclick: planNow }),
+        el("button", { class: "btn small", disabled: state.mailBusy, title: "Puts today's due emails into Close right now, instead of waiting for the morning run. They still go out at their usual time.", text: state.mailBusy ? "Working…" : "Schedule today's emails", onclick: planNow }),
       ]) : null,
     ]),
     au && state.paceOpen ? paceBox(au) : null,

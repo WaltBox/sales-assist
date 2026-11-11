@@ -90,7 +90,7 @@ async function sequenceInfo(d: Deps, leadId: string): Promise<SequenceInfo | nul
     if (!a?.cadence) return null;
     const c = a.cadence;
     return {
-      track: c.track, round: c.round, nth: c.nth, introLength: (await sequenceFor(d.rep.closeUserId))[c.track].steps.length, phase: c.phase,
+      track: c.track, round: c.round, nth: c.nth, introLength: (await sequenceFor(d.rep.closeUserId, leadId))[c.track].steps.length, phase: c.phase,
       nextEmailAt: c.eligible ? c.dueAt : null, picked: !!c.nextEmailAt, lastConvo: c.lastConvo, clickedAt: c.clickedAt,
       replied: a.seen === "replied", rfqPromised: a.rfqPromised, callAsk: a.callAsk?.label ?? null,
     };

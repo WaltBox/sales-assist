@@ -3,7 +3,7 @@ import { classifyOpen, lineCardAttachments, RFQ_IN_TAG, RFQ_TAG, taskTitle, type
 import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
-import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequenceFor, type Cadence, type Sequence } from "./cadence.js";
+import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequencePicker, type Cadence, type Sequence } from "./cadence.js";
 import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
 import { adoptByRule, cardOwner, handoffRules, handoffs } from "./handoff.js";
 import { stripDashes } from "./benchmark.js";
@@ -524,8 +524,8 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     loadProfiles(d.rep.closeUserId),
     handoffs(),
     handoffRules(),
-    // The rep's own sequence from the builder (11/9), or the default.
-    sequenceFor(d.rep.closeUserId),
+    // The rep's sequences from the builder (11/9), or the default; since 11/10 a company can be on one of its own.
+    sequencePicker(d.rep.closeUserId),
   ]);
   const clicks = await clicksFor(d.rep.closeUserId);
   const callSignals = await loadCallSignals(d.rep.closeUserId);
@@ -573,7 +573,7 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
     profile: profiles[leadId] ?? null,
     clickedAt: clicks[leadId] ?? null,
     taps,
-    seq,
+    seq: seq.of(leadId),
     nextEmailAt: nextEmail[leadId] ?? null,
     signals: callSignals[leadId] ?? [],
     bounceBodies,

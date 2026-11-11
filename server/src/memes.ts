@@ -21,7 +21,9 @@ export class MemeError extends Error {}
 
 /** A meme: the file, and, when it's dynamic (11/10), the text spots drawn in when the image loads. */
 /** A meme in the library. `mine`: the signed-in rep can change it; `general` (11/10): it's on the team list, in every rep's rotation. */
-export type Meme = { name: string; url: string; spots?: Spot[]; mine?: boolean; general?: boolean };
+export type Meme = { name: string; url: string; spots?: Spot[]; mine?: boolean; general?: boolean;
+  /** A team meme this rep has left out of their own rotation (11/10). */
+  skipped?: boolean };
 
 const hasStorage = () => !!(config.supabaseUrl && config.supabaseKey);
 function storage() {
@@ -116,9 +118,25 @@ async function editable(d: { rep: Who }, name: string): Promise<{ owners: Owners
 
 /** This rep's memes: their own, and the team's general ones. `mine` says which they can change. */
 export async function memesFor(d: { rep: Who }, opts: { sync?: boolean } = {}): Promise<Meme[]> {
-  const [all, owners, general] = await Promise.all([listMemes(opts), ownersOf(), generalOf()]);
+  const [all, owners, general, skips] = await Promise.all([listMemes(opts), ownersOf(), generalOf(), skipsOf(d.rep.closeUserId)]);
   return all.filter((m) => owns(owners, d.rep, m.name) || m.name in general)
-    .map((m) => ({ ...m, mine: mayEdit(owners, general, d.rep, m.name), ...(m.name in general ? { general: true } : {}) }));
+    .map((m) => ({ ...m, mine: mayEdit(owners, general, d.rep, m.name), ...(m.name in general ? { general: true } : {}), ...(m.name in general && skips.includes(m.name) ? { skipped: true } : {}) }));
+}
+
+// ---------- each rep's own arsenal (Walt 11/10: "people should be able to add and remove specific memes") ----------
+// Yours are yours. A team meme is in your rotation unless you leave it out; leaving it out touches nobody else.
+const SKIPS_KEY = "memeSkips";
+async function skipsOf(repId: string): Promise<string[]> {
+  const v = await store.getSetting<string[]>(repId, SKIPS_KEY).catch(() => null);
+  return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+}
+export async function setMemeSkip(d: { rep: Who }, name: string, on: boolean): Promise<boolean> {
+  const general = await generalOf();
+  if (!(name in general)) throw new MemeError("Only a team meme can be left out. One of yours you'd retire instead.");
+  const skips = new Set(await skipsOf(d.rep.closeUserId));
+  if (on) skips.add(name); else skips.delete(name);
+  await store.putSetting(d.rep.closeUserId, SKIPS_KEY, [...skips]);
+  return on;
 }
 
 /** Share one of your memes with the whole team, or take it back (it leaves the others' rotations; what's sent stays on record). */
@@ -249,7 +267,7 @@ const picksOf = async (d: Deps) => (await store.getSetting<Picks>(d.rep.closeUse
 
 /** The meme for a lead's next bump: your pick, else one they haven't seen (chosen once, then kept). */
 export async function memeFor(d: Deps, leadId: string, ctx?: { memes: Meme[]; seen: Map<string, Set<string>>; picks: Picks; dealt?: Map<string, number> }): Promise<Meme | null> {
-  const memes = ctx?.memes ?? (await memesFor(d).catch(() => []));
+  const memes = (ctx?.memes ?? (await memesFor(d).catch(() => []))).filter((m) => !m.skipped);
   const seen = (ctx?.seen ?? (await memesSeen(d))).get(leadId) ?? new Set<string>();
   const picks = ctx?.picks ?? (await picksOf(d));
   if (leadId in picks) {

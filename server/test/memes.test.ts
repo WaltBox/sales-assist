@@ -133,3 +133,13 @@ test("general memes (11/10): shared ones join every rep's rotation; only who sha
   await assert.rejects(setMemeGeneral(b, "ron.png", true), /isn't one of your memes/);
   await store.putSetting("team", "memeOwners", {});
 });
+
+test("a team meme left out of your rotation is never dealt to you, and the rest of the team keeps it (11/10)", async () => {
+  const { memeFor } = await import("../src/memes.js");
+  const d = { rep: { closeUserId: "user_meme_skip", email: "ulysses@westgatesupply.com", name: "Ulysses", timeZone: "America/Chicago" }, close: {}, llm: {} } as never;
+  const memes = [{ name: "a.png", url: "", general: true, skipped: true }, { name: "b.png", url: "", general: true }];
+  const ctx = { memes, seen: new Map<string, Set<string>>(), picks: {} as Record<string, string | null> };
+  for (let i = 0; i < 6; i++) assert.equal((await memeFor(d, `lead_${i}`, ctx))?.name, "b.png", "only the one still in the rotation");
+  // Every meme left out: nothing to send rather than one you said no to.
+  assert.equal(await memeFor(d, "lead_x", { ...ctx, memes: [memes[0]] }), null);
+});

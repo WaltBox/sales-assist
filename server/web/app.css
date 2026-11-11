@@ -373,6 +373,18 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .mhow .library { margin-top: 10px; }
 .mhow summary .hint { font-family: var(--sans); letter-spacing: 0; text-transform: none; margin-left: 12px; }
 .memescard { margin-top: 14px; }
+.memecard.skipped .pic img { opacity: .45; }
+.memecard .pill.off { background: var(--ink); color: var(--white); }
+.cmpenroll { display: flex; flex-direction: column; gap: 10px; background: var(--white); border: 1px solid var(--ink); padding: 12px 16px; margin: 10px 0 14px; }
+.cmpenroll-h { display: flex; flex-direction: column; gap: 2px; }
+.cmpenroll .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmpenroll .chip3.on { display: inline-flex; align-items: center; gap: 6px; }
+.cmpenroll .chip3 .x { border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; color: var(--ink); }
+.cmpfind { position: relative; }
+.cmphits { display: flex; flex-direction: column; border: 1px solid var(--ink-line); border-top: 0; background: var(--white); }
+.cmphits:empty { display: none; }
+.cmphit { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 0; border-top: 1px solid var(--ink-line); background: none; text-align: left; cursor: pointer; font: inherit; }
+.cmphit:hover { background: rgba(0, 0, 0, .04); }
 .memescard .library { margin-top: 0; border: 0; padding: 0; }
 .memescard .library > .head { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .memescard .library > .head > div { flex: 1; min-width: 0; }

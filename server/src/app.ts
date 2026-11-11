@@ -20,10 +20,10 @@ import { queueUntapped,
 } from "./queue.js";
 import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSession, normalizeEmail, passwordProblem, readSession, recordTry, tooManyTries } from "./auth.js";
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
-import { checkSpots, deleteMeme, memesFor, fillsOf, logLinkClick, logMemeEvent, memeCounts, MemeError, memeImage, memeLanding, memesSeen, memeStats, memeTrack, memeUrl, MEMES_DIR, pickMeme, renameMeme, SAMPLE_FILLS, setMemeGeneral, setMemeSpots, spotsFor, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
+import { checkSpots, deleteMeme, memesFor, fillsOf, logLinkClick, logMemeEvent, memeCounts, MemeError, memeImage, memeLanding, memesSeen, memeStats, memeTrack, memeUrl, MEMES_DIR, pickMeme, renameMeme, SAMPLE_FILLS, setMemeGeneral, setMemeSkip, setMemeSpots, spotsFor, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
 import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, rfqTapAllowed, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
-import { automationsView, createCampaign, createCampaignFrom, deleteCampaign, listCampaigns, previewCampaign, saveCampaign, setLiveCampaign, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
+import { automationsView, createCampaign, createCampaignFrom, deleteCampaign, enrollCampaign, listCampaigns, previewCampaign, saveCampaign, setLiveCampaign, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
 import { formatPhone } from "./rules.js";
@@ -733,6 +733,8 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/campaigns/:id", authed, route((req, d) => saveCampaign(d, String(req.params.id), req.body?.campaign, { dryRun: req.body?.dry_run === true })));
   app.post("/api/campaigns/:id/live", authed, route((req, d) => setLiveCampaign(d, String(req.params.id))));
   app.post("/api/campaigns/:id/delete", authed, route((req, d) => deleteCampaign(d, String(req.params.id))));
+  // Companies put on a sequence by hand (11/10): on it and no other; off it, back to the live one.
+  app.post("/api/campaigns/:id/enroll", authed, route((req, d) => enrollCampaign(d, String(req.params.id), z.array(z.string()).parse(req.body?.leadIds ?? []), req.body?.on !== false)));
   app.post("/api/automations/test-mode", authed, route((req, d) => setTestMode(d, req.body?.on !== false)));
   app.post("/api/automations/plan", authed, route((_req, d) => planBumps(d, { force: true })));
   // An approved same-day send (10/2): named accounts, a couple of minutes apart; `test` goes to Test Lead Fabrication only.
@@ -810,6 +812,7 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/memes/:name/spots", authed, route(async (req, d) => ({ spots: await setMemeSpots(d, memeName(req), req.body?.spots ?? []) })));
   // General memes (11/10): share one of yours with the team, or take it back.
   app.post("/api/memes/:name/general", authed, route(async (req, d) => ({ general: await setMemeGeneral(d, memeName(req), !!req.body?.on) })));
+  app.post("/api/memes/:name/skip", authed, route(async (req, d) => ({ skipped: await setMemeSkip(d, memeName(req), !!req.body?.on) })));
   app.post("/api/memes/:name/render", authed, async (req, res, next) => {
     try {
       const d = res.locals.deps as Deps;
