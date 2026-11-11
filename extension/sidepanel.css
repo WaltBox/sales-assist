@@ -699,6 +699,7 @@ body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bot
 .objform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .objform input { padding: 9px 11px; font-size: 14px; }
 .objform input.wide { grid-column: 1 / -1; }
+.objform input.opt { font-size: 13px; padding: 7px 10px; border-style: dashed; }
 .objsave { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .objsave .objact { flex: 1 1 auto; }
 .objpay { font-family: var(--display); font-size: 16px; color: var(--green); white-space: nowrap; }

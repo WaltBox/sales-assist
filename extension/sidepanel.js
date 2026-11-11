@@ -1696,11 +1696,12 @@ function objectiveCard(st) {
   let control = null;
   if (L.stage === "potential" || L.stage === "fit") {
     const fields = ["name", "title", "email", "phone"];
+    // Name and email are the ask; title and a line are optional and look it (Walt 11/11).
     control = el("div", { class: "objform" }, [
       draftInput(key("name"), { type: "text", placeholder: "Name", autocomplete: "off", onkeydown: onEnter(fields) }),
-      draftInput(key("title"), { type: "text", placeholder: "Title (Purchasing, Buyer…)", autocomplete: "off", onkeydown: onEnter(fields) }),
       draftInput(key("email"), { type: "email", placeholder: "Email (theirs, not purchasing@)", autocomplete: "off", onkeydown: onEnter(fields) }),
-      draftInput(key("phone"), { type: "tel", placeholder: "Direct line (if they give one)", autocomplete: "off", onkeydown: onEnter(fields) }),
+      draftInput(key("title"), { type: "text", class: "opt", placeholder: "Title (optional)", autocomplete: "off", onkeydown: onEnter(fields) }),
+      draftInput(key("phone"), { type: "tel", class: "opt", placeholder: "Direct line (optional)", autocomplete: "off", onkeydown: onEnter(fields) }),
       el("div", { class: "objsave" }, [
         el("button", { class: "btn primary", disabled: f.busy, text: f.busy ? "Saving…" : "Save to Close", onclick: () => save(fields) }),
         pay(L.next ? L.next.points : 3),

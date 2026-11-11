@@ -56,3 +56,13 @@ test("RFQ incoming writes the promise note Close and the heat map already read, 
   assert.deepEqual(note!.body, { leadId: DEMO_LEAD_ID, note: "[RFQ promised] Jim said they'll send one, by Thursday (tapped on the call card).", pinned: false });
   assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Reached buyer");
 });
+
+test("only the name is required (Walt 11/11): a name alone is saved as the buyer, titled so the ladder knows it; with an email no title is made up", async () => {
+  const close = new FakeClose({ calls: [] });
+  close.leadStatus.set(DEMO_LEAD_ID, "Fit");
+  await saveBuyer(deps(close), DEMO_LEAD_ID, { name: "Jim" });
+  assert.deepEqual(close.writes.find((w) => w.op === "contact")!.body, { leadId: DEMO_LEAD_ID, name: "Jim", title: "Buyer", email: null, phone: null });
+  const close2 = new FakeClose({ calls: [] });
+  await saveBuyer(deps(close2), DEMO_LEAD_ID, { name: "Jim", email: "jim@jrhoe.com" });
+  assert.deepEqual(close2.writes.find((w) => w.op === "contact")!.body, { leadId: DEMO_LEAD_ID, name: "Jim", title: null, email: "jim@jrhoe.com", phone: null });
+});

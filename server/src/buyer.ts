@@ -28,7 +28,10 @@ export async function saveBuyer(d: Deps, leadId: string, b: BuyerIn): Promise<{ 
     if (phone && !(have?.phones ?? []).some((p) => p.phone === phone)) patch.phones = [...(have?.phones ?? []), { phone, type: "direct" }];
     if (Object.keys(patch).length) await d.close.updateContact(contactId, patch);
   } else {
-    contactId = (await d.close.createContact(leadId, { name, title, email, phone })).id;
+    // Only the name is required (Walt 11/11: "i dont like having to enter the 'Purchasing' etc"). The ladder knows the
+    // buyer by a buying title or their own email, so a name saved with neither is titled "Buyer": the card is the rep
+    // saying who buys.
+    contactId = (await d.close.createContact(leadId, { name, title: title ?? (email ? null : "Buyer"), email, phone })).id;
   }
   // Named buyer in Close (paid once there), never backwards; an org without the status keeps the one it has.
   const status = await advanceStatus(d, leadId, "Named buyer").catch(() => null);
