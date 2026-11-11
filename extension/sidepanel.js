@@ -1611,6 +1611,9 @@ function callStage(st) {
   const n = calls + 1;
   const ask = firstOf(b.ask_for && b.ask_for.name);
   const last = (hist.talked || [])[0] || null;
+  // The longest talk on the account (Walt 11/11: "Longest with x person. Duration"), when it isn't the last one.
+  const longest = (hist.talked || []).reduce((m, t) => (t.minutes || 0) > (m ? m.minutes || 0 : 0) ? t : m, null);
+  const longestBit = longest && longest !== last && (longest.minutes || 0) > (last ? last.minutes || 0 : 0) ? ` · Longest: ${longest.who || "someone there"}, ${shortDate(longest.at)}, ${longest.minutes} min` : "";
   const lastCallEv = (hist.events || []).find((e) => e.kind === "call" || e.kind === "voicemail" || e.kind === "no_answer");
   // What's happened since: the emails, and anything they did.
   const since = [];
@@ -1628,14 +1631,14 @@ function callStage(st) {
   };
   const intro = ask ? `Hi ${ask}, it's ${me} with Westgate Supply.` : `Hi, it's ${me} with Westgate Supply.`;
   if (seq && seq.rfqPromised) return {
-    kind: "promised", banner: `Call ${n} · they promised an RFQ`, sub: last ? `Last talk: ${last.who || "them"}, ${shortDate(last.at)}, ${last.minutes} min` : "",
+    kind: "promised", banner: `Call ${n} · they promised an RFQ`, sub: last ? `Last talk: ${last.who || "them"}, ${shortDate(last.at)}, ${last.minutes} min${longestBit}` : "",
     last: last && last.note, since: since.join(" · "),
     goal: `Get the RFQ ${ask || "they"} promised`,
     say: `${intro} Checking in on the RFQ you mentioned. Is it ready to send over?`,
   };
   if (last) return {
     kind: "talked", banner: `Call ${n} · you've talked ${hist.talked.length === 1 ? "once" : `${hist.talked.length} times`}`,
-    sub: `Last talk: ${last.who || "someone there"}, ${shortDate(last.at)}, ${last.minutes} min`,
+    sub: `Last talk: ${last.who || "someone there"}, ${shortDate(last.at)}, ${last.minutes} min${longestBit}`,
     last: last.note, since: since.join(" · "),
     goal: `Talk to ${ask || last.who || "the buyer"}, get the RFQ`,
     say: `${intro} Following up from when we talked ${whenWords(last.at)}. Do you have an RFQ going out this week I can quote?`,
