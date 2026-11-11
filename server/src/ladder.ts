@@ -169,9 +169,10 @@ export function ladderFor(x: LadderIn): Ladder {
     out: [],
     potential: ["Get the buyer's name", "Get their email"],
     fit: ["Get the buyer's name", "Get their email"],
-    named: [`Send ${who} the card`, `Call ${who}: the last RFQ they sent out`],
-    card: [`Reach ${who}`, "Get the last RFQ they sent out"],
-    reached: ["Get the RFQ: the last one out, a quote, a PO, or three items", "Stay on until it lands, or set a day and hour"],
+    // "Retrieve an RFQ" (Walt 11/11): the step is plain; "the last one you sent out" is what to say to get it.
+    named: [`Send ${who} the card`, `Call ${who}: retrieve an RFQ`],
+    card: [`Reach ${who}`, "Retrieve an RFQ"],
+    reached: ["Retrieve an RFQ", "Stay on until it lands, or set a day and hour"],
     rfq: ["Price it today", "Ask what else they buy"],
     quoted: ["Follow up on the quote", "Ask what else they buy"],
     customer: ["Ask what else they buy"],
