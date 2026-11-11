@@ -15,6 +15,8 @@ import { config, ROOT, type Rep } from "./config.js";
 import { reconcileAccounts, reconciledAt } from "./accountstate.js";
 import { cachedQueue, nextUp, queueSpot, syncQueue, syncQueues } from "./dialqueue.js";
 import { markBuyerReached, markRfqIncoming, saveBuyer } from "./buyer.js";
+import { backfillEvents, careerFor, writeDayEvents } from "./events.js";
+import { RUNG_POINTS } from "./ladder.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
@@ -596,6 +598,17 @@ export function createApp(appDeps: AppDeps) {
     return { chat: await postChat(o.id, o.tz, { email: `guest:${g.guest.id}`, name: g.guest.name }, z.string().max(1000).parse(req.body?.text)) };
   }));
   // Who's in West Game, for the web app's Team page (Walt 10/25: "in the application, not the Chrome extension").
+  // The players' seasons (11/11): every rep's all-time and month from the events table, cached a few minutes.
+  let careerMem: { at: number; value: unknown } | null = null;
+  app.get("/api/game/career", authed, route(async () => {
+    if (careerMem && Date.now() - careerMem.at < 5 * 60_000) return careerMem.value;
+    const team = await hookContext.allDeps();
+    const reps = await Promise.all(team.map(async (t) => ({ email: t.rep.email.toLowerCase(), name: t.rep.name, first: t.rep.name.split(/\s+/)[0] || t.rep.name, ...(await careerFor(t.rep.closeUserId, t.rep.timeZone).catch(() => null)) })));
+    careerMem = { at: Date.now(), value: { reps, points: RUNG_POINTS } };
+    return careerMem.value;
+  }));
+  app.post("/api/game/events/backfill", authed, route(async (_req, d) => { careerMem = null; return backfillEvents(d, { perRun: 5 }); }));
+  app.post("/api/game/events/today", authed, route(async (_req, d) => { careerMem = null; return writeDayEvents(d); }));
   app.get("/api/race/roster", authed, route(async (_req, d) => {
     ownerOnly(d);
     const { ownerId } = await raceTeam(d);
@@ -1118,6 +1131,8 @@ export function createApp(appDeps: AppDeps) {
         // caught up by morning. Close's webhooks keep them current the rest of the day.
         if (!config.demo) await reconcileAccounts(d).then((r) => { if (r.ran) console.info(`[records] ${rep.email}: reconciled ${r.written} accounts`); })
           .catch((err) => console.error(`reconcile ${rep.email}:`, (err as Error).message));
+        // The players' stats (11/11): today's events on every run, and a few past days a run until sixty are in.
+        if (!config.demo) await writeDayEvents(d).then(() => backfillEvents(d, { perRun: 2 })).catch((err) => console.error(`events ${rep.email}:`, (err as Error).message));
         // Only the hosted server plans the morning (10/8: the Mac copy planned too, 90 seconds after it, and 80 leads
         // got two emails). PLAN_MORNING=1 turns it on for a copy that runs alone.
         if (process.env.VERCEL || process.env.PLAN_MORNING === "1") {

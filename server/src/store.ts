@@ -48,7 +48,14 @@ export type Automation = {
  */
 export type AccountStateRow = { repId: string; leadId: string; company: string | null; updatedAt: string; suspect: boolean; data: unknown };
 
+/** One scoring event (11/11): what the West Game paid, kept so seasons and bests don't re-read Close. */
+export type RungEvent = { id: string; repId: string; leadId: string | null; company: string | null; kind: "dial" | "named" | "card" | "reached" | "rfq"; at: string; day: string; points: number; first: boolean; data?: unknown };
+
 export interface Store {
+  putRungEvents(rows: RungEvent[]): Promise<void>;
+  /** A rep's events, oldest first; by local day when given. */
+  listRungEvents(repId: string, opts?: { sinceDay?: string; untilDay?: string }): Promise<RungEvent[]>;
+
   putAutomation(a: Automation): Promise<void>;
   /** A rep's rows since a date; with a lead, only that lead's. */
   listAutomations(repId: string, since: string, leadId?: string): Promise<Automation[]>;
@@ -100,6 +107,7 @@ const KEEP = ["building", "ready", "failed"];
 type Mem = {
   automations: Record<string, Automation>;
   accountStates: Record<string, AccountStateRow>;
+  rungEvents: Record<string, RungEvent>;
   settings: Record<string, unknown>;
   users: Record<string, User>;
   reps: Record<string, StoredRep>;
@@ -109,7 +117,7 @@ type Mem = {
 };
 
 export class FileStore implements Store {
-  private m: Mem = { automations: {}, accountStates: {}, settings: {}, users: {}, reps: {}, reviews: {}, cache: {}, rejections: [] };
+  private m: Mem = { automations: {}, accountStates: {}, rungEvents: {}, settings: {}, users: {}, reps: {}, reviews: {}, cache: {}, rejections: [] };
   constructor(private file: string | null) {
     if (!file) return;
     try {
@@ -142,6 +150,11 @@ export class FileStore implements Store {
   async accountStatesForLead(leadId: string) { return Object.values(this.m.accountStates).filter((r) => r.leadId === leadId).map((r) => structuredClone(r)); }
   async putAccountState(row: AccountStateRow) { this.m.accountStates[`${row.repId}:${row.leadId}`] = structuredClone(row); this.save(); }
   async deleteAccountState(repId: string, leadId: string) { delete this.m.accountStates[`${repId}:${leadId}`]; this.save(); }
+  async putRungEvents(rows: RungEvent[]) { for (const r of rows) this.m.rungEvents[r.id] = structuredClone(r); this.save(); }
+  async listRungEvents(repId: string, opts: { sinceDay?: string; untilDay?: string } = {}) {
+    return Object.values(this.m.rungEvents).filter((r) => r.repId === repId && (!opts.sinceDay || r.day >= opts.sinceDay) && (!opts.untilDay || r.day <= opts.untilDay))
+      .sort((a, b) => a.at.localeCompare(b.at)).map((r) => structuredClone(r));
+  }
   async getSetting<T>(repId: string, key: string) { return (structuredClone(this.m.settings[`${repId}:${key}`]) as T) ?? null; }
   async putSetting<T>(repId: string, key: string, value: T) { this.m.settings[`${repId}:${key}`] = structuredClone(value); this.save(); }
   async getUser(email: string) { return structuredClone(this.m.users[email]) ?? null; }
@@ -208,7 +221,7 @@ export class FileStore implements Store {
 // table forgets that table's reads, so a copy of the server never serves what it just changed as old news; another
 // copy can be behind by at most the table's few seconds. Reads in flight are shared, so a burst of the same read
 // is one request.
-const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000, account_state: 3_000 };
+const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000, account_state: 3_000, rung_events: 0 };
 /** Timestamps in a query rounded down to ten seconds, so "since now" asked twice in a row is the same read. */
 const readKey = (pathAndQuery: string) => pathAndQuery.replace(/(\d{4}-\d{2}-\d{2}T\d{2}(?::|%3A)\d{2}(?::|%3A))(\d)\d(?:\.\d{1,3})?Z/g, "$10.000Z");
 // The last good answer to each read, kept a while past its memory (11/10, evening: Supabase's REST layer stalled for
@@ -331,6 +344,23 @@ export class SupabaseStore implements Store {
   }
   async putAccountState(row: AccountStateRow) {
     await this.req("POST", "account_state?on_conflict=rep_id,lead_id", { rep_id: row.repId, lead_id: row.leadId, company: row.company, updated_at: row.updatedAt, suspect: row.suspect, data: row.data }, "resolution=merge-duplicates,return=minimal");
+  }
+  async putRungEvents(rows: RungEvent[]) {
+    for (let i = 0; i < rows.length; i += 500) {
+      const body = rows.slice(i, i + 500).map((r) => ({ id: r.id, rep_id: r.repId, lead_id: r.leadId, company: r.company, kind: r.kind, at: r.at, day: r.day, points: r.points, first: r.first, data: r.data ?? null }));
+      await this.req("POST", "rung_events?on_conflict=id", body, "resolution=merge-duplicates,return=minimal");
+    }
+  }
+  async listRungEvents(repId: string, opts: { sinceDay?: string; untilDay?: string } = {}) {
+    const out: RungEvent[] = [];
+    const span = [opts.sinceDay ? `day.gte.${opts.sinceDay}` : null, opts.untilDay ? `day.lte.${opts.untilDay}` : null].filter(Boolean);
+    for (let offset = 0; ; offset += 1000) {
+      const rows = await this.req<Array<{ id: string; rep_id: string; lead_id: string | null; company: string | null; kind: RungEvent["kind"]; at: string; day: string; points: number; first: boolean; data?: unknown }>>("GET",
+        `rung_events?${this.q({ rep_id: `eq.${repId}`, ...(span.length ? { and: `(${span.join(",")})` } : {}), order: "at.asc,id.asc", limit: "1000", offset: String(offset) })}`);
+      out.push(...rows.map((r) => ({ id: r.id, repId: r.rep_id, leadId: r.lead_id, company: r.company, kind: r.kind, at: r.at, day: r.day, points: r.points, first: r.first, data: r.data })));
+      if (rows.length < 1000) break;
+    }
+    return out;
   }
   async deleteAccountState(repId: string, leadId: string) {
     // The write-forget keys on rep_id in the body; a delete has none, so the rep's reads are dropped by hand.

@@ -290,7 +290,7 @@
    * live() → { now, day, events with showAt }: the quick check that plays RFQs on every screen at once.
    */
   function create(opts) {
-    const g = { race: null, seen: null, open: false, week: false, lane: null, drag: null, party: null, back: false };
+    const g = { race: null, seen: null, open: false, week: false, lane: null, drag: null, party: null, back: false, career: null };
 
     // What's been celebrated already today. (A new key 10/26: RFQs are now one id per company per day.)
     const SEEN = "westGameSeen2";
@@ -492,6 +492,30 @@
       return g.lane === l.email && !l.error ? [row, stats(l, i)] : [row];
     }
 
+    // The season (Walt 11/11): all time, this month and the best day, from the events table.
+    let careerAsked = false;
+    function loadCareer() {
+      if (careerAsked || !opts.career) return;
+      careerAsked = true;
+      opts.career().then((c) => { g.career = c; render(); }).catch(() => { careerAsked = false; });
+    }
+    function season(l) {
+      loadCareer();
+      const c = g.career && g.career.reps ? g.career.reps.find((x) => x.email === l.email) : null;
+      if (!c || !c.all) return null;
+      const tr = (label, a, m) => h("tr", {}, [h("td", { text: label }), h("td", { text: String(a) }), h("td", { text: String(m) }), h("td")]);
+      return h("table", { class: "wg-season" }, [
+        h("tr", {}, [h("th", { text: c.since ? `Season · since ${new Date(`${c.since}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" })}` : "Season" }), h("th", { text: "All" }), h("th", { text: "Month" }), h("th")]),
+        tr("Calls", c.all.dials, c.month.dials),
+        tr("Buyers named", c.all.named, c.month.named),
+        tr("Cards to a buyer", c.all.cards, c.month.cards),
+        tr("Buyers reached", c.all.reached, c.month.reached),
+        tr("RFQs", c.all.rfqs, c.month.rfqs),
+        tr("New companies", c.all.firstRfqs, c.month.firstRfqs),
+        h("tr", { class: "wg-total" }, [h("td", { text: "Points" }), h("td", { text: String(c.all.points) }), h("td", { text: String(c.month.points) }), h("td")]),
+        c.best ? h("tr", {}, [h("td", { text: "Best day" }), h("td", { text: String(c.best.points) }), h("td", { text: new Date(`${c.best.day}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" }) }), h("td")]) : null,
+      ]);
+    }
     function stats(l, i) {
       const r = g.race;
       const full = r.lanes.find((x) => x.email === l.email) || l;
@@ -509,6 +533,7 @@
           h("tr", { class: "wg-total" }, [h("td", { text: "Points" }), h("td", { text: String(full.points) }), h("td", { text: w ? String(w.points) : "–" }), h("td")]),
         ]),
         rfqList(full),
+        season(full),
       ]);
     }
 

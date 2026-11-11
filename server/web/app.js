@@ -363,6 +363,7 @@ function gamePage() {
       webApp: "#team",
       load: (fresh) => api(`/api/race${fresh ? "?fresh=1" : ""}`),
       live: () => api("/api/race/live"),
+      career: () => api("/api/game/career"),
       chat: (text) => api("/api/race/chat", { text }),
       store: { get: async (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } }, set: async (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } },
     });
