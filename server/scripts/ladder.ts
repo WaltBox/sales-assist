@@ -4,6 +4,7 @@
 //   npm run ladder -- --statuses                 # make Fit, Named buyer, Reached buyer, Not a fit (idempotent)
 //   npm run ladder -- --migrate                  # print where every sales lead would move; add --write to do it
 //   npm run ladder -- --territories --reps chase@westgatesupply.com,liam@westgatesupply.com   # print; --write assigns
+//   --upto 500                                   # top each rep up to this many A/B leads in all (Walt 11/11: "everyone can have like 500")
 //   --limit 200                                  # size, for a first look
 //
 // Forward only, like everything else that touches statuses: a lead never moves down the ladder, and Customer,
@@ -94,29 +95,39 @@ async function territories() {
   const ownerField = fields.find((f) => f.name.trim().toLowerCase() === "lead owner")?.id;
   const tierField = fields.find((f) => f.name === ICP_FIELD_NAMES.tier)?.id;
   if (!ownerField || !tierField) throw new Error("needs the Lead owner and icp_tier fields");
+  const upto = Number(opt("upto", "0")) || Infinity;
   const pool: CloseLead[] = [];
+  // What each rep already has on the ladder, so a top-up stops at the cap (Walt 11/11: "they probably already have like A/B").
+  const owned = new Map(reps.map((r) => [r.id, 0]));
   for await (const l of leads(["id", "display_name", "status_label", "addresses", "contacts", `custom.${ownerField}`, `custom.${tierField}`])) {
     const tier = l[`custom.${tierField}`];
     if (tier !== "A" && tier !== "B") continue;
-    if (l[`custom.${ownerField}`]) continue;
     const stage = rungOfStatus(l.status_label);
     if (stage === "out" || (stage && rungIndex(stage) >= rungIndex("rfq"))) continue;
+    const owner = l[`custom.${ownerField}`] as string | undefined;
+    if (owner) { if (owned.has(owner)) owned.set(owner, owned.get(owner)! + 1); continue; }
     pool.push(l);
     if (pool.length >= limit) break;
   }
+  for (const r of reps) console.log(`${r.first_name} has ${owned.get(r.id)} A/B leads on the ladder${Number.isFinite(upto) ? `; room for ${Math.max(0, upto - owned.get(r.id)!)}` : ""}`);
   // Gulf first, A before B, then the rest; dealt round-robin so every rep gets the same share of each kind.
   const state = (l: CloseLead) => l.addresses?.[0]?.state ?? "";
   pool.sort((a, b) => Number(GULF.has(state(b))) - Number(GULF.has(state(a))) || String(a[`custom.${tierField}`]).localeCompare(String(b[`custom.${tierField}`])) || state(a).localeCompare(state(b)));
   const share = new Map(reps.map((r) => [r.id, { name: r.first_name, n: 0, gulf: 0, a: 0, named: 0 }]));
-  for (const [i, l] of pool.entries()) {
-    const r = reps[i % reps.length];
+  let turn = 0;
+  for (const l of pool) {
+    // Round-robin among the reps still under the cap; stop when everyone's full.
+    const open = reps.filter((r) => owned.get(r.id)! + share.get(r.id)!.n < upto);
+    if (!open.length) break;
+    const r = open[turn++ % open.length];
     const s = share.get(r.id)!;
     s.n++; if (GULF.has(state(l))) s.gulf++; if (l[`custom.${tierField}`] === "A") s.a++; if (buyerOf(l.contacts)) s.named++;
     if (!write) continue;
     await close.updateLead(l.id, { [`custom.${ownerField}`]: r.id });
     log({ kind: "owner", leadId: l.id, company: l.display_name, to: r.email, tier: l[`custom.${tierField}`], state: state(l) });
   }
-  console.log(`${pool.length} unowned A/B leads${write ? " assigned" : " (nothing written: add --write)"}`);
+  const dealt = [...share.values()].reduce((n, s) => n + s.n, 0);
+  console.log(`${pool.length} unowned A/B leads, ${dealt}${write ? " assigned" : " to assign (nothing written: add --write)"}`);
   for (const s of share.values()) console.log(`  ${s.name}: ${s.n} (${s.a} A, ${s.gulf} Gulf, ${s.named} with a buyer already named)`);
 }
 
