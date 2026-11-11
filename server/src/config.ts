@@ -41,6 +41,10 @@ export const config = {
   effortFast: (process.env.EFFORT_FAST ?? "low") as "low" | "medium" | "high",
   effortAfterCall: (process.env.EFFORT_AFTER_CALL ?? "low") as "low" | "medium" | "high",
   demo: process.env.DEMO === "1",
+  // A look on a Mac (11/11, Walt: "I dont really like having to test this in prod"): a copy of the server on this
+  // computer against real Close, read like the hosted one but with the catch-up off, so it never sends an email, syncs
+  // a queue or subscribes Close to anything, and the side panel can be opened as a page.
+  localLook: process.env.LOCAL_LOOK === "1",
   closeBaseUrl: process.env.CLOSE_BASE_URL ?? "https://api.close.com/api/v1",
   // Comma-separated chrome-extension://<id> origins allowed to call the API.
   allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),

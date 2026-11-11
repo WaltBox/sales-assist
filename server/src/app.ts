@@ -58,11 +58,11 @@ export function createApp(appDeps: AppDeps) {
   // A call sheet is big (850 rows): the guest's own upload, or the rep uploading it for them (10/21).
   app.use((req, res, next) => (req.method === "POST" && /^\/api\/guests?\/[^/]+\/list$/.test(req.path) ? jsonList : jsonSmall)(req, res, next));
   app.use(cors({
-    origin: (origin, cb) => cb(null, !origin || config.demo || config.allowedOrigins.includes(origin)),
+    origin: (origin, cb) => cb(null, !origin || config.demo || config.localLook || config.allowedOrigins.includes(origin)),
     allowedHeaders: ["authorization", "content-type"],
   }));
 
-  if (config.demo) {
+  if (config.demo || config.localLook) {
     // Lets you open the side panel as a normal web page for a quick look.
     app.use("/preview", express.static(path.resolve(ROOT, "..", "extension")));
   }

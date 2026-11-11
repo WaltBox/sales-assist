@@ -12,7 +12,8 @@ app.listen(config.port, () => {
 // A long-running server doesn't need Vercel Cron: move waiting reviews along every 15 seconds.
 const catchUp = app.locals.catchUp as () => Promise<unknown>;
 let running = false;
-setInterval(() => {
+if (config.localLook) console.log("Local look: the catch-up is off (no automatic emails, queue syncs or Close subscriptions from this copy).");
+else setInterval(() => {
   if (running) return;
   running = true;
   catchUp().catch((err) => console.error("catch-up:", (err as Error).message)).finally(() => { running = false; });
