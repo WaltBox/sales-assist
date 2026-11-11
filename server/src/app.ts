@@ -797,7 +797,15 @@ export function createApp(appDeps: AppDeps) {
     const memes = await memesFor(d);
     const seen = typeof req.query.lead === "string" ? (await memesSeen(d)).get(req.query.lead) ?? new Set<string>() : new Set<string>();
     const counts = await memeCounts(d);
-    const stats = await accountsBoard(d).then((b) => memeStats(d, b.accounts)).catch(() => ({} as MemeStats));
+    // Scored against every company the bumps went to, wherever it sits now (11/10: Walt's board emptied when his
+    // accounts went to Chase, and every meme read 0% opened, 0% replied, 0% RFQ). Teammates' saved boards fill in.
+    const stats = await (async () => {
+      const mine = await accountsBoard(d);
+      const others = await Promise.all((await teammates(d)).map((t) => cachedBoard(t).catch(() => null)));
+      const seen = new Set(mine.accounts.map((a) => a.leadId));
+      const all = [...mine.accounts, ...others.flatMap((b) => b?.accounts ?? []).filter((a) => !seen.has(a.leadId) && !!seen.add(a.leadId))];
+      return memeStats(d, all);
+    })().catch(() => ({} as MemeStats));
     return { memes: memes.map((m) => ({ ...m, seen: seen.has(m.name), sent: counts[m.name]?.sent ?? 0, queued: counts[m.name]?.queued ?? 0, stats: stats[m.name] ?? null })), folder: "server/memes", tracking: trackingOn() };
   }));
   // The meme library (Walt 10/5): upload an image or a zip of them, rename (every record follows), retire.
