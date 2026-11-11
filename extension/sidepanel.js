@@ -1645,13 +1645,23 @@ function objectionTap(b) {
     el("p", { class: "say", text: b.objection_response }),
   ]);
 }
+// The ladder (Walt 11/11): the rung this lead is on in Close, the one objective for it, and what the next rung pays.
+// Paid once per company, so a lead already at Named buyer shows the next rung, never "find the name" again.
 function stageBlock(st) {
   const g = callStage(st);
-  return el("section", { class: `stagecard k-${g.kind}` }, [
+  const L = st.header && st.header.ladder;
+  const rung = L ? el("div", { class: `rung r-${L.stage}` }, [
+    el("span", { class: "rungpill", text: L.label }),
+    L.buyer ? el("span", { class: "rungbuyer", text: `${L.buyer.name}${L.buyer.title ? ` · ${L.buyer.title}` : ""}${L.buyer.direct ? "" : " · no direct line yet"}` }) : null,
+    L.statusLags ? el("span", { class: "rungnote", text: "Close's status is behind; it moves when you tap an outcome" }) : null,
+  ]) : null;
+  return el("section", { class: `stagecard k-${g.kind}${L ? ` s-${L.stage}` : ""}` }, [
     el("div", { class: "stagebanner" }, [el("strong", { text: g.banner }), g.sub ? el("span", { text: g.sub }) : null]),
+    rung,
     g.last ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Last time" }), el("span", { text: g.last })]) : null,
     g.since ? el("div", { class: "stagerow" }, [el("span", { class: "label", text: "Since then" }), el("span", { text: g.since })]) : null,
-    el("div", { class: "stagegoal" }, [el("span", { class: "label", text: "Goal" }), el("strong", { text: g.goal })]),
+    el("div", { class: "stagegoal" }, [el("span", { class: "label", text: L ? "Objective" : "Goal" }), el("strong", { text: L ? L.objective : g.goal })]),
+    L && L.next && L.next.points ? el("div", { class: "stagepts" }, [el("b", { text: `+${L.next.points}` }), el("span", { text: ` for ${L.next.label}` })]) : null,
   ]);
 }
 
@@ -1711,6 +1721,8 @@ function renderPre() {
     b.ask_for.role ? el("span", { class: "muted", text: ` · ${b.ask_for.role}` }) : null,
   ]));
   const stage = callStage(st);
+  // The ladder's line for this rung (11/11) is what to say, unless they've promised an RFQ (that call is about the promise).
+  if (h.ladder && h.ladder.say && stage.kind !== "promised") stage.say = h.ladder.say;
   page.append(rfqButton(st));
   // A repeat call gets its own line (10/12); the first-call opener is for first calls, or if they ask what we do.
   page.append(el("section", { class: "hero" }, stage.say ? [

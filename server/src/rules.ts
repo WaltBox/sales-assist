@@ -178,8 +178,9 @@ export function emailMatchesDomain(email: string, domain: string | null): boolea
 
 // Pipeline order for "never move a lead backwards". Statuses not listed
 // (Bad Fit, Not Interested, Disqualified, Vendor...) are side exits.
-// Qualified sits before Sent Line Card (Walt 9/30): a qualified lead that got the line card is "Sent Line Card".
-const LADDER = ["potential", "good lead", "called", "qualified", "sent line card", "rfq received", "quoted", "customer"];
+// The ladder (Walt 11/11): fit → named buyer → card → reached → RFQ → quoted → customer. The older names (good lead,
+// called, qualified) sit where they meant, so a lead that still carries one never moves backwards.
+const LADDER = ["potential", "good lead", "fit", "called", "named buyer", "sent line card", "qualified", "reached buyer", "rfq received", "quoted", "customer"];
 
 export function isBackwardsMove(fromLabel: string | null | undefined, toLabel: string): boolean {
   const from = LADDER.indexOf((fromLabel ?? "").toLowerCase());
@@ -248,7 +249,7 @@ export function businessDaysBetween(from: Date, to: Date, tz: string): number {
  * Lead statuses that mean "stop working this account": the rep's call in Close, or Shot down in the side panel
  * (Walt 10/5). They come off the accounts board and out of the automatic emails.
  */
-export const OUT_STATUSES = ["not interested", "bad fit", "disqualified"];
+export const OUT_STATUSES = ["not interested", "bad fit", "disqualified", "not a fit"];
 export const isOutStatus = (label: string | null | undefined) => OUT_STATUSES.includes((label ?? "").trim().toLowerCase());
 
 /** A fuller version of an existing name: same last name, and the old first name is missing or a prefix/initial of the new one. */

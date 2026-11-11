@@ -958,9 +958,10 @@ export function createApp(appDeps: AppDeps) {
     const id = leadId(req);
     const list = warmAfterLead(d, id); // the next leads start writing while this one loads
     const brief = await leadBrief(d, id, { refresh: req.query.refresh === "1" });
-    // "Great fit" (an A) on a lead nobody's worked yet: mark it "Good lead" in Close as you browse (Walt 9/29).
+    // "Great fit" (an A) on a lead nobody's worked yet: onto the ladder as "Fit" in Close as you browse (Walt 9/29;
+    // the rung's name since 11/11; an org without it still has "Good lead").
     if (brief.brief.rating === "A" && brief.header.status === "Potential") {
-      const moved = await advanceStatus(d, id, "Good lead", "Potential").catch((e) => { console.error(`[good lead ${id}]`, (e as Error).message); return null; });
+      const moved = await advanceStatus(d, id, "Fit", "Potential").then((m) => m ?? advanceStatus(d, id, "Good lead", "Potential")).catch((e) => { console.error(`[fit ${id}]`, (e as Error).message); return null; });
       if (moved) brief.header.status = moved;
     }
     return { ...brief, list: await list };

@@ -8,6 +8,7 @@ import { transcriptText, type CloseCall, type CloseClient } from "./close.js";
 import { config } from "./config.js";
 import { loadLeadContext } from "./context.js";
 import { businessDaysAt, formatLocal, isBackwardsMove, isOutStatus, isoWithOffset, localParts, nextWeekdayAt, samePerson, zonedTime } from "./rules.js";
+import { statusForOutcome } from "./ladder.js";
 import { store } from "./store.js";
 import { extractPurchasing, type Purchasing } from "./purchasing.js";
 import { recordPurchasing } from "./potential.js";
@@ -231,8 +232,11 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   }
 
   let savedStatus: string | null = null;
-  const wantStatus = req.outcome === "reached_buyer" ? "Qualified" : req.outcome === "got_name" ? "Called" : null;
-  const status = wantStatus ? ctx.statuses.find((s) => s.label.toLowerCase() === wantStatus.toLowerCase()) : undefined;
+  // The ladder (11/11): reaching the buyer is "Reached buyer", a name from the front desk is "Named buyer". An org
+  // that hasn't made those statuses yet gets the older ones they replace.
+  const wantStatus = statusForOutcome(req.outcome);
+  const fallback = req.outcome === "reached_buyer" ? "Qualified" : req.outcome === "got_name" ? "Called" : null;
+  const status = wantStatus ? ctx.statuses.find((s) => s.label.toLowerCase() === wantStatus.toLowerCase()) ?? ctx.statuses.find((s) => s.label.toLowerCase() === (fallback ?? "").toLowerCase()) : undefined;
   if (status && status.label !== f.statusLabel && !isBackwardsMove(f.statusLabel, status.label) && !f.vendor) {
     try {
       await d.close.updateLeadStatus(leadId, status.id);

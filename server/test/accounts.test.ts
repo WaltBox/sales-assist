@@ -288,13 +288,18 @@ test("lead status follows the funnel, forward only, never over the rep's own sta
   const d: Deps = { close, llm: demoLlm, rep: { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: tz } };
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Sent Line Card", "Called"), "Sent Line Card");
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Sent Line Card", "RFQ Received"), null, "never backwards");
-  assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Sent Line Card", "Qualified"), "Sent Line Card", "Qualified + line card → Sent Line Card (9/30)");
+  // The ladder (11/11): the card comes before the conversation, so a reached buyer (Qualified, the old name) who gets
+  // the card stays reached; before 11/11 (9/30) it was the other way around.
+  assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Sent Line Card", "Qualified"), null, "Reached buyer + line card stays Reached buyer");
+  assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Sent Line Card", "Named buyer"), "Sent Line Card", "Named buyer + line card → Sent Line Card");
+  assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Reached buyer", "Sent Line Card"), "Reached buyer");
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Quoted", "Customer"), null);
-  // "Great fit" on browse: Potential → Good lead, but never over a lead that's already been called.
+  // "Great fit" on browse: Potential → Fit (Good lead before 11/11), but never over a lead that's already been called.
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Good lead", "Potential"), "Good lead");
+  assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Fit", "Potential"), "Fit");
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Good lead", "Called"), null);
   assert.equal(await advanceStatus(d, DEMO_LEAD_ID, "Called", "Good lead"), "Called", "and Good lead moves on once it's worked");
-  assert.equal(close.writes.filter((w) => w.op === "status").length, 4);
+  assert.equal(close.writes.filter((w) => w.op === "status").length, 6);
   const rfq = (stage: string) => ({ rfq: { at: "", files: [], quotedAt: null, status: { stage } as never } });
   assert.equal(funnelStatusFor({ rfq: null }), "Sent Line Card");
   assert.equal(funnelStatusFor(rfq("With pricing")), "RFQ Received");

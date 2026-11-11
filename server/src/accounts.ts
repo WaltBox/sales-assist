@@ -290,9 +290,10 @@ export function sectionOf(a: Pick<Account, "next" | "seen" | "opens" | "rfq"> & 
 }
 
 // ---------- lead status in Close follows the funnel (Walt 9/29) ----------
-// Potential → Good lead → Called → Qualified → Sent Line Card → RFQ Received → Quoted, forward only. Any other
-// status (Customer, Vendor, Bad Fit, Not Interested…) is the rep's call and is never touched.
-export const FUNNEL = ["Potential", "Good lead", "Called", "Qualified", "Sent Line Card", "RFQ Received", "Quoted"] as const;
+// The ladder (11/11): Potential → Fit → Named buyer → Sent Line Card → Reached buyer → RFQ Received → Quoted, forward
+// only. The older names (Good lead, Called, Qualified) still read as the rung they meant. Any other status (Customer,
+// Vendor, Not a fit, Not Interested…) is the rep's call and is never touched.
+export const FUNNEL = ["Potential", "Good lead", "Fit", "Called", "Named buyer", "Sent Line Card", "Qualified", "Reached buyer", "RFQ Received", "Quoted"] as const;
 export type FunnelStatus = (typeof FUNNEL)[number];
 
 export function funnelStatusFor(a: Pick<Account, "rfq">): FunnelStatus {

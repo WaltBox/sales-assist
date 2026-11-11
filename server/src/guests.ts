@@ -241,7 +241,7 @@ export type MarkPatch = { outcome?: string | null; notes?: string | null; email?
 
 /** The lead status a call outcome earns. */
 export const outcomeStatus = (outcome: Outcome): FunnelStatus =>
-  ["Reached buyer", "Wants line card", "Sending an RFQ", "Got a name"].includes(outcome) ? "Qualified" : "Called";
+  ["Reached buyer", "Wants line card", "Sending an RFQ"].includes(outcome) ? "Reached buyer" : outcome === "Got a name" ? "Named buyer" : "Called";
 
 /**
  * Several marks in one save (10/15): the page queues taps and sends them one request at a time, so two saves never
@@ -288,7 +288,13 @@ function applyMark(d: Deps, guest: Guest, lead: ListLead, patch: MarkPatch): (()
       if (ids[snap.i] !== id) await store.putSetting(d.rep.closeUserId, idsKey(guest.id), { ...ids, [snap.i]: id }).catch(() => undefined);
     }
     if (id) await d.close.createNote(id, `[Work trial] Called by ${guest.name} (work trial): ${snap.outcome}.${snap.gotName ? ` Ask for: ${snap.gotName}.` : ""}${snap.notes ? ` Notes: ${snap.notes}` : ""}${snap.email ? ` Email: ${snap.email}` : ""}`, false);
-    if (id && snap.outcome) await advanceStatus(d, id, outcomeStatus(snap.outcome)).catch((e) => console.error(`[guest status ${id}]`, (e as Error).message));
+    // The ladder's rung, or the older status it replaced in an org that hasn't made the new ones yet.
+    if (id && snap.outcome) {
+      const want = outcomeStatus(snap.outcome);
+      // The older name only where the org hasn't made the rung yet; never as a second step up.
+      const has = (await d.close.leadStatuses().catch(() => [])).some((s) => s.label.toLowerCase() === want.toLowerCase());
+      await advanceStatus(d, id, has || want === "Called" ? want : "Qualified").catch((e) => console.error(`[guest status ${id}]`, (e as Error).message));
+    }
   };
 }
 

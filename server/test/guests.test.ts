@@ -119,11 +119,16 @@ test("call list (10/15): the guest's sheet loads, each call is marked, a note go
   const named = (await getList(repId, guest.id))!.leads[0];
   assert.equal(named.gotName, "Mike Torres, purchasing, x214");
   assert.match((close.writes.filter((w) => w.op === "note").pop()!.body as { note: string }).note, /^\[Work trial\] Called by Jake Miller \(work trial\): Got a name\. Ask for: Mike Torres, purchasing, x214\.$/);
-  // Reaching someone makes the lead Qualified (10/29); a status past that (the rep set Sent Line Card) is left alone.
-  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Qualified", "Got a name = Qualified");
+  // A name makes the lead Named buyer (10/29, the ladder's name since 11/11); a status past that (the rep set Sent Line Card) is left alone.
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Named buyer", "Got a name = Named buyer");
+  // The card comes before the conversation on the ladder (11/11): reaching them after the card is a step up; a status
+  // past the ladder's rungs (an RFQ in) is never touched.
   close.leadStatus.set(DEMO_LEAD_ID, "Sent Line Card");
   await markListLead(d, guest, 0, { outcome: "Reached buyer" });
-  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Sent Line Card", "forward only");
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Reached buyer", "card, then reached");
+  close.leadStatus.set(DEMO_LEAD_ID, "RFQ Received");
+  await markListLead(d, guest, 0, { outcome: "Got a name" });
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "RFQ Received", "forward only");
 });
 
 test("marks in a batch all stick, the answer doesn't wait on Close, and notes come after (10/15)", async () => {

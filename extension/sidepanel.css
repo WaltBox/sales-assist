@@ -676,3 +676,16 @@ body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bot
 .fixrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .fixrow input { flex: 1; min-width: 160px; }
 .fixnote { color: var(--ink); }
+
+/* The ladder (11/11): the rung pill, the buyer, and what the next rung pays. */
+.rung { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 2px; }
+.rungpill { font-family: var(--label); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; padding: 3px 8px; border: 1.5px solid var(--ink); background: var(--white); }
+.s-fit .rungpill { border-style: dashed; color: var(--muted); }
+.s-named .rungpill, .s-card .rungpill { background: #f4dfb0; color: #5c3b00; border-color: #5c3b00; }
+.s-reached .rungpill { background: var(--red); color: #fff; border-color: var(--red); }
+.s-rfq .rungpill, .s-quoted .rungpill, .s-customer .rungpill { background: var(--navy); color: var(--paper); border-color: var(--navy); }
+.s-out .rungpill { background: var(--paper-dark); color: var(--muted); border-color: var(--ink-line); }
+.rungbuyer { font-size: 13px; }
+.rungnote { font-size: 12px; color: var(--muted); width: 100%; }
+.stagepts { display: flex; align-items: baseline; gap: 4px; font-size: 13px; margin-top: 4px; }
+.stagepts b { font-family: var(--display); font-size: 18px; color: var(--red); }

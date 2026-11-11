@@ -199,7 +199,7 @@ test("one tap saves the status now (no Close task for reaching the buyer, 10/12)
   // The tap saves the status right away; reaching the buyer starts the next round of emails, not a Close task…
   assert.deepEqual(close.writes.map((w) => w.op).filter((op) => op !== "lead-update" && op !== "custom-field").sort(), ["status"]);
   assert.ok(close.writes.some((w) => w.op === "lead-update"), "Reached buyer puts today's date on the lead (Last reached)");
-  assert.equal(r.saved[0], "status Qualified");
+  assert.equal(r.saved[0], "status Reached buyer");
   assert.ok(r.queued);
   await assert.rejects(quickOutcome(d, DEMO_LEAD_ID, { outcome: "reached_buyer", call_id: "acti_demoRoddaCall0001" }), /already saved/);
 
@@ -352,7 +352,7 @@ test("changing a mistaken tap to no answer takes off the callback the first tap 
   const close = new FakeClose({ calls: [roddaCall({ id: "acti_chg", disposition: "no-answer", duration: 0 })] });
   const d = { ...deps(close), now: () => thu, rep: { ...rep, closeUserId: "user_chg" } };
   const first = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "got_name", call_id: "acti_chg", rating: "B" });
-  assert.equal(first.setStatus, "Called");
+  assert.equal(first.setStatus, "Named buyer");
   assert.ok(first.task);
   await assert.rejects(quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B" }), /already saved/);
   const fixed = await quickOutcome(d, DEMO_LEAD_ID, { outcome: "no_answer", call_id: "acti_chg", rating: "B",

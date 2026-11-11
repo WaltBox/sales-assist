@@ -14,6 +14,7 @@ import {
 import { fetchSiteText } from "./website.js";
 import { applyBenchmarkTask, benchmarkDecision, enforceBenchmark, enforceGotIt, formatParagraphs, OFFERS, stripDashes } from "./benchmark.js";
 import { transcriptText } from "./close.js";
+import { buyerOf, icpFieldIds, ladderFor, type Ladder } from "./ladder.js";
 import { EmailReviewSchema, INTRO_OFFER, INTRO_SUBJECT, isSelfTest, logRejection, retryNote, reviewTask, ruleChecks, type Failure, type Referral } from "./validate.js";
 
 export const RFQ_TAG = "[RFQ promised]";
@@ -69,6 +70,8 @@ export type BriefResponse = {
     history: History;
     /** Where they are in the email sequence (10/12), from the accounts board; null if they're not on it. */
     sequence: SequenceInfo | null;
+    /** The ladder (11/11): the rung this lead is on, the objective for it, what the next rung pays, and the buyer. */
+    ladder: Ladder;
   };
   brief: Brief;
   flags: string[];
@@ -98,6 +101,26 @@ async function sequenceInfo(d: Deps, leadId: string): Promise<SequenceInfo | nul
   } catch { return null; }
 }
 
+/**
+ * The ladder for the call card (11/11): the rung from Close's status and the lead's own facts (a buyer contact, the
+ * card to them, a conversation, an RFQ), the objective and the line for that rung, and what the next rung pays.
+ */
+async function ladderInfo(d: Deps, ctx: LeadContext, emails: LeadEmail[]): Promise<Ladder> {
+  const ids = await icpFieldIds(d).catch(() => null);
+  const tier = ids ? (ctx.lead[`custom.${ids.tier}`] as string | undefined) ?? null : null;
+  const buyer = buyerOf(ctx.lead.contacts);
+  const at = (e: LeadEmail) => e.date_sent ?? e.date_created ?? "";
+  const toBuyer = (e: LeadEmail) => !!buyer && (e.to ?? []).some((t) => (buyer.email && t.toLowerCase().includes(buyer.email.toLowerCase())) || (buyer.name && t.toLowerCase().includes(buyer.name.toLowerCase())));
+  const cardSentAt = emails.filter((e) => e.direction === "outgoing" && ["sent", "outbox"].includes(e.status) && (e.attachments ?? []).some((a) => a.filename === "Westgate_Supply_Line_Card.pdf") && toBuyer(e)).map(at).sort().pop() ?? null;
+  // A conversation with the buyer (Walt 11/11: "reach has to show in Close"): a connected call of a minute or more to
+  // that contact. The front desk picking up for a minute isn't a reach; the tap that says you reached them moves the
+  // status, and the status counts too.
+  const reachedAt = buyer ? ctx.calls.filter((c) => c.direction === "outbound" && c.disposition === "answered" && (c.duration ?? 0) >= 60 && c.contact_id === buyer.id)
+    .map((c) => c.date_created).sort().pop() ?? null : null;
+  const rfqAt = /^(rfq received|quoted|customer)$/i.test(ctx.lead.status_label ?? "") ? ctx.lead.status_label : null;
+  return ladderFor({ lead: ctx.lead, tier, cardSentAt, reachedAt, rfqAt, repFirst: d.rep.name.split(/\s+/)[0] || null });
+}
+
 // Briefs are cached (Supabase when hosted) so reopening a lead is instant. A
 // lead's brief is dropped when the rep saves follow-ups on it, so the next open
 // reflects the latest call.
@@ -120,7 +143,7 @@ export async function leadBrief(d: Deps, leadId: string, opts: { refresh?: boole
   ]);
   const opens = emails ? await emailOpens(d, leadId, emails).catch(() => null) : null;
   const lastCall = lastCallOf(ctx, d.rep.closeUserId);
-  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone), history: buildHistory(ctx, emails ?? []), sequence: await sequenceInfo(d, leadId) };
+  const header = { ...briefHeader(ctx), myCalls, opens, lastCall, callPlan: callPlanOf(ctx, emails ?? [], lastCall, now(d), d.rep.timeZone), history: buildHistory(ctx, emails ?? []), sequence: await sequenceInfo(d, leadId), ladder: await ladderInfo(d, ctx, emails ?? []) };
   // The header (local time, status, call count) is always fresh; the brief itself is cached.
   const hit = opts.refresh ? null : await briefCache.get(key).catch(() => null);
   if (hit) return { header, brief: enforceBriefRules(hit, ctx), flags: briefFlags(ctx), cached: true };
@@ -289,7 +312,7 @@ export function callPlanOf(ctx: LeadContext, emails: LeadEmail[], lastCall: Last
   return { action: "call", reason: null, due: null };
 }
 
-function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan" | "history" | "sequence"> {
+function briefHeader(ctx: LeadContext): Omit<BriefResponse["header"], "myCalls" | "opens" | "lastCall" | "callPlan" | "history" | "sequence" | "ladder"> {
   const f = ctx.facts;
   return {
     company: f.company, website: f.website, status: f.statusLabel, location: f.location, phone: f.phoneDisplay, phoneE164: f.phone,

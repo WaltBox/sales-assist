@@ -200,6 +200,20 @@ export class CloseClient {
   leadStatuses() {
     return this.request<{ data: CloseStatus[] }>("GET", "/status/lead/").then((r) => r.data);
   }
+  /** A new lead status (the ladder's rungs, 11/11). */
+  createLeadStatus(label: string) {
+    return this.request<CloseStatus>("POST", "/status/lead/", { label });
+  }
+  /** Every lead, a page at a time, with just the fields asked for. `custom.*` fields come back when named. */
+  async *allLeads(fields: string[], pageSize = 200): AsyncGenerator<CloseLead> {
+    let skip = 0;
+    for (;;) {
+      const r = await this.request<{ data: CloseLead[]; has_more: boolean }>("GET", `/lead/?_fields=${fields.join(",")}&_limit=${pageSize}&_skip=${skip}`);
+      for (const lead of r.data) yield lead;
+      if (!r.has_more || r.data.length === 0) return;
+      skip += r.data.length;
+    }
+  }
 
   /**
    * Calls, newest first. Close doesn't document sorting on this endpoint, so we
