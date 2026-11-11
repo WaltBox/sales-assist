@@ -2,7 +2,7 @@ import type { Deps } from "./assistant.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 import { background } from "./background.js";
 import { onCloseEvent } from "./closehooks.js";
-import { LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
+import { CARD_CAP, LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
 import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles, toAPerson, NAMED_BACKING_DAYS } from "./stats.js";
 import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
