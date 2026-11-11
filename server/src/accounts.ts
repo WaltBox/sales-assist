@@ -4,7 +4,8 @@ import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequencePicker, type Cadence, type Sequence } from "./cadence.js";
-import { fitFor, heatFor, ICP_FIELD_NAMES, loadCallSignals, type CallSignal, type Heat, type IcpIds } from "./heat.js";
+import { fitFor, heatFor, loadCallSignals, type CallSignal, type Heat, type IcpIds } from "./heat.js";
+import { icpFieldIds } from "./ladder.js";
 import { adoptByRule, cardOwner, handoffRules, handoffsStrict } from "./handoff.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
@@ -528,24 +529,6 @@ export type RepContext = {
   /** The ICP pass's field ids in Close (11/11), for who each account is; null until the pass has made the fields. */
   icp: IcpIds | null;
 };
-/**
- * The ICP pass's custom fields, found once by name and kept in the team settings. Nothing found (the pass hasn't run
- * in this Close org) is checked again after an hour, not on every build.
- */
-const icpLooked = new Map<string, number>();
-export async function icpFieldIds(d: Deps): Promise<IcpIds | null> {
-  const saved = await store.getSetting<IcpIds>("team", "icpFieldIds").catch(() => null);
-  if (saved?.tier) return saved;
-  if (Date.now() - (icpLooked.get(d.rep.closeUserId) ?? 0) < 60 * 60_000) return null;
-  icpLooked.set(d.rep.closeUserId, Date.now());
-  const fields = await d.close.leadCustomFields().catch(() => []);
-  const id = (name: string) => fields.find((f) => f.name.trim().toLowerCase() === name)?.id ?? null;
-  const tier = id(ICP_FIELD_NAMES.tier);
-  if (!tier) return null;
-  const ids: IcpIds = { tier, segment: id(ICP_FIELD_NAMES.segment), buys: id(ICP_FIELD_NAMES.buys), why: id(ICP_FIELD_NAMES.why) };
-  await store.putSetting("team", "icpFieldIds", ids).catch(() => undefined);
-  return ids;
-}
 export async function loadRepContext(d: Deps, opts: { days?: number } = {}): Promise<RepContext> {
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);

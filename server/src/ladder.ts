@@ -1,5 +1,6 @@
 import type { Deps } from "./assistant.js";
 import type { CloseContact, CloseLead } from "./close.js";
+import { ICP_FIELD_NAMES, type IcpIds } from "./heat.js";
 import { store } from "./store.js";
 
 /**
@@ -164,9 +165,8 @@ export function ladderFor(x: LadderIn): Ladder {
   }
 }
 
-/** The ICP pass's custom field ids in Close (found by name: icp_tier, segment, buys_through, icp_why). */
-export type IcpIds = { tier: string; segment: string | null; buys: string | null; why: string | null };
-export const ICP_FIELD_NAMES = { tier: "icp_tier", segment: "segment", buys: "buys_through", why: "icp_why" } as const;
+/** The ICP pass's custom field ids in Close (found by name: icp_tier, segment, buys_through, icp_why); the names live in heat.ts. */
+export { ICP_FIELD_NAMES, type IcpIds };
 const icpLooked = new Map<string, number>();
 /**
  * The ICP pass's custom fields, found once by name and kept in the team settings. Nothing found (the pass hasn't run
