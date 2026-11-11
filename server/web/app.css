@@ -372,7 +372,13 @@ section > .head p { color: var(--muted); font-size: 13.5px; }
 .mhow ol { margin: 10px 0 4px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .mhow .library { margin-top: 10px; }
 .mhow summary .hint { font-family: var(--sans); letter-spacing: 0; text-transform: none; margin-left: 12px; }
-.mhow.memes { margin-top: 14px; }
+.memescard { margin-top: 14px; }
+.memescard .library { margin-top: 0; border: 0; padding: 0; }
+.memescard .library > .head { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.memescard .library > .head > div { flex: 1; min-width: 0; }
+.memescard .library > .head > .btn { flex: none; }
+.memescard .library > .head .sub2 { margin-top: 2px; white-space: normal; }
+.memescard .library.over { outline: 1.5px dashed var(--red); outline-offset: 8px; }
 .mlist { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 60px; }
 .coolrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 @media (max-width: 900px) {

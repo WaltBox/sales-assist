@@ -1760,11 +1760,11 @@ function memeLibrary() {
   return el("section", { class: "library", ondragover: (e) => { e.preventDefault(); e.currentTarget.classList.add("over"); }, ondragleave: (e) => e.currentTarget.classList.remove("over"),
     ondrop: (e) => { e.preventDefault(); e.currentTarget.classList.remove("over"); if (e.dataTransfer.files.length) stageMemeFiles([...e.dataTransfer.files]); } }, [
     el("div", { class: "head" }, [
-      el("h2", { text: `Memes · ${lib.memes.length}` }),
+      el("div", {}, [el("h2", { text: `Memes · ${lib.memes.length}` }), el("p", { class: "sub2", text: "One rides on every email in the sequence. Add text to one and it's drawn in with the buyer's name." })]),
       el("button", { class: "btn small", disabled: lib.busy, text: lib.busy ? "Working…" : "Add images or a zip", onclick: pick }),
     ]),
     stagingArea(lib),
-    el("p", { class: "muted small3", text: "One per bump, never the same one twice to a company. Drop files here, or a zip and it unpacks. Click a name to rename it (everything that remembers the old name follows). Keep them under 5 MB. Add text to a meme and it's drawn in fresh for every buyer: their name, their company, yours. Share a meme and it's on the team list, in every rep's rotation; the rest stay yours alone." }),
+    el("p", { class: "muted small3", text: "Drop images or a zip here, under 5 MB each. Never the same one twice to a company. Click a name to rename it. Share puts one in every rep's rotation." }),
     lib.msg ? el("p", { class: "small3 libmsg", text: lib.msg }) : null,
     lib.edit ? memeEditor(lib.edit) : null,
     !lib.memes.length && !lib.busy ? el("p", { class: "empty", text: "No memes yet. Upload a zip to start." }) : el("div", { class: "memegrid lib" }, [
@@ -2758,12 +2758,9 @@ function emailsSection() {
     ]) : null,
     !au ? el("p", { class: "loading", text: "Loading…" }) : null,
     au ? campaignsCard() : null,
-    // The memes sit right under the sequences (Walt 11/10: "I don't see it", when they were under 220 scheduled rows).
-    // Open across renders: editing a meme re-renders the page, and the library has to stay in view.
-    au ? el("details", { class: "mhow memes", open: !!(state.lib && state.lib.open), ontoggle: (e) => { if (state.lib) state.lib.open = e.currentTarget.open; } }, [
-      el("summary", {}, [el("span", { text: state.lib && state.lib.memes ? `Memes · ${state.lib.memes.length}` : "Memes" }), el("span", { class: "sub2 hint", text: "One rides on every email. Add text to one and it's drawn in with the buyer's name." })]),
-      memeLibrary(),
-    ]) : null,
+    // The memes are a card of their own right under the sequences, always open (Walt 11/10, twice: "I don't see it",
+    // first under 220 scheduled rows, then folded into one line).
+    au ? el("section", { class: "mcard memescard" }, [memeLibrary()]) : null,
     au ? el("details", { class: "mhow" }, [el("summary", { text: "New line card wave" }), newCardCard() || el("p", { class: "muted small3", text: "Nothing to do here right now." })]) : null,
     au ? graphCard(au) : null,
     el("div", { class: "mlist" }, [
