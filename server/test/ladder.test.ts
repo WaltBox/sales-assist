@@ -42,7 +42,7 @@ test("the objective follows the rung, from the status or the facts, whichever is
   assert.equal(fit.stage, "fit");
   assert.match(fit.objective, /Get the buyer's name/);
   assert.match(fit.say!, /Who handles your pipe, fittings and bolting purchasing/);
-  assert.deepEqual(fit.next, { rung: "named", points: RUNG_POINTS.named, label: "the buyer's name and a direct line or email" });
+  assert.deepEqual(fit.next, { rung: "named", points: RUNG_POINTS.named, label: "the buyer's name and email" });
   // A buyer on the lead while the status still says Fit: the rung is named, and the panel says the status is behind.
   const ron = [{ name: "Ron Sturm", title: "Purchasing Manager", email: "ron@acme.com" }];
   const named = ladderFor({ lead: lead("Fit", ron), tier: "A", repFirst: "Chase" });
@@ -64,8 +64,17 @@ test("the objective follows the rung, from the status or the facts, whichever is
   assert.equal(rfq.next?.rung, "quoted");
   // Paid once: a lead already past a rung never shows that rung's objective again.
   assert.notEqual(ladderFor({ lead: lead("Reached buyer", ron), tier: "A" }).next?.rung, "named");
-  // Never backwards: a Reached buyer status with no buyer contact on the lead stays reached.
-  assert.equal(ladderFor({ lead: lead("Reached buyer"), tier: "B" }).stage, "reached");
+  // Nobody named on the lead is discovery whatever the status says (Walt 11/11, a Sent Line Card lead with only Main
+  // Office: "how the fuck are we to know that info is the buyer. We need their name"); the card says Close is ahead.
+  const inbox = ladderFor({ lead: lead("Sent Line Card"), tier: "B" });
+  assert.equal(inbox.stage, "fit");
+  assert.equal(inbox.statusAhead, true);
+  assert.match(inbox.objective, /^Close says Sent Line Card, but nobody's named here/);
+  assert.equal(inbox.boxes.find((b) => b.key === "card")?.done, false, "a card to the main inbox isn't the card to the buyer");
+  assert.equal(ladderFor({ lead: lead("Reached buyer"), tier: "B" }).stage, "fit");
+  assert.equal(ladderFor({ lead: lead("RFQ Received"), tier: "B" }).stage, "rfq", "an RFQ is an RFQ, named or not");
+  // No "Direct line" box (Walt 11/11): name, email, card, reached, RFQ.
+  assert.deepEqual(ladderFor({ lead: lead("Fit"), tier: "A" }).boxes.map((b) => b.key), ["name", "email", "card", "reached", "rfq"]);
   // Avoid tier is out whatever the status says, unless they've sent an RFQ.
   assert.equal(ladderFor({ lead: lead("Fit", ron), tier: "Avoid" }).stage, "out");
   assert.equal(ladderFor({ lead: lead("RFQ Received", ron), tier: "Avoid" }).stage, "rfq");

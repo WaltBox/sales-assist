@@ -99,10 +99,12 @@ export type Ladder = {
   buyer: Buyer | null;
   /** The rung Close's status says, when the lead's facts say further along (a buyer on the lead, but the status still "Fit"). */
   statusLags: boolean;
+  /** Close's status says further along than the facts: a "Sent Line Card" or "Reached buyer" lead with nobody named on it (11/11). */
+  statusAhead: boolean;
   /** The checklist (Walt 11/11): what this call is for, ticked as Close reports it, with what each pays. */
   boxes: Box[];
 };
-export type Box = { key: "name" | "line" | "email" | "card" | "reached" | "rfq"; label: string; done: boolean; points: number | null; hint: string | null };
+export type Box = { key: "name" | "email" | "card" | "reached" | "rfq"; label: string; done: boolean; points: number | null; hint: string | null };
 /** The boxes, by rung: the ones to do on this call come after the ones already ticked. */
 function boxesFor(stage: Stage, buyer: Buyer | null, x: LadderIn): Box[] {
   if (stage === "out") return [];
@@ -110,9 +112,12 @@ function boxesFor(stage: Stage, buyer: Buyer | null, x: LadderIn): Box[] {
   const first = buyer?.name.split(/\s+/)[0] ?? "the buyer";
   return [
     { key: "name", label: "Name", done: !!buyer, points: RUNG_POINTS.named, hint: buyer ? `${buyer.name}${buyer.title ? `, ${buyer.title}` : ""}` : "who buys pipe and fittings; a first name is fine" },
-    { key: "line", label: "Direct line", done: !!buyer?.line, points: null, hint: buyer?.line ?? "their extension or cell" },
+    // No "Direct line" box (Walt 11/11: "we dont necessarily need the extension or cell"): the name and the email are
+    // what the next rungs need; a number, if they give one, saves with the contact all the same.
     { key: "email", label: "Email", done: !!buyer?.email, points: null, hint: buyer?.email ?? "theirs, not purchasing@" },
-    { key: "card", label: "Line card sent", done: !!x.cardSentAt || past("card"), points: RUNG_POINTS.card, hint: x.cardSentAt ? `sent ${new Date(x.cardSentAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : `to ${first}, not a shared inbox` },
+    // The card counts once it went to the named person. A status of Sent Line Card with nobody named on the lead is
+    // a card to the main inbox (Walt 11/11: "how the fuck are we to know that info is the buyer"), so it stays open.
+    { key: "card", label: "Line card sent", done: !!x.cardSentAt || (!!buyer && past("card")), points: RUNG_POINTS.card, hint: x.cardSentAt ? `sent ${new Date(x.cardSentAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : `to ${first}, not a shared inbox` },
     { key: "reached", label: "Reached the buyer", done: past("reached"), points: RUNG_POINTS.reached, hint: past("reached") ? null : `${first} on the phone, a real conversation` },
     { key: "rfq", label: "RFQ in", done: past("rfq"), points: RUNG_POINTS.rfq, hint: past("rfq") ? null : "the last one they sent out, or three items on the phone" },
   ];
@@ -132,6 +137,11 @@ export function ladderFor(x: LadderIn): Ladder {
   const status = rungOfStatus(x.lead.status_label);
   const buyer = buyerOf(x.lead.contacts);
   let stage: Stage = status ?? "potential";
+  // Nobody named on the lead means the objective is the name, whatever the status says (Walt 11/11, a "Sent Line
+  // Card" lead with only Main Office on it: "how the fuck are we to know that info is the buyer. We need their name").
+  // A card to the main inbox or a chat with whoever picked up doesn't move a company past discovery; an RFQ does.
+  const inboxOnly = !buyer && (stage === "named" || stage === "card" || stage === "reached");
+  if (inboxOnly) stage = "fit";
   // The website read never overrides a person (Walt 11/11: "Qualified → Not a fit?"): an Avoid tier takes a lead off
   // the ladder only while nobody has reached anyone there or sent them the card. Once a rep has, the tier shows on
   // the card and the rep calls it on the next touch.
@@ -141,18 +151,21 @@ export function ladderFor(x: LadderIn): Ladder {
     if (rungIndex(facts) > rungIndex(stage)) stage = facts;
   }
   const statusLags = stage !== "out" && status !== null && rungIndex(stage) > rungIndex(status);
+  const statusAhead = inboxOnly && stage === "fit";
   const name = first(buyer?.name);
   const company = co(x.lead.display_name);
   const me = x.repFirst ?? "me";
   const next = (rung: Rung, points: number, label: string) => ({ rung, points, label });
-  const base = { buyer, statusLags, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x) };
+  const base = { buyer, statusLags, statusAhead, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x) };
   switch (stage) {
     case "out":
       return { ...base, stage, objective: "Don't dial. If that's wrong, change the status in Close.", say: null, next: null };
     case "potential":
-      return { ...base, stage, objective: "Not tiered yet. The ICP pass reads their site; if you know what they are, set the tier.", say: null, next: next("named", RUNG_POINTS.named, "the buyer's name and a direct line or email") };
+      return { ...base, stage, objective: "Not tiered yet. The ICP pass reads their site; if you know what they are, set the tier.", say: null, next: next("named", RUNG_POINTS.named, "the buyer's name and email") };
     case "fit":
-      return { ...base, stage, objective: `Get the buyer's name and a direct line or email. Ask the front desk who handles pipe and fittings purchasing; take the name off the voicemail greeting if you get one.`, say: `Hi, this is ${me} with Westgate Supply. Who handles your pipe, fittings and bolting purchasing? A first name is fine.`, next: next("named", RUNG_POINTS.named, "the buyer's name and a direct line or email") };
+      return { ...base, stage, objective: statusAhead
+        ? `Close says ${x.lead.status_label}, but nobody's named here: that went to the main inbox. Get the buyer's name and email, then the card goes to them.`
+        : `Get the buyer's name and email. Ask the front desk who handles pipe and fittings purchasing; take the name off the voicemail greeting if you get one.`, say: `Hi, this is ${me} with Westgate Supply. Who handles your pipe, fittings and bolting purchasing? A first name is fine.`, next: next("named", RUNG_POINTS.named, "the buyer's name and email") };
     case "named":
       return { ...base, stage, objective: `Send ${name ?? "the buyer"} the card, then call ${name ? "them" : "the buyer"} by name: you've got our card, forward me the last one you sent out.`, say: `Hi ${name ?? ""}, it's ${me} with Westgate Supply. I sent you our line card. What's the last RFQ you sent out for fittings or flanges? Forward me that and I'll price the same list today.`.replace("Hi , ", "Hi, "), next: next("card", RUNG_POINTS.card, `the card to ${name ?? "the buyer"}`) };
     case "card":

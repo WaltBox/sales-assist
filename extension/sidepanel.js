@@ -1649,37 +1649,94 @@ function objectionTap(b) {
   ]);
 }
 /**
- * Call Objective (Walt 11/11): the one thing this call is for, the checklist Close ticks as it happens (name, direct
- * line, email, card, reached, RFQ) with what each pays, and the one action that moves it. No "next" button: they move
- * lead to lead in Close. Paid once per company, so a lead already at Named buyer never shows "find the name" again.
+ * Call Objective (Walt 11/11): the one thing this call is for and the one control that marks it done, nothing else
+ * ("there needs to be like a Do this. Mark it's done. I dont like this long ass check list"). Discovery: the buyer's
+ * name and email, typed here and saved onto the lead in Close. Named: send them the card. Card sent: mark them
+ * reached. Reached: the RFQ button. Each lands in Close, which pays the points once per company. No "next" button:
+ * they move lead to lead in Close.
  */
 function objectiveCard(st) {
   const L = st.header && st.header.ladder;
   if (!L) return null;
-  const boxes = L.boxes || [];
-  const todo = boxes.filter((b) => !b.done);
-  const done = boxes.filter((b) => b.done);
-  const first = L.buyer ? L.buyer.name.split(/\s+/)[0] : null;
+  const buyer = L.buyer;
+  const first = buyer ? buyer.name.split(/\s+/)[0] : null;
+  const pay = (n) => el("span", { class: "objpay", text: `+${n}` });
+  const f = st.buyerForm || (st.buyerForm = { busy: false, error: null });
+  const key = (k) => `buyer-${k}:${st.leadId}`;
+  const val = (k) => (drafts[key(k)] || "").trim();
+  const forget = () => { for (const k of ["name", "title", "email", "phone"]) delete drafts[key(k)]; };
+  const save = async (fields) => {
+    if (f.busy) return;
+    const body = { contactId: buyer ? buyer.id : null, name: buyer ? buyer.name : val("name"), title: fields.includes("title") ? val("title") : null, email: fields.includes("email") ? val("email") : null, phone: fields.includes("phone") ? val("phone") : null };
+    if (!body.name) { f.error = "A name is needed."; render(); return; }
+    f.busy = true; f.error = null; render();
+    try { await api(`/api/leads/${st.leadId}/buyer`, body); forget(); st.buyerForm = null; await loadBrief(st); }
+    catch (e) { f.busy = false; f.error = e.message || String(e); render(); }
+  };
+  const onEnter = (fields) => (e) => { if (e.key === "Enter") { e.preventDefault(); save(fields); } };
+  const reached = async () => {
+    if (f.busy) return;
+    f.busy = true; f.error = null; render();
+    try { await api(`/api/leads/${st.leadId}/reached-buyer`, {}); st.buyerForm = null; await loadBrief(st); }
+    catch (e) { f.busy = false; f.error = e.message || String(e); render(); }
+  };
+  const sendCard = () => { st.lcOpen = true; render(); setTimeout(() => { const n = document.querySelector(".afterlc"); if (n) n.scrollIntoView({ behavior: "smooth", block: "start" }); }, 0); };
+  // The control for this rung.
+  let control = null;
+  if (L.stage === "potential" || L.stage === "fit") {
+    const fields = ["name", "title", "email", "phone"];
+    control = el("div", { class: "objform" }, [
+      draftInput(key("name"), { type: "text", placeholder: "Name", autocomplete: "off", onkeydown: onEnter(fields) }),
+      draftInput(key("title"), { type: "text", placeholder: "Title (Purchasing, Buyer…)", autocomplete: "off", onkeydown: onEnter(fields) }),
+      draftInput(key("email"), { type: "email", placeholder: "Email (theirs, not purchasing@)", autocomplete: "off", onkeydown: onEnter(fields) }),
+      draftInput(key("phone"), { type: "tel", placeholder: "Direct line (if they give one)", autocomplete: "off", onkeydown: onEnter(fields) }),
+      el("div", { class: "objsave" }, [
+        el("button", { class: "btn primary", disabled: f.busy, text: f.busy ? "Saving…" : "Save to Close", onclick: () => save(fields) }),
+        pay(L.next ? L.next.points : 3),
+        el("span", { class: "muted small", text: "goes on the lead as the buyer" }),
+      ]),
+    ]);
+  } else if (L.stage === "named" && buyer && !buyer.email) {
+    const fields = ["email"];
+    control = el("div", { class: "objform" }, [
+      draftInput(key("email"), { type: "email", placeholder: `${first}'s email`, autocomplete: "off", onkeydown: onEnter(fields), class: "wide" }),
+      el("div", { class: "objsave" }, [
+        el("button", { class: "btn primary", disabled: f.busy, text: f.busy ? "Saving…" : "Save, then send the card", onclick: () => save(fields) }),
+        pay(L.next ? L.next.points : 2),
+      ]),
+    ]);
+  } else if (L.stage === "named") {
+    control = el("div", { class: "objsave" }, [
+      el("button", { class: "btn primary block objact", text: `Send ${first} the line card`, onclick: sendCard }),
+      pay(L.next ? L.next.points : 2),
+    ]);
+  } else if (L.stage === "card") {
+    control = el("div", { class: "objsave" }, [
+      el("button", { class: "btn primary block objact", disabled: f.busy, text: f.busy ? "Marking…" : `Reached ${first}`, onclick: reached }),
+      pay(L.next ? L.next.points : 5),
+      el("span", { class: "muted small", text: "a real conversation, not the front desk" }),
+    ]);
+  } else if (L.stage === "reached") {
+    control = rfqButton(st);
+  }
+  // What's already in Close, one line, so the rep knows what the card is working from.
+  const soFar = [];
+  if (buyer) soFar.push(buyer.title ? `${buyer.name}, ${buyer.title}` : buyer.name);
+  if (buyer && buyer.email) soFar.push(buyer.email);
+  if (buyer && buyer.line) soFar.push(buyer.line);
+  const box = (k) => (L.boxes || []).find((x) => x.key === k);
+  if (box("card") && box("card").done) soFar.push(box("card").hint ? `card ${box("card").hint}` : "card sent");
+  if (box("reached") && box("reached").done) soFar.push("reached");
   const spot = st.spot && st.spot.here;
-  // The action for this rung: send the card, or mark the RFQ (that button is already big and green below).
-  const action = L.stage === "named" || (L.stage === "fit" && L.buyer)
-    ? el("button", { class: "btn primary block objact", text: first ? `Send ${first} the line card` : "Send the line card", onclick: () => { st.lcOpen = true; render(); setTimeout(() => { const n = document.querySelector(".afterlc"); if (n) n.scrollIntoView({ behavior: "smooth", block: "start" }); }, 0); } })
-    : null;
-  const box = (b) => el("li", { class: `objbox${b.done ? " done" : ""}` }, [
-    el("i", { class: "objtick", "aria-hidden": "true" }),
-    el("span", { class: "objlabel", text: b.label }),
-    b.hint ? el("span", { class: "objhint", text: b.hint }) : null,
-    b.points ? el("span", { class: "objpts", text: `+${b.points}` }) : null,
-  ]);
   return el("section", { class: `objective s-${L.stage}` }, [
     el("div", { class: "objhead" }, [
       el("span", { class: "label objtitle", text: "Call Objective" }),
       el("span", { class: "rungpill", text: L.label }),
     ]),
     el("p", { class: "objtext", text: L.objective }),
-    todo.length ? el("ul", { class: "objlist" }, todo.slice(0, 4).map(box)) : null,
-    done.length ? el("ul", { class: "objlist donelist" }, done.map(box)) : null,
-    action,
+    control,
+    f.error ? el("p", { class: "bad small", text: `Couldn't save: ${f.error}` }) : null,
+    soFar.length ? el("p", { class: "objsofar", text: `In Close: ${soFar.join(" · ")}` }) : null,
     spot ? el("p", { class: "objqueue", text: `Queue ${spot.rank} of ${spot.of} · ${spot.why}` }) : null,
     L.statusLags ? el("p", { class: "objqueue", text: "Close's status is behind; it moves when you tap an outcome." }) : null,
   ]);
@@ -1748,6 +1805,7 @@ function renderPre() {
   ]));
   const objective = objectiveCard(st); // null against a server without the ladder (11/11): append(null) would print "null"
   if (objective) page.append(objective);
+  const rung = st.header && st.header.ladder ? st.header.ladder.stage : null;
   page.append(stageBlock(st));
   page.append(el("section", { class: "askfor" }, [
     el("span", { class: "label", text: "Ask for" }), el("strong", { text: b.ask_for.name }),
@@ -1756,7 +1814,7 @@ function renderPre() {
   const stage = callStage(st);
   // The ladder's line for this rung (11/11) is what to say, unless they've promised an RFQ (that call is about the promise).
   if (h.ladder && h.ladder.say && stage.kind !== "promised") stage.say = h.ladder.say;
-  page.append(rfqButton(st));
+  if (rung !== "reached") page.append(rfqButton(st)); // at Reached the button is the objective's own control
   // A repeat call gets its own line (10/12); the first-call opener is for first calls, or if they ask what we do.
   page.append(el("section", { class: "hero" }, stage.say ? [
     el("p", { class: "label", text: "Say" }),

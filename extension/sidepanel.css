@@ -688,19 +688,13 @@ body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bot
 .s-rfq .rungpill, .s-quoted .rungpill, .s-customer .rungpill { background: var(--navy); color: var(--paper); border-color: var(--navy); }
 .s-out .rungpill { background: var(--paper-dark); color: var(--muted); border-color: var(--ink-line); }
 .objtext { font-family: var(--sans); font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); margin: 0; }
-.objlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-/* The checklist (11/11): a square that fills green with a drawn tick when Close has the fact; the label stays readable
-   (no strike-through), the points sit right, and a done row shows the fact itself in place of the hint. */
-.objbox { display: grid; grid-template-columns: 18px auto 1fr auto; align-items: center; gap: 9px; font-size: 14px; min-height: 24px; }
-.objtick { width: 18px; height: 18px; border: 2px solid var(--ink); border-radius: 3px; background: var(--white); box-sizing: border-box; flex: none; }
-.objbox.done .objtick { background: var(--green) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px 14px no-repeat; border-color: var(--green); }
-.objlabel { font-weight: 600; }
-.objbox.done .objlabel { color: var(--ink); font-weight: 700; }
-.objhint { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.objbox.done .objhint { color: var(--ink); }
-.objpts { font-family: var(--display); font-size: 15px; color: var(--red); white-space: nowrap; }
-.objbox.done .objpts { color: var(--green); }
-.donelist { padding-top: 8px; margin-top: 2px; border-top: 1px dashed var(--ink-line); }
-.donelist .objbox { font-size: 13px; }
+/* The one control (11/11): the fields for the name and email, or the one button, with what it pays beside it. */
+.objform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.objform input { padding: 9px 11px; font-size: 14px; }
+.objform input.wide { grid-column: 1 / -1; }
+.objsave { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.objsave .objact { flex: 1 1 auto; }
+.objpay { font-family: var(--display); font-size: 16px; color: var(--green); white-space: nowrap; }
+.objsofar { margin: 0; font-size: 12.5px; color: var(--ink); }
 .objact { margin-top: 2px; }
 .objqueue { margin: 0; font-size: 12px; color: var(--muted); }

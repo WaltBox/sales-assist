@@ -14,6 +14,7 @@ import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
 import { reconcileAccounts, reconciledAt } from "./accountstate.js";
 import { cachedQueue, nextUp, queueSpot, syncQueue, syncQueues } from "./dialqueue.js";
+import { markBuyerReached, saveBuyer } from "./buyer.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
@@ -726,6 +727,11 @@ export function createApp(appDeps: AppDeps) {
   app.post("/api/dial-views/refresh", authed, route(async (_req, d) => ({ views: await syncDialViews(d) })));
   // "Got them" (10/6): the rep reached the person they were after; off today's lists right away.
   app.post("/api/leads/:leadId/reached", authed, route(async (req, d) => ({ reached: await markReachedByHand(d, leadId(req)) })));
+  // The objective's one control (Walt 11/11): the buyer's name and email typed on the card go onto the lead in Close
+  // and move it to Named buyer; "Reached" moves it to Reached buyer. Close pays the points from there.
+  const BuyerRequest = z.object({ contactId: z.string().nullish(), name: z.string().max(120), title: z.string().max(120).nullish(), email: z.string().max(200).nullish(), phone: z.string().max(40).nullish() });
+  app.post("/api/leads/:leadId/buyer", authed, route((req, d) => saveBuyer(d, leadId(req), BuyerRequest.parse(req.body))));
+  app.post("/api/leads/:leadId/reached-buyer", authed, route((req, d) => markBuyerReached(d, leadId(req))));
   // The side panel's Emails tab: sent and queued automatic emails, with opens and replies since (10/6).
   app.get("/api/emails/sent", authed, route(async (req, d) => ({ emails: await sentEmailsView(d, Math.min(Number(req.query.days) || 7, 30)) })));
   app.post("/api/automations/toggle", authed, route((req, d) => setAutomations(d, req.body?.enabled === true)));
