@@ -608,14 +608,14 @@ function openStats() {
 function renderStats() {
   const s = stats && stats.server;
   const back = el("button", { class: "link", style: "align-self:flex-start", text: S && S.header ? `← Back to ${S.header.company}` : "← Back", onclick: () => { view = "lead"; render(); } });
-  if (!s) return [header(null), el("main", { class: "page" }, [back, el("p", { class: "empty", text: "Loading today's numbers from Close…" })])];
+  if (!s) return [header(), el("main", { class: "page" }, [back, el("p", { class: "empty", text: "Loading today's numbers from Close…" })])];
   const t = statsApprox() ? "~" : "";
   const row = (label, value, sub) => el("div", { class: "srow" }, [
     el("span", { class: "k", text: label }),
     el("span", { class: "v" }, [el("b", { text: String(value) }), sub ? el("span", { class: "muted", text: ` ${sub}` }) : null]),
   ]);
   const synced = new Date(stats.syncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return [header(null), el("main", { class: "page" }, [
+  return [header(), el("main", { class: "page" }, [
     back,
     el("div", { class: "qhead" }, [el("h1", { text: "Today" }), el("span", { class: "muted", text: `Synced ${synced}` })]),
     el("div", { class: "card stable" }, [
@@ -672,7 +672,7 @@ function renderWeek() {
       ]);
     })));
   }
-  return [header(null), page];
+  return [header(), page];
 }
 
 function openLeadTab(leadId) {
@@ -791,7 +791,7 @@ function render() {
   try { if (key && active.selectionStart != null) { caret = active.selectionStart; caretEnd = active.selectionEnd; } } catch {}
 
   const app = document.getElementById("app");
-  if (!settings.token) app.replaceChildren(header(null), el("main", { class: "page" }, [
+  if (!settings.token) app.replaceChildren(header(), el("main", { class: "page" }, [
     el("p", { class: "empty", text: "Sign in with your Westgate email to get started." }),
     el("button", { class: "btn primary", text: "Sign in", onclick: () => chrome.runtime.openOptionsPage() }),
   ]));
@@ -803,7 +803,7 @@ function render() {
   else if (view === "week") app.replaceChildren(...renderWeek());
   else if (view === "draft" && S && S.draft) app.replaceChildren(...renderDraft());
   else if (view === "site" && S) app.replaceChildren(...renderSite());
-  else if (!S) app.replaceChildren(header(null), el("main", { class: "page" }, [
+  else if (!S) app.replaceChildren(header(), el("main", { class: "page" }, [
     el("p", { class: "empty", text: "Open a lead in Close to see its call card. Open a Smart View first and the next few leads get ready while you talk." }),
   ]));
   else if (S.phase === "on") app.replaceChildren(renderOnCall());
@@ -844,23 +844,29 @@ function updatePill() {
   return el("button", { class: "pill attn", title: `You have ${mine}. ${latestExt} is out.`, text: "Update ready", onclick: () => chrome.tabs.create({ url: `${settings.server}/#extension` }) });
 }
 
-function header(phase, phaseClick) {
+// The top bar, quiet (Walt 11/11: "this is kind of noise"): the name, what needs you now (calls to check, an
+// extension update) and a More menu with the rest (recent calls, emails, my leads, today's numbers, your line).
+// No phase label: the card says where you are.
+let moreOpen = false;
+function header() {
+  const go = (v, load) => () => { moreOpen = false; view = v; if (load) load(); render(); };
+  const item = (text, onclick, extra = null) => el("button", { class: "menuitem", onclick }, [el("span", { text }), extra ? el("span", { class: "menuextra", text: extra }) : null]);
+  const menu = moreOpen && settings.token ? el("div", { class: "menu" }, [
+    item("Recent calls", go("queue", refreshQueue), queue.ready ? `${queue.ready} to check` : queue.building ? `${queue.building} saving…` : null),
+    item("Emails", go("emails", loadEmails), emails.todaySent != null ? `${emails.todaySent} today` : null),
+    item("My leads", go("mine", loadMine), mine.leads ? String(mine.leads.length) : null),
+    item("Today's numbers", () => { moreOpen = false; openStats(); }, statsFresh() ? `${stats.dials} dials · ${stats.reached} reached` : null),
+    myLine ? item("My line", (e) => { navigator.clipboard.writeText(myLine).catch(() => {}); e.currentTarget.querySelector(".menuextra").textContent = "Copied"; setTimeout(() => { moreOpen = false; render(); }, 700); }, myLine) : null,
+    latestExt && myVersion() ? item(versionNewer(latestExt, myVersion()) ? "Update the extension" : "Extension", () => { moreOpen = false; chrome.tabs.create({ url: `${settings.server}/#extension` }); }, versionNewer(latestExt, myVersion()) ? `${latestExt} is out` : `v${myVersion()}`) : null,
+  ]) : null;
   return el("header", { class: "header" }, [
     el("div", { class: "brand" }, [el("b", { text: "Westgate" }), " Assistant"]),
-    view !== "queue" && view !== "item" ? el("button", {
-      class: `pill ${queue.ready ? "attn" : queue.building ? "neutral clickable" : "recent"}`,
-      text: queue.ready ? `${queue.ready} to check` : queue.building ? `${queue.building} saving…` : "Recent",
-      title: "Recent calls and what was saved to Close",
-      onclick: () => { view = "queue"; refreshQueue(); render(); },
+    view !== "queue" && view !== "item" && queue.ready ? el("button", {
+      class: "pill attn", text: `${queue.ready} to check`, title: "Recent calls and what was saved to Close", onclick: go("queue", refreshQueue),
     }) : null,
-    view !== "emails" ? el("button", { class: "pill recent", text: emails.todaySent != null ? `Emails ${emails.todaySent}` : "Emails", title: "Automatic emails: what went out, what's queued, who opened or replied", onclick: () => { view = "emails"; loadEmails(); render(); } }) : null,
-    view !== "mine" && settings.token ? el("button", { class: "pill recent", text: mine.leads ? `My leads ${mine.leads.length}` : "My leads", title: "Every lead with you as Lead owner in Close, and where each stands", onclick: () => { view = "mine"; loadMine(); render(); } }) : null,
     updatePill(),
-    phase ? el(phaseClick ? "button" : "span", { class: `pill ${phase.cls || "phase"}`, text: phase.text, onclick: phaseClick }) : null,
-    settings.token ? el("div", { class: "hrow2" }, [
-      statsStrip(),
-      myLineButton(),
-    ]) : null,
+    settings.token ? el("button", { class: `more${moreOpen ? " on" : ""}`, "aria-label": "More", title: "Recent calls, emails, my leads, today's numbers, my line", text: "⋯", onclick: () => { moreOpen = !moreOpen; render(); } }) : null,
+    menu,
   ]);
 }
 
@@ -1757,7 +1763,7 @@ function renderPre() {
   const st = S;
   const h = st.header;
   const b = st.brief;
-  const out = [header({ text: "Pre-call" })];
+  const out = [header()];
   const page = el("main", { class: "page" });
   out.push(page);
   if (st.error) page.append(problemCard(st.error, () => loadBrief(st, false)));
@@ -2057,7 +2063,7 @@ function renderEnded() {
   // Shot down: the account is closed out, so the outcome taps, the line card and the follow-up are off.
   const down = !!(st.shotDown && st.shotDown.saved);
   const dur = st.ended && st.ended.duration ? ` · ${mmss(st.ended.duration)}` : "";
-  const out = [header({ text: `Call ended${dur}`, cls: "neutral" })];
+  const out = [header()];
   const page = el("main", { class: "page" }, [
     el("div", { class: "title" }, [el("h1", { text: st.header ? st.header.company : "" }), el("p", { class: "sub", text: "One tap and move on. Follow-ups build in the background." })]),
     o && o.result && !o.busy && !down ? el("div", { class: "outchange" }, [
@@ -2195,7 +2201,7 @@ function renderEmailsKeepFocus() {
   if (box) { box.focus(); if (pos != null) box.setSelectionRange(pos, pos); }
 }
 function renderEmails() {
-  const out = [header({ text: "Emails", cls: "phase" })];
+  const out = [header()];
   const rows = emails.rows || [];
   const today = new Date().toDateString();
   const isToday = (e) => e.at && new Date(e.at).toDateString() === today;
@@ -2278,7 +2284,7 @@ async function loadMine(fresh = false) {
   mine.loading = false; render();
 }
 function renderMine() {
-  const out = [header({ text: "My leads", cls: "phase" })];
+  const out = [header()];
   const all = mine.leads || [];
   const q = mine.q.trim().toLowerCase();
   const day = (iso) => (iso ? new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" }) : "");
@@ -2335,7 +2341,7 @@ function renderQueue() {
   const items = queue.items;
   const readyItems = items.filter((i) => i.state === "ready");
   const total = readyItems.reduce((n, i) => n + (i.count || 0), 0);
-  const out = [header({ text: "Recent", cls: "phase" })];
+  const out = [header()];
   const page = el("main", { class: "page" }, [
     el("div", { class: "qhead" }, [
       el("h1", { text: "Recent calls" }),
@@ -2485,7 +2491,7 @@ function renderItem() {
   const iv = itemView;
   const p = it.proposals || EMPTY();
   const n = countProps(approved(p, iv.off));
-  const out = [header({ text: it.state === "saved" ? "Saved" : "Post-call" })];
+  const out = [header()];
   const sub = [it.callWith ? `Call with ${it.callWith}` : "Call", it.duration ? mmss(it.duration) : null, it.outcomeLabel].filter(Boolean).join(" · ");
   const fromStatus = S && S.leadId === it.leadId && S.header ? S.header.status : null;
   const page = el("main", { class: "page" }, [
@@ -2671,7 +2677,7 @@ function renderDraft() {
   const st = S;
   const d = st.draft;
   const n = countProps(approved(d.proposals, d.off));
-  const out = [header({ text: "Pre-call" })];
+  const out = [header()];
   const page = el("main", { class: "page" }, [
     el("button", { class: "link", style: "align-self:flex-start", text: "← Call card", onclick: () => { view = "lead"; render(); } }),
     el("div", { class: "title" }, [el("h1", { text: st.header ? st.header.company : "" }), el("p", { class: "sub", text: "From your chat. Nothing is saved until you approve." })]),
@@ -2717,7 +2723,7 @@ function renderSite() {
       el("span", { class: "co", text: h.company || "" }),
       myLine ? el("div", { class: "linerow" }, [myLineButton("callbar")]) : null,
     ])
-    : header({ text: "Website" })];
+    : header()];
   const bar = el("div", { class: "sitebar" }, [
     el("button", { class: "link", text: onCall ? "← Back to call" : "← Call card", onclick: () => { view = "lead"; render(); } }),
     el("span", { class: "host", text: url ? new URL(url).host.replace(/^www\./, "") : "" }),

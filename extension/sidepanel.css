@@ -310,9 +310,13 @@ textarea { resize: vertical; min-height: 70px; }
 .myline:hover { border-color: var(--ink); }
 .myline.copied::before { content: none; }
 /* second header row: today's stats on the left, the rep's line on the right */
-.hrow2 { flex: 1 0 100%; display: flex; align-items: center; gap: 10px; min-width: 0; }
-.hrow2 .stats { flex: 1 1 auto; min-width: 0; }
-.hrow2 .myline { flex: none; padding: 2px 7px; }
+/* The More menu (11/11): everything that isn't the card or what needs you now. */
+.more { font: inherit; font-size: 18px; line-height: 1; letter-spacing: .1em; padding: 2px 8px 6px; background: none; border: 1px solid transparent; color: var(--ink); cursor: pointer; border-radius: 0; }
+.more:hover, .more.on { border-color: var(--ink); background: var(--white); }
+.menu { position: absolute; right: 12px; top: calc(100% - 2px); z-index: 6; min-width: 230px; background: var(--white); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); display: flex; flex-direction: column; padding: 4px 0; }
+.menuitem { font: inherit; font-size: 13px; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 12px; background: none; border: 0; color: var(--ink); cursor: pointer; }
+.menuitem:hover { background: var(--paper); }
+.menuextra { font-family: var(--label); font-size: 11px; letter-spacing: .06em; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* on a call: the line gets its own row in the dark bar, big enough to read out */
 .oncall .bar, .oncall-strip { flex-wrap: wrap; row-gap: 8px; }
 .linerow { flex: 1 0 100%; display: flex; }
