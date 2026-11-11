@@ -93,9 +93,16 @@ export const toAPerson = (e: { to?: unknown }) => Array.isArray(e.to) && e.to.le
  * Reached buyer (or Qualified, the old name) with a connected call of a minute or more on the lead that day: the tap
  * alone doesn't count as a reach. Each lead once.
  */
-export function ladderCounts(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[]) {
+/** The days a contact the rep made still backs a Named buyer move (the status can lag the contact by a sync or two). */
+export const NAMED_BACKING_DAYS = 7;
+export function ladderCounts(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[], contacts: Array<{ lead_id: string; date_created: string }> = []) {
   const talked = new Set(calls.filter((c) => c.disposition === "answered" && (c.duration ?? 0) >= 60).map((c) => c.lead_id));
-  const named = new Set(moves.filter((m) => /^named buyer$/i.test(m.new_status_label)).map((m) => m.lead_id));
+  // A buyer named is a move to Named buyer backed by a contact this rep created on that lead in the week before it
+  // (11/11: the ladder migration moved thousands of leads with Walt's key and the move alone paid him 440).
+  const madeBy = new Map<string, string[]>();
+  for (const c of contacts) madeBy.set(c.lead_id, [...(madeBy.get(c.lead_id) ?? []), c.date_created]);
+  const backed = (m: { lead_id: string; date_created: string }) => (madeBy.get(m.lead_id) ?? []).some((at) => Date.parse(at) <= Date.parse(m.date_created) + 60_000 && Date.parse(at) >= Date.parse(m.date_created) - NAMED_BACKING_DAYS * DAY_MS);
+  const named = new Set(moves.filter((m) => /^named buyer$/i.test(m.new_status_label) && backed(m)).map((m) => m.lead_id));
   const reached = new Set(moves.filter((m) => /^(reached buyer|qualified)$/i.test(m.new_status_label) && talked.has(m.lead_id)).map((m) => m.lead_id));
   return { namedBuyers: named.size, reachedBuyers: reached.size };
 }
@@ -133,7 +140,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
   const hit = todayCache.get(key);
   if (hit && !opts.fresh && Date.now() - hit.at < 30_000) return hit.value;
 
-  const [calls, emails, notes, tasks, moves] = await Promise.all([
+  const [calls, emails, notes, tasks, moves, contacts] = await Promise.all([
     myCalls(d, since, until),
     // A draft can be sent days after it was written: look back two weeks and count by send date.
     d.close.listSince<Record<string, unknown>>("email", {
@@ -144,11 +151,12 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     d.close.listSince<Record<string, unknown>>("note", { since: new Date(since.getTime() - 30 * DAY_MS).toISOString(), userId: me, fields: "id,note,user_id,lead_id,date_created", max: 3000 }),
     d.close.listSince<Record<string, unknown>>("task", { since: since.toISOString(), fields: "id,created_by,date_created", max: 2000 }),
     d.close.statusChangesSince(since.toISOString(), me).catch(() => []),
+    d.close.contactsCreatedSince(new Date(since.getTime() - NAMED_BACKING_DAYS * DAY_MS).toISOString(), me).catch(() => []),
   ]);
   const tapped = await tappedOutcomes(me);
 
   const reached = calls.filter((c) => isReached(c, tapped));
-  const rungs = ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls);
+  const rungs = ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts);
   const sent = emails.filter((e) => e.user_id === me && e.status === "sent" && e.direction !== "incoming"
     && inRange(e.date_sent ?? e.date_updated, since, until));
   const lineCards = sent.filter((e) => ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD));
@@ -298,7 +306,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
   const ttl = period === "today" ? 30_000 : period === "all" ? 60 * 60_000 : 5 * 60_000;
   if (hit && !opts.fresh && Date.now() - hit.at < ttl) return hit.data;
 
-  const [calls, emails, notes, moves] = await Promise.all([
+  const [calls, emails, notes, moves, contacts] = await Promise.all([
     d.close.calls({ since: since.toISOString(), max: 5000 }).then((cs) => cs.filter((c) => c.user_id === me && c.direction === "outbound" && inRange(c.date_created, since, until))),
     d.close.listSince<Record<string, unknown>>("email", {
       since: new Date(since.getTime() - 14 * DAY_MS).toISOString(), userId: me, max: 10000,
@@ -306,6 +314,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     }),
     d.close.listSince<Record<string, unknown>>("note", { since: new Date(since.getTime() - 30 * DAY_MS).toISOString(), userId: me, fields: "id,note,user_id,lead_id,date_created", max: 10000 }),
     period === "all" ? Promise.resolve([]) : d.close.statusChangesSince(since.toISOString(), me).catch(() => []),
+    period === "all" ? Promise.resolve([]) : d.close.contactsCreatedSince(new Date(since.getTime() - NAMED_BACKING_DAYS * DAY_MS).toISOString(), me).catch(() => []),
   ]);
   const tapped = await tappedOutcomes(me);
   const sent = emails.filter((e) => e.user_id === me && e.status === "sent" && e.direction !== "incoming" && inRange(e.date_sent ?? e.date_updated, since, until));
@@ -333,7 +342,7 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: new Set([...rfqInMails.map((e) => e.lead_id), ...rfqInNotes.map((n) => n.lead_id)]).size,
-    ...ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls),
+    ...ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts),
     buyerCards: (await handLineCardLeads(lineCardMails.filter(toAPerson), me, since)).size,
   };
   const data = { value, calls, tapped, lineCardMails, replyMails, rfqInMails, rfqNotes, rfqInNotes, notes };

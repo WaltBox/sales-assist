@@ -1,8 +1,9 @@
 import type { Deps } from "./assistant.js";
+const DAY_MS = 24 * 60 * 60 * 1000;
 import { background } from "./background.js";
 import { onCloseEvent } from "./closehooks.js";
 import { LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
-import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles, toAPerson } from "./stats.js";
+import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles, toAPerson, NAMED_BACKING_DAYS } from "./stats.js";
 import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
@@ -549,6 +550,13 @@ export async function recordStatusEvent(d: Deps, change: { lead_id?: string | nu
   const kind = label === "named buyer" ? "named" : label === "reached buyer" || label === "qualified" ? "reached" : null;
   if (!kind || !change.lead_id) return false;
   const at = change.date_created ?? new Date().toISOString();
+  // Named only when backed by a contact this rep made on the lead in the last week (11/11: a script's status move
+  // isn't a buyer named; the migration paid Walt 440 that way).
+  if (kind === "named") {
+    const since = new Date(Date.parse(at) - NAMED_BACKING_DAYS * DAY_MS).toISOString();
+    const made = await d.close.contactsCreatedSince(since, d.rep.closeUserId).catch(() => []);
+    if (!made.some((c) => c.lead_id === change.lead_id)) return false;
+  }
   const day = todayOf(d, at);
   if (!day) return false;
   await tally(d, day, (cur) => { cur[kind] = { ...(cur[kind] ?? {}), [change.lead_id!]: at }; });

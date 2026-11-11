@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { afterCall, RFQ_TAG, type Deps } from "../src/assistant.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID, DEMO_USER_ID, roddaCall } from "../src/fixtures.js";
-import { dayStats, isReached, isVoicemail, localDay, resetStatsCache, weekStats } from "../src/stats.js";
+import { dayStats, isReached, isVoicemail, localDay, resetStatsCache, weekStats, ladderCounts } from "../src/stats.js";
 
 const NOW = new Date("2026-09-23T21:31:00Z"); // Wed 2:31 PM Pacific
 const rep = { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: DEMO_USER_ID, timeZone: "America/Los_Angeles" };
@@ -148,4 +148,27 @@ test("two emails from a company the same day: the earlier one's inbox is the RFQ
   const a = line.days.find((x) => x.day === "2026-09-23")!.accounts.find((x) => x.leadId === "lead_gw_s")!;
   assert.deepEqual([a.how, a.to], ["file", walt], "Walt's inbox");
   assert.ok(line.inboxes, "a line built now knows its inboxes");
+});
+
+test("the ladder counts (11/11): a buyer named needs a contact the rep made behind the status move; a script's moves pay nothing; reached needs a minute on the phone", () => {
+  const at = "2026-11-11T18:00:00.000Z";
+  const moves = [
+    { lead_id: "lead_a", date_created: at, new_status_label: "Named buyer" },
+    { lead_id: "lead_b", date_created: at, new_status_label: "Named buyer" },
+    { lead_id: "lead_c", date_created: at, new_status_label: "Named buyer" },
+    { lead_id: "lead_d", date_created: at, new_status_label: "Reached buyer" },
+    { lead_id: "lead_e", date_created: at, new_status_label: "Reached buyer" },
+  ];
+  const calls = [
+    { id: "c1", lead_id: "lead_d", direction: "outbound", disposition: "answered", duration: 90, date_created: at },
+    { id: "c2", lead_id: "lead_e", direction: "outbound", disposition: "answered", duration: 20, date_created: at },
+  ] as never;
+  const contacts = [
+    { lead_id: "lead_a", date_created: "2026-11-11T17:58:00.000Z" }, // the card's save, a minute before the move
+    { lead_id: "lead_b", date_created: "2026-11-06T12:00:00.000Z" }, // added in Close last week; the status caught up today
+    { lead_id: "lead_c", date_created: "2026-10-01T12:00:00.000Z" }, // too old to be today's work
+  ];
+  assert.deepEqual(ladderCounts(moves, calls, contacts), { namedBuyers: 2, reachedBuyers: 1 });
+  // The migration: thousands of moves, no contacts.
+  assert.deepEqual(ladderCounts(moves, calls, []), { namedBuyers: 0, reachedBuyers: 1 });
 });

@@ -112,7 +112,13 @@ export class FakeClose implements Close {
     return { id };
   }
   async createNote(leadId: string, note: string, pinned: boolean) { return this.record("note", { leadId, note, pinned }); }
-  async createContact(leadId: string, c: unknown) { return this.record("contact", { leadId, ...(c as object) }); }
+  contactsCreated: Array<{ lead_id: string; contact_id: string; name: string | null; date_created: string }> = [];
+  async createContact(leadId: string, c: unknown) {
+    const r = this.record("contact", { leadId, ...(c as object) });
+    this.contactsCreated.push({ lead_id: leadId, contact_id: r.id, name: ((c as { name?: string }).name ?? null), date_created: this.clock().toISOString() });
+    return r;
+  }
+  async contactsCreatedSince(since: string) { return this.contactsCreated.filter((c) => c.date_created >= since); }
   async updateContact(contactId: string, patch: unknown) { return this.record("contact-update", { contactId, ...(patch as object) }); }
   private tasks_ = new Map<string, CloseTask & { lead_id: string; assigned_to: string }>();
   async createTask(leadId: string, text: string, dueAt: string, assignedTo: string) {

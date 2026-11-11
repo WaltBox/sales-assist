@@ -357,6 +357,25 @@ export class CloseClient {
     return out.sort((a, b) => a.date_created.localeCompare(b.date_created));
   }
 
+  /**
+   * The contacts a user created since a date, from Close's event log (11/11): the fact behind "named buyer". A status
+   * move alone can come from a script (the ladder migration moved thousands with Walt's key and paid him 440).
+   */
+  async contactsCreatedSince(since: string, userId: string, max = 2000): Promise<Array<{ lead_id: string; contact_id: string; name: string | null; date_created: string }>> {
+    const out: Array<{ lead_id: string; contact_id: string; name: string | null; date_created: string }> = [];
+    let cursor: string | null = null;
+    for (let page = 0; page * 100 < max; page++) {
+      const q: Record<string, string> = { object_type: "contact", action: "created", date_updated__gte: since, user_id: userId, _limit: "100" };
+      if (cursor) q._cursor = cursor;
+      type EventPage = { data: Array<{ lead_id: string | null; object_id: string; date_created: string; data?: { name?: string | null } }>; cursor_next?: string | null };
+      const r: EventPage = await this.request<EventPage>("GET", `/event/?${new URLSearchParams(q)}`);
+      for (const e of r.data) if (e.lead_id) out.push({ lead_id: e.lead_id, contact_id: e.object_id, name: e.data?.name ?? null, date_created: e.date_created });
+      cursor = r.cursor_next ?? null;
+      if (!cursor || r.data.length < 100) break;
+    }
+    return out;
+  }
+
   /** Leads matching a Close search query (e.g. name:"Test Lead Fabrication"). */
   /** A new lead with one contact (a guest's line card to a company not in Close yet, 10/15). */
   createLead(body: { name: string; contactName: string | null; email: string; phone?: string | null }) {

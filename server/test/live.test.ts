@@ -34,6 +34,10 @@ test("West Game: a call completed in Close bumps the racer's dials (and talks, w
   await handleCloseEvent(move(DEMO_LEAD_ID, "Reached buyer"), ctxFor(team, walt));
   await handleCloseEvent(move("lead_live_short000000001", "Reached buyer"), ctxFor(team, walt));
   await handleCloseEvent(ev("acti_live_short", { lead_id: "lead_live_short000000001", disposition: "answered", duration: 30 }), ctxFor(team, walt));
+  // A buyer named is a move to Named buyer backed by a contact the rep made on the lead (11/11: the migration's moves
+  // alone paid Walt 440); a move with no contact behind it is a script's, not a name.
+  await handleCloseEvent(move("lead_live_script00000001", "Named buyer"), ctxFor(team, walt));
+  await (walt.close as FakeClose).createContact("lead_live_named000000001", { name: "Pat Buyer", title: "Buyer", email: null, phone: null });
   await handleCloseEvent(move("lead_live_named000000001", "Named buyer"), ctxFor(team, walt));
   const live = await withLiveLanes(race, { ownerId });
   const lane = live.lanes.find((l) => l.first === "Walt")!;
