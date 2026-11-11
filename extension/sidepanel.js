@@ -1669,7 +1669,7 @@ function objectiveCard(st) {
     el("i", { class: "objtick", "aria-hidden": "true" }),
     el("span", { class: "objlabel", text: b.label }),
     b.hint ? el("span", { class: "objhint", text: b.hint }) : null,
-    b.points ? el("span", { class: "objpts", text: b.done ? `+${b.points} ✓` : `+${b.points}` }) : null,
+    b.points ? el("span", { class: "objpts", text: `+${b.points}` }) : null,
   ]);
   return el("section", { class: `objective s-${L.stage}` }, [
     el("div", { class: "objhead" }, [
