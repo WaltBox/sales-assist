@@ -28,7 +28,7 @@ test("the same read within a few seconds comes from memory; a write forgets the 
     await s.getSetting("user_1", "pace");
     await s.getSetting("user_1", "pace");
     assert.equal(f.calls.filter((c) => c.method === "GET").length, 2, "one trip each for the rep and the setting");
-    assert.deepEqual(s.counts, { remembered: 3, fetched: 2 });
+    assert.deepEqual(s.counts, { remembered: 3, fetched: 2, stale: 0 });
     // A write to a setting forgets that setting's reads, and only those.
     await s.getSetting("user_1", "other");
     await s.putSetting("user_1", "pace", { pace: 10 });
@@ -48,12 +48,37 @@ test("the same read within a few seconds comes from memory; a write forgets the 
     // Two askers at once share one trip.
     await Promise.all([s.getSetting("user_2", "pace"), s.getSetting("user_2", "pace")]);
     assert.equal(f.calls.filter((c) => c.url.includes("user_2")).length, 1);
-    // A failure isn't remembered.
+    // A failure with nothing to fall back on isn't remembered.
     fail = true;
     await assert.rejects(s.getSetting("user_3", "pace"), /503/);
     fail = false;
     await s.getSetting("user_3", "pace");
     assert.equal(f.calls.filter((c) => c.url.includes("user_3")).length, 2, "asked again after the failure");
+  } finally { f.restore(); }
+});
+
+test("when Supabase doesn't answer, a read with a recent copy gets the copy, and for a few seconds reads stop knocking (11/10 evening)", async () => {
+  let fail = false;
+  const f = stubbed((url) => {
+    if (fail) return new Response("gone", { status: 503 });
+    if (url.includes("/settings?")) return json([{ value: { pace: 20 } }]);
+    return json([]);
+  });
+  try {
+    const s = new SupabaseStore("https://store.example", "key", 500);
+    await s.getSetting("user_4", "pace");
+    // A write forgets the short memory but not the copy; then Supabase stops answering.
+    await s.putSetting("user_4", "other", 1);
+    await s.putSetting("user_4", "pace", { pace: 20 });
+    fail = true;
+    assert.deepEqual(await s.getSetting("user_4", "pace"), { pace: 20 }, "the copy, not an error");
+    assert.equal(s.counts.stale, 1);
+    const before = f.calls.length;
+    await s.getSetting("user_4", "pace");
+    await s.getSetting("user_4", "pace");
+    assert.equal(f.calls.length, before, "no knocking for a few seconds after a failure");
+    // Never read before: nothing to fall back on, so the error shows.
+    await assert.rejects(s.getSetting("user_5", "pace"), /503/);
   } finally { f.restore(); }
 });
 

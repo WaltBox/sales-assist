@@ -186,6 +186,12 @@ export class FileStore implements Store {
 const READ_TTL_MS: Record<string, number> = { reps: 60_000, settings: 10_000, brief_cache: 5_000, reviews: 5_000, automations: 5_000, users: 10_000 };
 /** Timestamps in a query rounded down to ten seconds, so "since now" asked twice in a row is the same read. */
 const readKey = (pathAndQuery: string) => pathAndQuery.replace(/(\d{4}-\d{2}-\d{2}T\d{2}(?::|%3A)\d{2}(?::|%3A))(\d)\d(?:\.\d{1,3})?Z/g, "$10.000Z");
+// The last good answer to each read, kept a while past its memory (11/10, evening: Supabase's REST layer stalled for
+// ten minutes after a deploy, every read waited ten seconds and failed, and every screen went blank). When a read
+// fails and there's a copy from the last few minutes, the copy is the answer, and for a few seconds after a failure
+// reads with a copy don't knock at all, so a stalled database isn't buried under retries.
+const STALE_OK_MS = 10 * 60_000;
+const BACKOFF_MS = 15_000;
 
 export class SupabaseStore implements Store {
   /** How long one store call may take. Without a limit (11/9) a slow afternoon at Supabase held every request open
@@ -193,8 +199,10 @@ export class SupabaseStore implements Store {
   constructor(private url: string, private key: string, private timeoutMs = Number(process.env.STORE_TIMEOUT_MS) || 10_000) {}
 
   private reads = new Map<string, { at: number; value: Promise<unknown> }>();
-  /** How many reads the memory answered, and how many went to Supabase (for the health line and the tests). */
-  readonly counts = { remembered: 0, fetched: 0 };
+  private lastGood = new Map<string, { at: number; value: unknown }>();
+  private failedAt = 0;
+  /** How many reads the memory answered, how many went to Supabase, and how many were an old copy because Supabase didn't answer. */
+  readonly counts = { remembered: 0, fetched: 0, stale: 0 };
 
   private async req<T>(method: string, pathAndQuery: string, body?: unknown, prefer?: string): Promise<T> {
     const table = pathAndQuery.split("?")[0];
@@ -216,10 +224,24 @@ export class SupabaseStore implements Store {
     const key = readKey(pathAndQuery);
     const hit = this.reads.get(key);
     if (hit && Date.now() - hit.at < ttl) { this.counts.remembered++; return (hit.value as Promise<T>).then((v) => structuredClone(v)); }
+    const good = this.lastGood.get(key);
+    const copy = good && Date.now() - good.at < STALE_OK_MS ? good : null;
+    // Supabase just failed: for a few seconds, the copy, without knocking again.
+    if (copy && Date.now() - this.failedAt < BACKOFF_MS) { this.counts.stale++; return structuredClone(copy.value) as T; }
     this.counts.fetched++;
-    const value = this.fetchJson<T>(method, pathAndQuery, body, prefer);
+    const value = this.fetchJson<T>(method, pathAndQuery, body, prefer).then((v) => {
+      this.lastGood.set(key, { at: Date.now(), value: v });
+      if (this.lastGood.size > 2000) { const oldest = this.lastGood.keys().next().value; if (oldest !== undefined) this.lastGood.delete(oldest); }
+      return v;
+    }, (e: Error) => {
+      this.failedAt = Date.now();
+      if (!copy) throw e;
+      this.counts.stale++;
+      console.warn(`[store] ${e.message}; answered from the copy of ${Math.round((Date.now() - copy.at) / 1000)}s ago`);
+      return copy.value as T;
+    });
     this.reads.set(key, { at: Date.now(), value });
-    // A failed read isn't remembered: the next asker tries again.
+    // A failed read with no copy to fall back on isn't remembered: the next asker tries again.
     value.catch(() => { if (this.reads.get(key)?.value === value) this.reads.delete(key); });
     if (this.reads.size > 2000) { const oldest = this.reads.keys().next().value; if (oldest !== undefined) this.reads.delete(oldest); }
     return value.then((v) => structuredClone(v));
