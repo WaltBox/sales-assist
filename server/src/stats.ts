@@ -38,6 +38,10 @@ export type DayStats = {
   lineCards: number;
   /** Line cards a person sent, by company: not the automatic sequence's (West Game, 10/26). */
   newLineCards: number;
+  /** The ladder (11/11), from Close: buyers named (leads moved to Named buyer by this rep), buyers reached (moved to
+   * Reached buyer, with a connected call of a minute or more on the lead that day), and cards sent to a named
+   * person rather than a shared mailbox. Each once per company. */
+  namedBuyers: number; reachedBuyers: number; buyerCards: number;
   rfqs: number; // leads that promised an RFQ today
   rfqAsked: number; // leads we asked for a benchmark RFQ/PO today
   rfqReceived: number; // leads we'd asked or that promised (last 30 days) whose RFQ came in today
@@ -81,6 +85,20 @@ export function isVoicemail(c: CloseCall, tapped: Map<string, string>) {
     || VM_GREETING.test(transcriptText(c.recording_transcript) ?? "") || VM_GREETING.test(transcriptText(c.voicemail_transcript) ?? "");
 }
 
+/** A card to a person, not a shared mailbox (the ladder, 11/11): purchasing@ doesn't take the brush-off away. */
+const GENERIC_BOX = /^\s*"?[^"<]*"?\s*<?(info|sales|accounting|accounts|ap|ar|office|main|admin|purchasing|procurement|contact|hello|support|front ?desk|billing|estimating|reception|general|service|orders|shop|quotes?|bids?|inquiries|mail|team|dispatch|hr|careers)@/i;
+export const toAPerson = (e: { to?: unknown }) => Array.isArray(e.to) && e.to.length > 0 && !(e.to as string[]).every((t) => GENERIC_BOX.test(String(t)));
+/**
+ * The ladder's counts (11/11) from Close's status changes by this rep: a lead moved to Named buyer, and one moved to
+ * Reached buyer (or Qualified, the old name) with a connected call of a minute or more on the lead that day: the tap
+ * alone doesn't count as a reach. Each lead once.
+ */
+export function ladderCounts(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[]) {
+  const talked = new Set(calls.filter((c) => c.disposition === "answered" && (c.duration ?? 0) >= 60).map((c) => c.lead_id));
+  const named = new Set(moves.filter((m) => /^named buyer$/i.test(m.new_status_label)).map((m) => m.lead_id));
+  const reached = new Set(moves.filter((m) => /^(reached buyer|qualified)$/i.test(m.new_status_label) && talked.has(m.lead_id)).map((m) => m.lead_id));
+  return { namedBuyers: named.size, reachedBuyers: reached.size };
+}
 const SIGNATURE_IMAGE = /\.(png|jpe?g|gif|bmp|svg|webp)$/i;
 /** The files on an email that aren't signature logos: a spreadsheet, a PDF, a drawing. */
 export function realAttachments(a: unknown): string[] {
@@ -115,20 +133,22 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
   const hit = todayCache.get(key);
   if (hit && !opts.fresh && Date.now() - hit.at < 30_000) return hit.value;
 
-  const [calls, emails, notes, tasks] = await Promise.all([
+  const [calls, emails, notes, tasks, moves] = await Promise.all([
     myCalls(d, since, until),
     // A draft can be sent days after it was written: look back two weeks and count by send date.
     d.close.listSince<Record<string, unknown>>("email", {
       since: new Date(since.getTime() - 14 * DAY_MS).toISOString(), userId: me, max: 2000,
-      fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,date_updated,attachments",
+      fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,date_updated,attachments,to",
     }),
     // A month of the rep's notes: an RFQ that arrives today may have been promised weeks ago.
     d.close.listSince<Record<string, unknown>>("note", { since: new Date(since.getTime() - 30 * DAY_MS).toISOString(), userId: me, fields: "id,note,user_id,lead_id,date_created", max: 3000 }),
     d.close.listSince<Record<string, unknown>>("task", { since: since.toISOString(), fields: "id,created_by,date_created", max: 2000 }),
+    d.close.statusChangesSince(since.toISOString(), me).catch(() => []),
   ]);
   const tapped = await tappedOutcomes(me);
 
   const reached = calls.filter((c) => isReached(c, tapped));
+  const rungs = ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls);
   const sent = emails.filter((e) => e.user_id === me && e.status === "sent" && e.direction !== "incoming"
     && inRange(e.date_sent ?? e.date_updated, since, until));
   const lineCards = sent.filter((e) => ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD));
@@ -178,6 +198,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
     emailsSent: sent.length,
     lineCards: lineCards.length,
     newLineCards: (await handLineCardLeads(lineCards, me, since)).size,
+    ...rungs, buyerCards: (await handLineCardLeads(lineCards.filter(toAPerson), me, since)).size,
     rfqs: rfqLeads.size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: received.size,
@@ -238,6 +259,8 @@ export type PeriodStats = {
   emailsSent: number; lineCards: number; newLineCards: number; rfqs: number; rfqAsked: number; rfqReceived: number;
   /** Accounts that wrote back (not bounce notices). What outreach is for. */
   replied: number;
+  /** The ladder's counts (11/11), as in DayStats. */
+  namedBuyers: number; reachedBuyers: number; buyerCards: number;
 };
 
 /** Where a period starts, in the rep's time zone: midnight today, Monday, the 1st, or the beginning. */
@@ -275,13 +298,14 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
   const ttl = period === "today" ? 30_000 : period === "all" ? 60 * 60_000 : 5 * 60_000;
   if (hit && !opts.fresh && Date.now() - hit.at < ttl) return hit.data;
 
-  const [calls, emails, notes] = await Promise.all([
+  const [calls, emails, notes, moves] = await Promise.all([
     d.close.calls({ since: since.toISOString(), max: 5000 }).then((cs) => cs.filter((c) => c.user_id === me && c.direction === "outbound" && inRange(c.date_created, since, until))),
     d.close.listSince<Record<string, unknown>>("email", {
       since: new Date(since.getTime() - 14 * DAY_MS).toISOString(), userId: me, max: 10000,
       fields: "id,user_id,lead_id,status,direction,subject,sender,to,date_sent,date_created,date_updated,attachments,opens",
     }),
     d.close.listSince<Record<string, unknown>>("note", { since: new Date(since.getTime() - 30 * DAY_MS).toISOString(), userId: me, fields: "id,note,user_id,lead_id,date_created", max: 10000 }),
+    period === "all" ? Promise.resolve([]) : d.close.statusChangesSince(since.toISOString(), me).catch(() => []),
   ]);
   const tapped = await tappedOutcomes(me);
   const sent = emails.filter((e) => e.user_id === me && e.status === "sent" && e.direction !== "incoming" && inRange(e.date_sent ?? e.date_updated, since, until));
@@ -309,6 +333,8 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: new Set([...rfqInMails.map((e) => e.lead_id), ...rfqInNotes.map((n) => n.lead_id)]).size,
+    ...ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls),
+    buyerCards: (await handLineCardLeads(lineCardMails.filter(toAPerson), me, since)).size,
   };
   const data = { value, calls, tapped, lineCardMails, replyMails, rfqInMails, rfqNotes, rfqInNotes, notes };
   periodData.set(key, { at: Date.now(), data });

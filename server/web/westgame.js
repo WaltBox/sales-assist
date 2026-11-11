@@ -20,7 +20,7 @@
     return n;
   };
   // The finish line (Walt 10/27: 370). The server says where it is; this is for an older server.
-  const GOAL = 370;
+  const GOAL = 350;
   const MIN = 78; // the closed bar's height
   const PARTY = 180; // the bar while an RFQ is being celebrated
   const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -471,7 +471,8 @@
     function lane(l, i, max) {
       const me = l.email === g.race.you;
       const pct = pctOf(l, max);
-      const bits = l.error ? [l.error] : [plural(l.dials, "call", "calls"), plural(l.reached, "talk", "talks"), plural(l.lineCards, "line card", "line cards"), plural(l.rfqs, "RFQ", "RFQs")];
+      // The ladder's four counts under the car (Walt 11/11): names, cards to them, buyers reached, RFQs.
+      const bits = l.error ? [l.error] : [plural(l.dials, "call", "calls"), plural(l.named || 0, "name", "names"), plural(l.lineCards, "card", "cards"), plural(l.reached, "buyer reached", "buyers reached"), plural(l.rfqs, "RFQ", "RFQs")];
       const row = h("button", { class: `wg-lane${me ? " me" : ""}${g.lane === l.email ? " on" : ""}${l.error ? " broken" : ""}`, onclick: () => { g.lane = g.lane === l.email ? null : l.email; render(); } }, [
         h("span", { class: "wg-ltop" }, [
           h("span", { class: "wg-place", text: String(i + 1) }),
@@ -500,8 +501,9 @@
         h("table", {}, [
           h("tr", {}, [h("th", {}), h("th", { text: "Today" }), h("th", { text: "Week" }), h("th", { text: "Pts" })]),
           tr("Calls", full.dials, w && w.dials, `×${r.points.dial}`),
-          tr("Conversations", full.reached, w && w.reached, r.points.reached ? `×${r.points.reached}` : ""),
-          tr("Line cards", full.lineCards, w && w.lineCards, r.points.lineCard ? `×${r.points.lineCard}` : ""),
+          r.points.named ? tr("Buyers named", full.named || 0, w && (w.named || 0), `×${r.points.named}`) : null,
+          tr("Cards to a buyer", full.lineCards, w && w.lineCards, r.points.lineCard ? `×${r.points.lineCard}` : ""),
+          tr("Buyers reached", full.reached, w && w.reached, r.points.reached ? `×${r.points.reached}` : ""),
           tr("RFQs", full.rfqs, w && w.rfqs, `×${r.points.rfq}`),
           full.firstRfqs && r.points.firstRfq ? tr("First RFQs", full.firstRfqs, null, `+${r.points.firstRfq}`) : null,
           h("tr", { class: "wg-total" }, [h("td", { text: "Points" }), h("td", { text: String(full.points) }), h("td", { text: w ? String(w.points) : "–" }), h("td")]),
@@ -584,7 +586,7 @@
           today.length ? h("ul", {}, today.slice().reverse().map((e) => h("li", {}, [h("b", { text: (e.name || "").split(/\s+/)[0] }), ` · ${e.company || "an account"}`, e.first ? h("span", { class: "wg-tag good", text: "First RFQ" }) : null])))
             : h("p", { class: "wg-muted", text: "None yet. The first one sets off something stupid on every screen." }),
         ]),
-        h("p", { class: "wg-muted" }, [`Points: ${[["call", r.points.dial], ["conversation", r.points.reached], ["line card", r.points.lineCard], ["new company's RFQ", r.points.rfq]].filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ")}. ${goal()} points finishes the day. Starts over every morning. `, soundButton()]),
+        h("p", { class: "wg-muted" }, [`Points: ${[["call", r.points.dial], ["buyer named", r.points.named], ["card to them", r.points.lineCard], ["buyer reached", r.points.reached], ["RFQ", r.points.rfq], ["first from a new company +", r.points.firstRfq]].filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ")}. Each once per company. ${goal()} points finishes the day. Starts over every morning. `, soundButton()]),
         r.owner && opts.webApp ? h("div", { class: "wg-links" }, [h("a", { href: opts.webApp, target: "_blank", rel: "noopener", text: "Pick who plays (web app)" })]) : null,
       ];
     }

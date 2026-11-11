@@ -5,7 +5,7 @@ import { callState, resetCallStateChecks, type Deps } from "../src/assistant.js"
 import { handleCloseEvent, parseCloseEvent, type HookContext } from "../src/closehooks.js";
 import { demoLlm, FakeClose, fakeCloseEvent } from "../src/demo.js";
 import { DEMO_LEAD_ID, roddaCall, roddaLead } from "../src/fixtures.js";
-import { raceLive, teamRace, withLiveLanes } from "../src/race.js";
+import { POINTS, raceLive, teamRace, withLiveLanes } from "../src/race.js";
 import { store } from "../src/store.js";
 
 // Live (11/10): a call made in Close moves the West Game and the side panel within seconds, from Close's events.
@@ -28,17 +28,25 @@ test("West Game: a call completed in Close bumps the racer's dials (and talks, w
   await handleCloseEvent(ev("acti_live_2", { disposition: "answered", duration: 95 }), ctxFor(team, walt));
   // An inbound call isn't a dial.
   await handleCloseEvent(ev("acti_live_in", { direction: "inbound", disposition: "answered", duration: 300 }), ctxFor(team, walt));
+  // The ladder (11/11): a buyer reached is a status move to Reached buyer on a lead with a conversation of a minute
+  // or more; the move alone (a tap on a 30s call) doesn't count. A buyer named is a move to Named buyer.
+  const move = (lead: string, label: string) => parseCloseEvent(fakeCloseEvent({ object_type: "activity.lead_status_change", action: "created", lead_id: lead, user_id: ownerId, data: { lead_id: lead, new_status_label: label, old_status_label: "Fit", date_created: now } }))!;
+  await handleCloseEvent(move(DEMO_LEAD_ID, "Reached buyer"), ctxFor(team, walt));
+  await handleCloseEvent(move("lead_live_short000000001", "Reached buyer"), ctxFor(team, walt));
+  await handleCloseEvent(ev("acti_live_short", { lead_id: "lead_live_short000000001", disposition: "answered", duration: 30 }), ctxFor(team, walt));
+  await handleCloseEvent(move("lead_live_named000000001", "Named buyer"), ctxFor(team, walt));
   const live = await withLiveLanes(race, { ownerId });
   const lane = live.lanes.find((l) => l.first === "Walt")!;
-  assert.equal(lane.dials, 2);
-  assert.equal(lane.reached, 1);
-  assert.equal(lane.points, 2);
+  assert.equal(lane.dials, 3);
+  assert.equal(lane.reached, 1, "the minute-long call's lead, not the 30-second one");
+  assert.equal(lane.named, 1);
+  assert.equal(lane.points, 3 * POINTS.dial + POINTS.reached + POINTS.named);
   // The shared live copy every screen reads was dropped by the event, so it shows them too.
   const shown = await raceLive(ownerId, "America/Chicago");
-  assert.equal(shown.lanes?.find((l) => l.first === "Walt")?.dials, 2);
+  assert.equal(shown.lanes?.find((l) => l.first === "Walt")?.dials, 3);
   // A call from yesterday reported late doesn't count for today.
   await handleCloseEvent(ev("acti_live_old", { disposition: "answered", duration: 95, date_created: new Date(Date.now() - 2 * 86_400_000).toISOString() }), ctxFor(team, walt));
-  assert.equal((await withLiveLanes(race, { ownerId })).lanes.find((l) => l.first === "Walt")?.dials, 2);
+  assert.equal((await withLiveLanes(race, { ownerId })).lanes.find((l) => l.first === "Walt")?.dials, 3);
 });
 
 test("West Game: an RFQ that comes in by email is celebrated on the event, and a line card sent by hand scores", async () => {
@@ -66,7 +74,11 @@ test("West Game: an RFQ that comes in by email is celebrated on the event, and a
   await handleCloseEvent(parseCloseEvent(fakeCloseEvent({ object_type: "activity.email", action: "created", lead_id: DEMO_LEAD_ID, user_id: ownerId, data: ours }))!, ctxFor(team, walt));
   assert.equal((await withLiveLanes(race, { ownerId })).lanes.find((l) => l.first === "Walt")!.rfqs, 1);
   // A line card sent by hand from Close today.
-  const card = { id: "acti_card_today", lead_id: "lead_live_other0000001", user_id: ownerId, direction: "outgoing", status: "sent", date_sent: now, date_created: now, attachments: [{ filename: "Westgate_Supply_Line_Card.pdf" }] };
+  // To purchasing@ it wouldn't count (the ladder, 11/11): the card has to go to a person.
+  const toBox = { id: "acti_card_box", lead_id: "lead_live_box000000001", user_id: ownerId, direction: "outgoing", status: "sent", date_sent: now, date_created: now, to: ["purchasing@other.test"], attachments: [{ filename: "Westgate_Supply_Line_Card.pdf" }] };
+  await handleCloseEvent(parseCloseEvent(fakeCloseEvent({ object_type: "activity.email", action: "sent", lead_id: "lead_live_box000000001", user_id: ownerId, data: toBox }))!, ctxFor(team, walt));
+  assert.equal((await withLiveLanes(race, { ownerId })).lanes.find((l) => l.first === "Walt")!.lineCards, 0, "a card to a shared mailbox isn't a card to a buyer");
+  const card = { id: "acti_card_today", lead_id: "lead_live_other0000001", user_id: ownerId, direction: "outgoing", status: "sent", date_sent: now, date_created: now, to: ["Rob Roy <rob@other.test>"], attachments: [{ filename: "Westgate_Supply_Line_Card.pdf" }] };
   await handleCloseEvent(parseCloseEvent(fakeCloseEvent({ object_type: "activity.email", action: "sent", lead_id: "lead_live_other0000001", user_id: ownerId, data: card }))!, ctxFor(team, walt));
   assert.equal((await withLiveLanes(race, { ownerId })).lanes.find((l) => l.first === "Walt")!.lineCards, 1);
   // The sequence's own send (recorded as an automation) doesn't.

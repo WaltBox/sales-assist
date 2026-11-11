@@ -1,7 +1,8 @@
 import type { Deps } from "./assistant.js";
 import { background } from "./background.js";
 import { onCloseEvent } from "./closehooks.js";
-import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles } from "./stats.js";
+import { LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
+import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles, toAPerson } from "./stats.js";
 import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
 import { store } from "./store.js";
@@ -19,13 +20,19 @@ import { store } from "./store.js";
 // calls with 85 line cards finishes, or 160 calls, 70 line cards and 3 RFQs, or a big RFQ day (8) with 100 calls and
 // 15 line cards. Chase's 119 calls, 47 line cards and 4 RFQs (10/27) is 90%. (It was 220 to finish with 15 an RFQ.)
 // The screens read the finish and the points from here, so changing them doesn't need an extension update.
-export const POINTS = { dial: 1, reached: 0, lineCard: 2, rfq: 30, firstRfq: 0 } as const;
-export const GOAL = 370;
+// The ladder's points (Walt 11/11): a dial 1 (the car always moves), a buyer named 3, the card to that buyer 2, the
+// buyer reached 5, an RFQ 30 and 10 more when it's the first from a new company. Each rung once per company; the
+// game reads them from Close (status moves, the card email, the RFQ), never from a tap alone. Finish 350: "should
+// actually be quite hard": 130 dials and RFQs on top; a volume day with no RFQ tops out around 230.
+export const POINTS = { dial: RUNG_POINTS.dial, named: RUNG_POINTS.named, reached: RUNG_POINTS.reached, lineCard: RUNG_POINTS.card, rfq: RUNG_POINTS.rfq, firstRfq: RUNG_POINTS.firstRfq } as const;
+export const GOAL = LADDER_GOAL;
 export type RaceLane = {
   /** A rep's email, or `guest:<id>` for a guest link (they play too while their link is on, 10/25). */
   email: string; name: string; first: string; guest?: boolean;
   dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs: number; points: number;
-  week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number } | null;
+  /** Buyers named today (the ladder, 11/11): leads this rep moved to Named buyer. */
+  named: number;
+  week: { dials: number; reached: number; lineCards: number; rfqs: number; points: number; named?: number } | null;
   error: string | null;
   /** This week's RFQs that scored, newest first: who they came from (Walt 10/27: "show who the RFQ came from"). */
   rfqFrom?: Array<{ leadId: string; company: string; day: string }>;
@@ -52,8 +59,8 @@ export async function setRaceRoster(ownerId: string, email: string, racing: bool
   return { excluded };
 }
 
-const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number }) =>
-  x.dials * POINTS.dial + x.reached * POINTS.reached + x.lineCards * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
+const scoreOf = (x: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number; named?: number }) =>
+  x.dials * POINTS.dial + (x.named ?? 0) * POINTS.named + x.reached * POINTS.reached + x.lineCards * POINTS.lineCard + x.rfqs * POINTS.rfq + (x.firstRfqs ?? 0) * POINTS.firstRfq;
 
 const RACE_KEY = "race:team";
 const LOCK_KEY = "race:building";
@@ -112,14 +119,15 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       const todays = line?.days.find((x) => x.day === today)?.accounts ?? [];
       const rfqs = todays.length, firstRfqs = todays.filter((a) => a.first).length;
       // Line cards a person sent, not the automatic follow-ups that carry one too.
-      const base = { dials: day.dials, reached: day.reached, lineCards: day.newLineCards ?? day.lineCards, rfqs, firstRfqs };
+      // The ladder's counts (11/11): buyers named and reached by Close's status moves, cards to a named person.
+      const base = { dials: day.dials, named: day.namedBuyers ?? 0, reached: day.reachedBuyers ?? 0, lineCards: day.buyerCards ?? day.newLineCards ?? day.lineCards, rfqs, firstRfqs };
       const weekDays = line ? line.days.filter((x) => x.day >= weekStart(today)) : [];
       const weekRfqs = weekDays.reduce((n, x) => n + x.accounts.length, 0);
       const weekFirst = weekDays.reduce((n, x) => n + x.accounts.filter((a) => a.first).length, 0);
       const lane: RaceLane = {
         email: t.rep.email.toLowerCase(), name: t.rep.name, first, ...base, points: scoreOf(base), rid: t.rep.closeUserId, tz: t.rep.timeZone,
         rfqFrom: weekDays.flatMap((x) => x.accounts.map((a) => ({ leadId: a.leadId, company: a.company, day: x.day }))).sort((a, b) => b.day.localeCompare(a.day)),
-        week: weekOf(week ? { ...week, lineCards: week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
+        week: weekOf(week ? { ...week, named: week.namedBuyers ?? 0, reached: week.reachedBuyers ?? 0, lineCards: week.buyerCards ?? week.newLineCards ?? week.lineCards } : null, base, weekRfqs, weekFirst),
         error: null,
       };
       const events: RaceEvent[] = todays.map((a) => ({ id: `${a.leadId}:${today}`, email: lane.email, name: t.rep.name, company: a.company, first: a.first, day: today, leadId: a.leadId }));
@@ -129,7 +137,7 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
       // Said in the log (11/10): a whole board of "couldn't read their numbers" had nothing to go on.
       console.warn(`[race] ${t.rep.email}: ${msg}`);
       return {
-        lane: { email: t.rep.email.toLowerCase(), name: t.rep.name, first, dials: 0, reached: 0, lineCards: 0, rfqs: 0, firstRfqs: 0, points: 0, week: null,
+        lane: { email: t.rep.email.toLowerCase(), name: t.rep.name, first, dials: 0, named: 0, reached: 0, lineCards: 0, rfqs: 0, firstRfqs: 0, points: 0, week: null,
           error: /403|no access/i.test(msg) ? "Close login needs fixing" : "Couldn't read their numbers" },
         events: [] as RaceEvent[], line: null, today: "", t,
       };
@@ -157,9 +165,9 @@ async function buildRace(team: Deps[], ownerId: string, fresh = false): Promise<
  * The week so far. The week's numbers are saved for a while and today's are fresher, so a count can show today ahead
  * of the week it's part of (Walt 10/26: 6 line cards today, 5 this week). The week is never less than today.
  */
-function weekOf(week: { dials: number; reached: number; lineCards: number } | null, today: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number }, weekRfqs: number, weekFirst = 0) {
+function weekOf(week: { dials: number; reached: number; lineCards: number; named?: number } | null, today: { dials: number; reached: number; lineCards: number; rfqs: number; firstRfqs?: number; named?: number }, weekRfqs: number, weekFirst = 0) {
   if (!week) return null;
-  const w = { dials: Math.max(week.dials, today.dials), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards),
+  const w = { dials: Math.max(week.dials, today.dials), named: Math.max(week.named ?? 0, today.named ?? 0), reached: Math.max(week.reached, today.reached), lineCards: Math.max(week.lineCards, today.lineCards),
     rfqs: Math.max(weekRfqs, today.rfqs), firstRfqs: Math.max(weekFirst, today.firstRfqs ?? 0) };
   return { ...w, points: scoreOf(w) };
 }
@@ -204,7 +212,7 @@ async function guestRacers(team: Deps[], roster: { excluded: string[] }, reps: R
       const todays = (line?.days.find((x) => x.day === today)?.accounts ?? []).filter((a) => mineOn(today, a));
       const weekMine = (line?.days ?? []).filter((x) => x.day >= monday).flatMap((x) => x.accounts.filter((a) => mineOn(x.day, a)));
       const weekRfqs = weekMine.length, weekFirst = weekMine.filter((a) => a.first).length;
-      const base = { ...count(today), rfqs: todays.length, firstRfqs: todays.filter((a) => a.first).length };
+      const base = { ...count(today), named: 0, rfqs: todays.length, firstRfqs: todays.filter((a) => a.first).length };
       const wk = count(monday);
       const email = `guest:${g.id}`;
       out.push({
@@ -462,7 +470,7 @@ export async function raceWithLive(race: Race, ownerId: string, tz: string): Pro
 
 // ---------- every call moves the dot right away (Walt 10/27: "each time a call is made or updated") ----------
 
-type LiveCount = { dials: number; reached: number; lineCards: number };
+type LiveCount = { dials: number; named: number; reached: number; lineCards: number };
 const liveCache = new Map<string, { at: number; value: LiveCount }>();
 const REACHED_TAPS = new Set(["reached_buyer", "got_name"]);
 
@@ -485,14 +493,14 @@ async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount>
   const tapped = new Map(calls.map((it) => [it.callId!, String(it.outcome)]));
   const fromClose = told && told.day === day ? told : null;
   const dialed = new Set([...calls.map((it) => it.callId!), ...Object.keys(fromClose?.calls ?? {})]);
-  // Reached: what you tapped, or a call Close reported answered and long enough (a tapped voicemail isn't).
-  const reached = new Set([
-    ...calls.filter((it) => REACHED_TAPS.has(String(it.outcome))).map((it) => it.callId!),
-    ...Object.entries(fromClose?.calls ?? {}).filter(([id, c]) => c.reached && tapped.get(id) !== "voicemail").map(([id]) => id),
-  ]);
+  void tapped; void REACHED_TAPS;
+  // The ladder (11/11): a buyer named is a status move to Named buyer; a buyer reached is a move to Reached buyer with
+  // a connected call of a minute or more on that lead (the tap alone doesn't count). Both from Close's events.
+  const talked = new Set(Object.values(fromClose?.calls ?? {}).filter((c) => c.reached && c.leadId).map((c) => c.leadId));
   const value = {
     dials: dialed.size,
-    reached: reached.size,
+    named: Object.keys(fromClose?.named ?? {}).length,
+    reached: Object.keys(fromClose?.reached ?? {}).filter((leadId) => talked.has(leadId)).length,
     lineCards: Math.max(Object.values(sends ?? {}).filter((x) => Date.parse(x.at) >= since.getTime()).length, Object.keys(fromClose?.lineCards ?? {}).length),
   };
   liveCache.set(rid, { at: now.getTime(), value });
@@ -503,36 +511,59 @@ async function liveCount(rid: string, tz: string, now: Date): Promise<LiveCount>
 
 /** What Close's events said about today, per rep: each outbound call (and whether it was a real conversation) and
  * each company a line card went to by hand. One setting a rep, reset when the day turns. */
-type CallsToday = { day: string; calls: Record<string, { at: string; reached?: boolean }>; lineCards: Record<string, string> };
+type CallsToday = {
+  day: string;
+  /** Each outbound call: when, which lead, and whether it was a conversation (answered, a minute or more). */
+  calls: Record<string, { at: string; leadId?: string; reached?: boolean }>;
+  /** Companies a card went to by hand (to a named person) today. */
+  lineCards: Record<string, string>;
+  /** Leads moved to Named buyer / Reached buyer by this rep today (the ladder, 11/11), lead → when. */
+  named?: Record<string, string>; reached?: Record<string, string>;
+};
 const CALLS_KEY = "callsToday";
-/** A call Close reported: counted as a dial at once; a conversation when it was answered and ran long enough. */
-export async function recordCallEvent(d: Deps, call: { id: string; direction?: string | null; date_created?: string | null; disposition?: string | null; duration?: number | null; status?: string | null }) {
-  if (call.direction && call.direction !== "outbound") return false;
-  const at = call.date_created ?? new Date().toISOString();
-  const day = localDay(d.rep.timeZone, new Date(at)).day;
-  if (day !== localDay(d.rep.timeZone, new Date()).day) return false;
+const todayOf = (d: Deps, at: string) => { const day = localDay(d.rep.timeZone, new Date(at)).day; return day === localDay(d.rep.timeZone, new Date()).day ? day : null; };
+async function tally(d: Deps, day: string, change: (cur: CallsToday) => void) {
   const told = (await store.getSetting<CallsToday>(d.rep.closeUserId, CALLS_KEY).catch(() => null)) ?? null;
   const cur: CallsToday = told && told.day === day ? told : { day, calls: {}, lineCards: {} };
-  const was = cur.calls[call.id];
-  const reached = call.disposition === "answered" && (call.duration ?? 0) >= 45;
-  cur.calls[call.id] = { at, reached: was?.reached || reached };
+  change(cur);
   await store.putSetting(d.rep.closeUserId, CALLS_KEY, cur);
   liveCache.delete(d.rep.closeUserId);
+}
+/** A call Close reported: counted as a dial at once; a conversation when it was answered and ran a minute or more. */
+export async function recordCallEvent(d: Deps, call: { id: string; lead_id?: string | null; direction?: string | null; date_created?: string | null; disposition?: string | null; duration?: number | null; status?: string | null }) {
+  if (call.direction && call.direction !== "outbound") return false;
+  const at = call.date_created ?? new Date().toISOString();
+  const day = todayOf(d, at);
+  if (!day) return false;
+  await tally(d, day, (cur) => {
+    const was = cur.calls[call.id];
+    const reached = call.disposition === "answered" && (call.duration ?? 0) >= 60;
+    cur.calls[call.id] = { at, leadId: call.lead_id ?? was?.leadId, reached: was?.reached || reached };
+  });
+  return true;
+}
+/** A lead this rep moved up the ladder, as Close reports it: Named buyer or Reached buyer count for the day, once a lead. */
+export async function recordStatusEvent(d: Deps, change: { lead_id?: string | null; new_status_label?: string | null; date_created?: string | null }) {
+  const label = (change.new_status_label ?? "").toLowerCase();
+  const kind = label === "named buyer" ? "named" : label === "reached buyer" || label === "qualified" ? "reached" : null;
+  if (!kind || !change.lead_id) return false;
+  const at = change.date_created ?? new Date().toISOString();
+  const day = todayOf(d, at);
+  if (!day) return false;
+  await tally(d, day, (cur) => { cur[kind] = { ...(cur[kind] ?? {}), [change.lead_id!]: at }; });
   return true;
 }
 /** A line card Close reported sent by hand (not the sequence's): counted for its company at once. */
-export async function recordLineCardEvent(d: Deps, email: { id: string; lead_id?: string | null; date_sent?: string | null; date_created?: string | null }) {
+export async function recordLineCardEvent(d: Deps, email: { id: string; lead_id?: string | null; date_sent?: string | null; date_created?: string | null; to?: unknown }) {
   const at = email.date_sent ?? email.date_created ?? new Date().toISOString();
-  const day = localDay(d.rep.timeZone, new Date(at)).day;
-  if (day !== localDay(d.rep.timeZone, new Date()).day || !email.lead_id) return false;
+  const day = todayOf(d, at);
+  if (!day || !email.lead_id) return false;
+  // A card to purchasing@ doesn't take the brush-off away (the ladder, 11/11): only one to a person counts.
+  if (!toAPerson(email)) return false;
   // The sequence's own sends are recorded by their Close email id: not a line card a person sent.
   const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
   if ((await store.listAutomations(d.rep.closeUserId, since, email.lead_id).catch(() => [])).some((r) => r.id === email.id)) return false;
-  const told = (await store.getSetting<CallsToday>(d.rep.closeUserId, CALLS_KEY).catch(() => null)) ?? null;
-  const cur: CallsToday = told && told.day === day ? told : { day, calls: {}, lineCards: {} };
-  cur.lineCards[email.lead_id] = at;
-  await store.putSetting(d.rep.closeUserId, CALLS_KEY, cur);
-  liveCache.delete(d.rep.closeUserId);
+  await tally(d, day, (cur) => { cur.lineCards[email.lead_id!] = at; });
   return true;
 }
 
@@ -568,11 +599,22 @@ onCloseEvent("race", async (ev, ctx) => {
     const d = await ctx.depsForUser(ev.userId);
     if (!d) return "not a rep";
     const c = ev.data as { id?: string; direction?: string; date_created?: string; disposition?: string; duration?: number; status?: string };
-    const counted = await recordCallEvent(d, { id: c.id ?? ev.objectId ?? "", direction: c.direction, date_created: c.date_created ?? ev.at, disposition: c.disposition, duration: c.duration, status: c.status });
+    const counted = await recordCallEvent(d, { id: c.id ?? ev.objectId ?? "", lead_id: ev.leadId, direction: c.direction, date_created: c.date_created ?? ev.at, disposition: c.disposition, duration: c.duration, status: c.status });
     if (!counted) return;
     const owner = await ctx.ownerDeps();
     if (owner) await forgetLive(owner.rep.closeUserId);
     return "dial counted";
+  }
+  // The ladder (11/11): a lead this rep moved to Named buyer or Reached buyer scores on the next live check.
+  if (ev.objectType === "activity.lead_status_change" && ev.data && ev.userId) {
+    const d = await ctx.depsForUser(ev.userId);
+    if (!d) return "not a rep";
+    const s = ev.data as { lead_id?: string; new_status_label?: string; date_created?: string };
+    const counted = await recordStatusEvent(d, { lead_id: s.lead_id ?? ev.leadId, new_status_label: s.new_status_label, date_created: s.date_created ?? ev.at });
+    if (!counted) return;
+    const owner = await ctx.ownerDeps();
+    if (owner) await forgetLive(owner.rep.closeUserId);
+    return `${s.new_status_label} counted`;
   }
   if (ev.objectType === "activity.email" && ev.data) {
     const e = ev.data as Record<string, unknown>;
@@ -585,7 +627,7 @@ onCloseEvent("race", async (ev, ctx) => {
     if (ev.userId && ["sent", "outbox"].includes(String(e.status)) && ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD)) {
       const d = await ctx.depsForUser(ev.userId);
       if (!d) return;
-      const counted = await recordLineCardEvent(d, { id: String(e.id ?? ev.objectId ?? ""), lead_id: ev.leadId, date_sent: e.date_sent as string | null, date_created: e.date_created as string | null });
+      const counted = await recordLineCardEvent(d, { id: String(e.id ?? ev.objectId ?? ""), lead_id: ev.leadId, date_sent: e.date_sent as string | null, date_created: e.date_created as string | null, to: e.to });
       if (!counted) return;
       const owner = await ctx.ownerDeps();
       if (owner) await forgetLive(owner.rep.closeUserId);
@@ -611,14 +653,14 @@ export async function withLiveLanes(race: Race, opts: { taps?: RaceTap[]; ownerI
     const c = today ? await liveCount(l.rid!, l.tz!, now).catch(() => null) : null;
     if (!c && !mine.length) return l;
     const n = {
-      dials: Math.max(l.dials, c?.dials ?? 0), reached: Math.max(l.reached, c?.reached ?? 0), lineCards: Math.max(l.lineCards, c?.lineCards ?? 0),
+      dials: Math.max(l.dials, c?.dials ?? 0), named: Math.max(l.named ?? 0, c?.named ?? 0), reached: Math.max(l.reached, c?.reached ?? 0), lineCards: Math.max(l.lineCards, c?.lineCards ?? 0),
       rfqs: l.rfqs + mine.length, firstRfqs: l.firstRfqs + mine.length,
     };
     const points = scoreOf(n);
     const add = points - l.points;
     const rfqFrom = mine.length ? [...mine.map((x) => ({ leadId: x.leadId, company: x.company, day: x.day })), ...(l.rfqFrom ?? [])] : l.rfqFrom;
     const week = l.week && add > 0 ? {
-      ...l.week, dials: l.week.dials + n.dials - l.dials, reached: l.week.reached + n.reached - l.reached,
+      ...l.week, dials: l.week.dials + n.dials - l.dials, named: (l.week.named ?? 0) + n.named - (l.named ?? 0), reached: l.week.reached + n.reached - l.reached,
       lineCards: l.week.lineCards + n.lineCards - l.lineCards, rfqs: l.week.rfqs + mine.length, points: l.week.points + add,
     } : l.week;
     return { ...l, ...n, points, rfqFrom, week };

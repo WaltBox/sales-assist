@@ -8,14 +8,15 @@ import { store } from "../src/store.js";
 // The BDR race (10/25): a lane per rep, the car moves with dials, points decide the winner, RFQs are celebrated.
 const rep = (name: string, email: string, id: string) => ({ name, email, closeUserId: id, timeZone: "America/Chicago" });
 
-test("points: 180 calls and 20 line cards finish, an RFQ is worth 15; the roster leaves people out; a broken Close login is a flagged lane", async () => {
-  assert.equal(GOAL, 370);
-  assert.equal(POINTS.rfq, 30);
-  // Walt's finishing days: 200 calls and 85 line cards; 160 calls, 70 line cards and 3 RFQs; 8 RFQs, 100 calls, 15 cards.
-  assert.equal(200 * POINTS.dial + 85 * POINTS.lineCard, GOAL);
-  assert.ok(160 * POINTS.dial + 70 * POINTS.lineCard + 3 * POINTS.rfq >= GOAL);
-  assert.equal(100 * POINTS.dial + 15 * POINTS.lineCard + 8 * POINTS.rfq, GOAL);
-  assert.equal(Math.round(100 * (119 + 47 * POINTS.lineCard + 4 * POINTS.rfq) / GOAL), 90, "Chase 10/27: 90%");
+test("points (the ladder, 11/11): a name 3, the card 2, the buyer 5, an RFQ 30; 350 finishes only on a monster day; the roster leaves people out; a broken Close login is a flagged lane", async () => {
+  assert.equal(GOAL, 350);
+  assert.deepEqual(POINTS, { dial: 1, named: 3, reached: 5, lineCard: 2, rfq: 30, firstRfq: 10 });
+  // A full morning with no RFQ: 60 calls, 8 names, 8 cards, 6 buyers reached.
+  const morning = 60 * POINTS.dial + 8 * POINTS.named + 8 * POINTS.lineCard + 6 * POINTS.reached;
+  assert.equal(morning, 130);
+  assert.ok(morning + 3 * (POINTS.rfq + POINTS.firstRfq) < GOAL, "three new RFQs on a strong morning don't finish");
+  // Chase's best day (10/27: 119 calls, 4 RFQs): a dozen names and cards, ten buyers, three new RFQs finish.
+  assert.ok(120 * POINTS.dial + 12 * POINTS.named + 12 * POINTS.lineCard + 10 * POINTS.reached + 3 * (POINTS.rfq + POINTS.firstRfq) >= GOAL);
   assert.ok(349 * POINTS.dial < GOAL, "never on calls alone");
   const ownerId = "user_race_owner";
   assert.deepEqual((await raceRoster(ownerId)).excluded, ["sales@westgatesupply.com"], "Work Trial starts out");
@@ -134,7 +135,7 @@ test("West Game: an RFQ tap scores right away with one showtime for every screen
   const lane = (await raceLive(owner, "America/Chicago")).lanes!.find((l) => l.first === "Chase")!;
   assert.equal(later.first, true);
   assert.equal(lane.rfqs, 2, "counted before the rebuild");
-  assert.equal(lane.points - c.points, POINTS.rfq, "and scored");
+  assert.equal(lane.points - c.points, POINTS.rfq + POINTS.firstRfq, "and scored, with the bonus for a new company (11/11)");
   assert.ok(lane.rfqFrom!.some((x) => x.leadId === "lead_new2"), "and named");
   const again = (await withLiveLanes(race, { ownerId: owner })).lanes.find((l) => l.first === "Chase")!;
   assert.equal(again.rfqs, 2, "the one already in the lane isn't counted twice");
