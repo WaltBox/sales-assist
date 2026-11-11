@@ -10,9 +10,7 @@ const rep = (name: string, email: string, id: string) => ({ name, email, closeUs
 
 test("points (the ladder, 11/11): a name 3, the card 2, the buyer 5, an RFQ 30; 350 finishes only on a monster day; the roster leaves people out; a broken Close login is a flagged lane", async () => {
   assert.equal(GOAL, 350);
-  assert.deepEqual(POINTS, { dial: 1, named: 3, reached: 5, lineCard: 2, rfq: 30, firstRfq: 10, cardCap: 15 });
-  // Cards pay up to 15 a day (Walt 11/11): a card to every pickup stops paying at 15; the count keeps climbing.
-  assert.equal(POINTS.cardCap, 15);
+  assert.deepEqual(POINTS, { dial: 1, named: 3, reached: 5, lineCard: 2, rfq: 30, firstRfq: 10 });
   // A full morning with no RFQ: 60 calls, 8 names, 8 cards, 6 buyers reached.
   const morning = 60 * POINTS.dial + 8 * POINTS.named + 8 * POINTS.lineCard + 6 * POINTS.reached;
   assert.equal(morning, 130);
