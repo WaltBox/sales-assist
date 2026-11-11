@@ -153,15 +153,15 @@ async function loadBrief(st, refresh = false) {
   if (!st.brief) st.phase = "loading";
   render();
   try {
-    const [r, rescue, purch, holdInfo, spot] = await Promise.all([
+    // Where this lead sits in the dial queue (11/11) comes after the card, never before it (Walt 11/11: "sometimes
+    // this extension takes forever to load": the queue waited on a cold server's full build).
+    api(`/api/dial-queue/spot/${st.leadId}`).then((spot) => { if (S === st && spot && !spot.pending) { st.spot = spot; render(); } }).catch(() => {});
+    const [r, rescue, purch, holdInfo] = await Promise.all([
       api(`/api/leads/${st.leadId}/brief${refresh ? "?refresh=1" : ""}`),
       api(`/api/leads/${st.leadId}/rescue`).catch(() => ({ draft: null })),
       api(`/api/leads/${st.leadId}/purchasing`).catch(() => null),
       api(`/api/leads/${st.leadId}/hold`).catch(() => null),
-      // Where this lead sits in the dial queue and what's next (11/11); never holds the card up.
-      api(`/api/dial-queue/spot/${st.leadId}`).catch(() => null),
     ]);
-    st.spot = spot;
     st.cooling = holdInfo && holdInfo.cooling ? holdInfo.cooling : null;
     st.sequences = holdInfo && holdInfo.sequences ? holdInfo.sequences : [];
     // The purchasing cycle as heard so far, and the one question to ask next (Walt 10/5).

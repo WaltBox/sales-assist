@@ -188,9 +188,20 @@ export async function cachedQueue(d: Deps, opts: { fresh?: boolean } = {}): Prom
   return value;
 }
 export function forgetQueue(repId: string) { queueMem.delete(repId); }
+const building = new Set<string>();
 /** Where one lead sits in the queue, and what's after it: for the side panel. */
 export async function queueSpot(d: Deps, leadId: string) {
-  const q = await cachedQueue(d);
+  // Never a wait for the card (Walt 11/11: "sometimes this extension takes forever to load"): a server that hasn't
+  // built this rep's queue yet answers now with nothing and builds it behind the answer, for the next open.
+  const hit = queueMem.get(d.rep.closeUserId);
+  if (!hit || Date.now() - hit.at >= QUEUE_MS) {
+    if (!building.has(d.rep.closeUserId)) {
+      building.add(d.rep.closeUserId);
+      background(cachedQueue(d).finally(() => building.delete(d.rep.closeUserId)), `queue for ${d.rep.email}`);
+    }
+    return { here: null, next: null, breaker: null, left: null, window: windowAt(localParts(d.now?.() ?? new Date(), d.rep.timeZone).hour), pending: true };
+  }
+  const q = hit.value;
   const here = q.cards.find((c) => c.leadId === leadId) ?? null;
   const next = await nextUp(d, q);
   const after = next.card && next.card.leadId !== leadId ? next.card : q.cards.find((c) => c.rank > (here?.rank ?? 0) && c.leadId !== leadId) ?? null;
