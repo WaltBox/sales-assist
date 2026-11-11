@@ -704,8 +704,9 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .hseg:last-child { border-right: 0; }
 .hseg b { font-family: var(--display); font-size: 28px; line-height: 1; font-weight: 700; }
 .hseg span { font-family: var(--label); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hseg.b-today { background: var(--red); color: #fff; }
-.hseg.b-week { background: #f4dfb0; color: #5c3b00; }
+.hseg.b-today, .hseg.b-expecting { background: var(--red); color: #fff; }
+.hseg.b-likely { background: #f0a53a; color: #3a2300; }
+.hseg.b-week, .hseg.b-dial { background: #f4dfb0; color: #5c3b00; }
 .hseg.b-emails { background: #f3f0e6; }
 .hseg.b-off { background: var(--paper-dark); color: var(--muted); }
 .hseg:hover { filter: brightness(.96); }
@@ -718,7 +719,25 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .hhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .hhead h2 { font-family: var(--display); font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
 .hhead > b { font-family: var(--display); font-size: 22px; color: var(--red); }
-#hb-week .hhead > b { color: var(--amber); }
+#hb-likely .hhead > b, #hb-dial .hhead > b { color: var(--amber); }
+.hcard.b-likely { border-left-color: #f0a53a; }
+.hcard.b-likely.on { background: #fff8ee; }
+.hrow.b-dial .hbar { background: var(--amber); }
+.dr-heat.b-likely { border-left-color: #f0a53a; background: #fff5e6; }
+.dr-heat.b-likely strong { color: #3a2300; }
+.dr-heat.b-dial { border-left-color: var(--amber); background: #fbf3df; }
+.dr-heat.b-dial strong { color: #5c3b00; }
+/* Who they are (11/11): the ICP tier in a box, the segment and state beside it. */
+.hfit { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.hfit b { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1.5px solid var(--ink); font-family: var(--display); font-size: 12px; font-weight: 700; color: var(--ink); background: var(--white); }
+.hfit.f-A b { background: var(--navy); border-color: var(--navy); color: var(--paper); }
+.hfit.f-B b { background: #e3e8ef; border-color: var(--navy); color: var(--navy); }
+.hfit.f-Avoid b { background: var(--paper-dark); border-color: var(--ink-line); color: var(--muted); }
+.hfit.f-Unknown b { border-style: dashed; color: var(--muted); }
+.hsegs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hsegs .label { margin-right: 4px; }
+.hsegchip .sub2 { font-size: 11px; }
+.hsegs-note { max-width: 860px; }
 .hcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
 .hcard { display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 12px 14px 11px; background: var(--white); border: 1.5px solid var(--ink); border-left: 7px solid var(--red); box-shadow: 4px 4px 0 var(--ink); font: inherit; color: var(--ink); cursor: pointer; min-width: 0; transition: transform .08s, box-shadow .08s; }
 .hcard:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--ink); }
@@ -736,7 +755,7 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
 .pips i { width: 7px; height: 7px; border: 1.5px solid var(--ink); background: transparent; }
 .pips i.on { background: var(--ink); }
 .hrows { display: flex; flex-direction: column; background: var(--white); border: 1.5px solid var(--ink); }
-.hrow { display: grid; grid-template-columns: 6px minmax(170px, 1.2fr) minmax(220px, 2.8fr) 46px 132px; gap: 14px; align-items: center; padding: 9px 14px 9px 0; border: 0; border-top: 1px solid var(--ink-line); background: none; font: inherit; font-size: 13.5px; text-align: left; color: var(--ink); cursor: pointer; }
+.hrow { display: grid; grid-template-columns: 6px minmax(170px, 1.2fr) minmax(220px, 2.8fr) minmax(46px, 190px) 132px; gap: 14px; align-items: center; padding: 9px 14px 9px 0; border: 0; border-top: 1px solid var(--ink-line); background: none; font: inherit; font-size: 13.5px; text-align: left; color: var(--ink); cursor: pointer; }
 .hrow:first-child { border-top: 0; }
 .hrow:hover, .hrow.on { background: #faf6ea; }
 .hrow > * { min-width: 0; }
@@ -767,7 +786,7 @@ button.dr-co[data-copied]::after { content: "Copied"; margin-left: 10px; font-fa
   .hseg b { font-size: 22px; }
   .hrow { grid-template-columns: 6px 1fr auto; row-gap: 2px; }
   .hrow .hwhy2 { grid-column: 2 / -1; grid-row: 2; white-space: normal; }
-  .hrow .pips { display: none; }
+  .hrow .pips, .hrow .hfit span { display: none; }
 }
 .hcard.done { opacity: .5; box-shadow: 2px 2px 0 var(--ink-line); border-left-color: var(--ink-line); }
 .hcard.done .hwhy { color: var(--muted); }

@@ -23,7 +23,7 @@ import { checkPassword, COMPANY_DOMAIN, hashPassword, isCompanyEmail, issueSessi
 import { hashToken, hosted, SupabaseStore, store, type StoredRep } from "./store.js";
 import { checkSpots, deleteMeme, memesFor, fillsOf, logLinkClick, logMemeEvent, memeCounts, MemeError, memeImage, memeLanding, memesSeen, memeStats, memeTrack, memeUrl, MEMES_DIR, pickMeme, renameMeme, SAMPLE_FILLS, setMemeGeneral, setMemeSkip, setMemeSpots, spotsFor, trackingOn, uploadMemes, type MemeStats } from "./memes.js";
 import { LineCardError, lineCardBounce, lineCardFor, sendLineCard } from "./linecard.js";
-import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, rfqTapAllowed, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
+import { finishTask, tasksView, accountsBoard, cachedBoard, advanceStatus, bustBoard, ensureRescueDrafts, heatSegments, type Account, markNotInterested, markRescue, markRfqReceived, RescueError, rescueFor, rfqTapAllowed, RFQ_STAGES, sendRescue, setRfqStatus, ShotDownError, undoNotInterested } from "./accounts.js";
 import { automationsView, createCampaign, createCampaignFrom, deleteCampaign, enrollCampaign, listCampaigns, previewCampaign, saveCampaign, setLiveCampaign, setDailyCap, slowToday, coolingFor, sentEmailsView, dropRescueDraft, hijackAccount, holdAccount, morningRun, sequencesWith, planBumps, setAutomations, skipAutomation, syncAutomations, setTestMode, sendBumpsNow, setNextEmail, stopScheduledFor } from "./automations.js";
 import { dayStats, mergeRfqTimelines, periodDetail, periodStats, rfqTimeline, weekStats } from "./stats.js";
 import { rejections, speakAsDeep } from "./validate.js";
@@ -694,6 +694,8 @@ export function createApp(appDeps: AppDeps) {
     if (!config.demo) background(markReachedFromCalls(d, board.accounts), "reached today");
     return board;
   }));
+  // The heat map's "like your RFQ senders" row (11/11): the segments of the companies whose RFQs you brought in.
+  app.get("/api/heat/segments", authed, route((_req, d) => heatSegments(d)));
   // RFQ potential: read every account's site now (or one account's again), and the rep's own answer after a call.
   app.post("/api/potential/refresh", authed, route(async (req, d) => {
     const board = await accountsBoard(d);

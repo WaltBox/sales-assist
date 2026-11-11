@@ -4,16 +4,16 @@ import { greetName } from "./followup.js";
 import { bumpBody, nameFromEmail } from "./linecard.js";
 import { bumpHtml, clicksFor, memeFor, newToken, rememberMeme, trackMeme, type Meme } from "./memes.js";
 import { cadenceFor, DEFAULT_SEQUENCE, isGenericAddress, sequencePicker, type Cadence, type Sequence } from "./cadence.js";
-import { heatFor, loadCallSignals, type CallSignal, type Heat } from "./heat.js";
+import { fitFor, heatFor, ICP_FIELD_NAMES, loadCallSignals, type CallSignal, type Heat, type IcpIds } from "./heat.js";
 import { adoptByRule, cardOwner, handoffRules, handoffsStrict } from "./handoff.js";
 import { stripDashes } from "./benchmark.js";
 import type { CloseCall, CloseLead, LeadEmail } from "./close.js";
 import { businessDaysAt, businessDaysBetween, formatLocal, isOutStatus, localParts, zonedTime } from "./rules.js";
 import { store, type Automation } from "./store.js";
-import { realAttachments, theirFiles } from "./stats.js";
+import { realAttachments, rfqTimeline, theirFiles } from "./stats.js";
 import { warmthFor, type Warmth } from "./warmth.js";
 import { loadProfiles, potentialFor, siteFromEmail, type Potential, type Profile } from "./potential.js";
-import { boardFromRecords, forgetRecords, leadFacts, rebuildRecord, saveRescan, type LeadFacts } from "./accountstate.js";
+import { boardFromRecords, forgetRecords, leadFacts, rebuildRecord, recordsFor, saveRescan, type LeadFacts, type RecordData } from "./accountstate.js";
 
 // The accounts page (Walt 9/26): one row per account we've sent the line card
 // to: where it stands, everything that's happened since, and what to do next.
@@ -524,11 +524,31 @@ export type RepContext = {
   autoOn: boolean; profiles: Record<string, Profile>; clicks: Record<string, string>; signals: Record<string, CallSignal[]>;
   taps: Map<string, string>; nextEmail: Record<string, string>; cooling: Record<string, { until: string | null; why: string | null }>;
   drafts: Record<string, string>; autos: Automation[];
+  /** The ICP pass's field ids in Close (11/11), for who each account is; null until the pass has made the fields. */
+  icp: IcpIds | null;
 };
+/**
+ * The ICP pass's custom fields, found once by name and kept in the team settings. Nothing found (the pass hasn't run
+ * in this Close org) is checked again after an hour, not on every build.
+ */
+const icpLooked = new Map<string, number>();
+export async function icpFieldIds(d: Deps): Promise<IcpIds | null> {
+  const saved = await store.getSetting<IcpIds>("team", "icpFieldIds").catch(() => null);
+  if (saved?.tier) return saved;
+  if (Date.now() - (icpLooked.get(d.rep.closeUserId) ?? 0) < 60 * 60_000) return null;
+  icpLooked.set(d.rep.closeUserId, Date.now());
+  const fields = await d.close.leadCustomFields().catch(() => []);
+  const id = (name: string) => fields.find((f) => f.name.trim().toLowerCase() === name)?.id ?? null;
+  const tier = id(ICP_FIELD_NAMES.tier);
+  if (!tier) return null;
+  const ids: IcpIds = { tier, segment: id(ICP_FIELD_NAMES.segment), buys: id(ICP_FIELD_NAMES.buys), why: id(ICP_FIELD_NAMES.why) };
+  await store.putSetting("team", "icpFieldIds", ids).catch(() => undefined);
+  return ids;
+}
 export async function loadRepContext(d: Deps, opts: { days?: number } = {}): Promise<RepContext> {
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
-  const [autos, drafts, autoOn, profiles, hand, rules, seq, clicks, signals, reviews, nextEmail, cooling] = await Promise.all([
+  const [autos, drafts, autoOn, profiles, hand, rules, seq, clicks, signals, reviews, nextEmail, cooling, icp] = await Promise.all([
     store.listAutomations(d.rep.closeUserId, since.toISOString()).catch(() => [] as Automation[]),
     rescueDrafts(d),
     store.getSetting<boolean>(d.rep.closeUserId, "autoBumps").then((v) => v === true).catch(() => false),
@@ -544,9 +564,10 @@ export async function loadRepContext(d: Deps, opts: { days?: number } = {}): Pro
     store.listReviews<{ callId: string | null; outcome: string; auto?: boolean }>(d.rep.closeUserId, since.toISOString()).catch(() => []),
     store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").then((v) => v ?? {}).catch(() => ({} as Record<string, string>)),
     store.getSetting<Record<string, { until: string | null; why: string | null }>>(d.rep.closeUserId, "cooling").then((v) => v ?? {}).catch(() => ({} as Record<string, { until: string | null; why: string | null }>)),
+    icpFieldIds(d),
   ]);
   const taps = new Map(reviews.filter((it) => it.callId && !it.auto).map((it) => [it.callId!, it.outcome]));
-  return { now, since, hand, rules, seq, autoOn, profiles, clicks, signals, taps, nextEmail, cooling, drafts, autos };
+  return { now, since, hand, rules, seq, autoOn, profiles, clicks, signals, taps, nextEmail, cooling, drafts, autos, icp };
 }
 
 /** An account built from one lead's facts: the Account, plus what the board's hand-off step needs to know about it. */
@@ -587,6 +608,7 @@ export function accountFromFacts(d: Deps, facts: LeadFacts, ctx: RepContext): Bu
     signals: ctx.signals[leadId] ?? [],
     bounceBodies: new Map(Object.entries(facts.bodies)),
     cooling: ctx.cooling[leadId] ?? null,
+    icp: ctx.icp,
   });
   return { account, cardSenderId: String(card.user_id ?? ""), repEmailed: emails.some((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === me) };
 }
@@ -735,6 +757,8 @@ export function buildAccount(x: {
   seq?: Sequence | null;
   /** What each call on this lead said, saved by the after-call step (10/14). */
   signals?: CallSignal[];
+  /** The ICP pass's field ids (11/11), to read who they are off the lead. */
+  icp?: IcpIds | null;
 }): Account {
   const { d, now, card, lead } = x;
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
@@ -981,11 +1005,13 @@ export function buildAccount(x: {
     clickedAt, openDays, lastOutAt: lastOut, rfq: rfq ? { at: rfq.at, quotedAt: rfq.quotedAt } : null,
     paused: warmth.paused ? { kind: warmth.paused.kind, until: warmth.paused.until, why: warmth.paused.why } : seen === "bounced" ? { kind: "bounced", until: null, why: "The email bounced." } : null,
     tier: potential?.tier ?? null, rfqTiming: x.profile?.heard?.rfq_timing?.value ?? null,
+    fit: fitFor(lead, x.icp ?? null, potential?.tier ?? null),
   });
   // They gave a date, or said no: no call until then, whatever else asked for one (10/14: "so we don't accidentally call them").
   if (heat.band === "later" || heat.band === "off") acct.callAsk = null;
-  // "Call today" goes to the top of Calls to make, with the reason as the label.
-  if (heat.band === "today" && !rfq && ["bump", "waiting", "scheduled"].includes(acct.next.kind) && !(acct.next.kind === "bump" && /quote/i.test(acct.next.label))) {
+  // Expecting an RFQ, or likely to send one (11/11): the top of Calls to make, with the reason as the label, in the
+  // heat map's own order (fit and what they did, through the score).
+  if ((heat.likelihood === "expecting" || heat.likelihood === "likely") && !rfq && ["bump", "waiting", "scheduled"].includes(acct.next.kind) && !(acct.next.kind === "bump" && /quote/i.test(acct.next.label))) {
     acct.callAsk = { kind: "heat", rank: -1, score: heat.score, due: heat.lastSignal ?? now.toISOString(), label: heat.headline, detail: heat.promise?.quote ? `${heat.reason} They said: "${heat.promise.quote}"` : heat.reason };
   }
   return { ...acct, warmth, heat, section: sectionOf(acct) };
@@ -1247,4 +1273,46 @@ export async function sendRescue(d: Deps, leadId: string, draftId: string) {
   await d.close.sendDraft(draftId);
   forgetBoard(d.rep.closeUserId);
   return { sent: true, to: e.to[0] ?? null };
+}
+
+
+// ---------- "Like your RFQ senders" (Walt 11/11): what the companies that sent you RFQs have in common ----------
+
+export type SegmentRow = { segment: string; rfqs: number; companies: string[]; onBoard: number; likely: number };
+/**
+ * The segments of the companies whose RFQs this rep brought in (the RFQ line, not Close's status: the 10/27 bulk move
+ * inflated those), with how many accounts on the board sit in each. From the records, so no Close reads; an RFQ
+ * sender with no record shows as "not read yet".
+ */
+export async function heatSegments(d: Deps): Promise<{ segments: SegmentRow[]; senders: number; unread: number; icp: boolean }> {
+  const [line, rows, ctx] = await Promise.all([rfqTimeline(d, { savedOk: true }).catch(() => null), recordsFor(d).catch(() => new Map()), loadRepContext(d)]);
+  const senders = new Map<string, string>(); // lead → company
+  for (const day of line?.days ?? []) for (const a of day.accounts) senders.set(a.leadId, a.company);
+  const segOf = (leadId: string) => {
+    const data = (rows.get(leadId)?.data ?? null) as RecordData | null;
+    return data ? fitFor(data.facts.lead, ctx.icp, null) : null;
+  };
+  const by = new Map<string, SegmentRow>();
+  let unread = 0;
+  for (const [leadId, company] of senders) {
+    const fit = segOf(leadId);
+    const seg = fit?.segment ?? (fit?.tier && fit.tier !== "Unknown" ? `tier ${fit.tier}` : null);
+    if (!seg) { unread++; continue; }
+    const row = by.get(seg) ?? { segment: seg, rfqs: 0, companies: [], onBoard: 0, likely: 0 };
+    row.rfqs++;
+    if (!row.companies.includes(company)) row.companies.push(company);
+    by.set(seg, row);
+  }
+  // How many of the rep's accounts (the board, RFQ senders aside) sit in each segment, and how many are likely.
+  for (const r of rows.values()) {
+    const data = r.data as RecordData | null;
+    if (!data?.account || senders.has(r.leadId)) continue;
+    const fit = fitFor(data.facts.lead, ctx.icp, data.account.potential?.tier ?? null);
+    const seg = fit.segment ?? (fit.tier !== "Unknown" ? `tier ${fit.tier}` : null);
+    const row = seg ? by.get(seg) : null;
+    if (!row) continue;
+    row.onBoard++;
+    if (data.account.heat && ["expecting", "likely"].includes(data.account.heat.likelihood)) row.likely++;
+  }
+  return { segments: [...by.values()].sort((a, b) => b.rfqs - a.rfqs || b.onBoard - a.onBoard), senders: senders.size, unread, icp: !!ctx.icp };
 }

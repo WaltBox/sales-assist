@@ -23,6 +23,7 @@ const state = {
   heatPms: false, // heat map: only accounts where the PMs or subs order their own materials (Walt 10/7)
   heatToday: null, // what's happened today on the heat map: "none" | "emailed" | "called" | "reached" | "wrote" | null
   heatQ: "", // search on the heat map: company, contact, email
+  heatSeg: null, // "like your RFQ senders" filter on the heat map: a segment key, or null for all
   acctQ: "", // search on the accounts page
   cool: {}, // leadId -> cooling state for the drawer ({ until, why } | null | "loading")
   potBusy: false, // reading sites / saving an answer
@@ -331,7 +332,7 @@ function topBar() {
       k === "tasks" && state.tasks ? el("span", { class: `navc mono${state.tasks.today.length ? " hotc" : ""}`, text: state.tasks.today.length }) : null,
       // Companies that have sent an RFQ, the same 32 as the RFQs page (10/12), not just the ones on the board.
       k === "rfqs" && (state.teamRfq?.line || state.rfqLine || state.board) ? el("span", { class: "navc mono", text: state.teamRfq?.line ? state.teamRfq.line.companies : state.rfqLine ? state.rfqLine.companies : state.board.accounts.filter((a) => a.rfq).length }) : null,
-      k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => a.heat && a.heat.band === "today" && !a.rfq).length }) : null,
+      k === "heat" && state.board ? el("span", { class: "navc mono hotc", text: state.board.accounts.filter((a) => a.heat && ["expecting", "likely"].includes(a.heat.likelihood || "") && !a.rfq).length }) : null,
     ]))),
     sideFolded ? el("div", { class: "who" }, [
       el("button", { class: "avatar", title: `${state.me ? state.me.rep.name : ""} · open the menu for your line, phone and sign out`, text: initials || "…", onclick: foldSide }),
@@ -792,12 +793,15 @@ async function sayPotential(a, said) {
 
 // ---------- the heat map, v3 (Walt 10/14: "a cool and coherent UI that looks sick") ----------
 // One question: who is most likely to send an RFQ soon, and why. The same order drives Calls to make.
+// v4 (Walt 11/11: "who is likely to give an RFQ, then who do I call next"): two things per account, who they are (fit,
+// from the ICP pass's fields in Close) and what they've done (trusted signals), and a band by how likely an RFQ is.
 const HEAT_BANDS = [
-  ["today", "Call today", "Most likely to send an RFQ now"],
-  ["week", "This week", "Warm, nothing due today"],
-  ["emails", "Emails only", "The sequence carries them for now"],
+  ["expecting", "Expecting", "They promised one, or the day they named is here"],
+  ["likely", "Likely", "They talked, wrote back or clicked lately; fit orders them"],
+  ["dial", "Worth the dial", "An A-fit shop you haven't reached: this is where the dials go"],
+  ["emails", "Emails carry it", "Nothing from them yet"],
   ["later", "Later", "They gave a date. A task in Close has them, and they're back on the map that day"],
-  ["off", "Off", "Said no, or stop"],
+  ["off", "Off", "Not a fit, said no, or the RFQ is in"],
 ];
 const HEAT_CHIPS = [
   ["promised", "Promised", (t) => t.startsWith("promised")],
@@ -809,8 +813,28 @@ const HEAT_CHIPS = [
 ];
 const PIPS = { steady: 4, project: 3, occasional: 2, unknown: 1 };
 const pips = (a) => { const n = PIPS[potTier(a)] || 1; return el("span", { class: "pips", title: `How much they buy: ${POT[potTier(a)][0]}`, "aria-label": `How much they buy: ${POT[potTier(a)][0]}` }, Array.from({ length: 4 }, (_, i) => el("i", { class: i < n ? "on" : "" }))); };
-const heatBand = (a) => (a.heat ? a.heat.band : "emails");
-const BAND_W = { today: "hot", week: "warm", emails: "cool", later: "cool", off: "cold" };
+const heatBand = (a) => (a.heat ? a.heat.likelihood || a.heat.band : "emails");
+const BAND_W = { expecting: "hot", likely: "hot", dial: "warm", today: "hot", week: "warm", emails: "cool", later: "cool", off: "cold" };
+// The ICP pass's segment names, said plainly.
+const SEGMENT_WORDS = {
+  "asme-vessel-skid": "Vessel & skid fab", "heat-exchanger": "Heat exchangers", "structural-steel": "Structural steel", "piping-contractor-shop": "Piping, own shop",
+  "equipment-oem": "Equipment OEM", "mechanical-contractor": "Mechanical", "electrical-contractor": "Electrical", "general-contractor": "GC", "plant-mro": "Plant MRO",
+  "water-wastewater": "Water", "machine-shop": "Machine shop", distributor: "Distributor", "service-only": "Service only", other: "Other", unknown: "Unknown",
+};
+const segWord = (k) => (!k ? "" : SEGMENT_WORDS[k] || (k.startsWith("tier ") ? `Tier ${k.slice(5)}` : k.replace(/-/g, " ")));
+const fitKey = (a) => (a.heat && a.heat.fit ? a.heat.fit.segment || (a.heat.fit.tier !== "Unknown" ? `tier ${a.heat.fit.tier}` : null) : null);
+/** Who they are, in one pill: the tier, then the segment and state when the ICP pass has read them. */
+const fitPill = (a) => {
+  const f = a.heat && a.heat.fit;
+  if (!f) return null;
+  const words = [f.source === "icp" ? segWord(f.segment) : f.source === "site" ? "from their site" : "not read yet", f.state].filter(Boolean).join(" · ");
+  return el("span", { class: `hfit f-${f.tier}`, title: f.why || (f.source === "none" ? "The ICP pass hasn't read this company yet" : "") }, [el("b", { text: f.tier === "Unknown" ? "?" : f.tier }), words ? el("span", { text: words }) : null]);
+};
+function loadHeatSegments() {
+  if (state.heatSegs !== undefined) return;
+  state.heatSegs = null;
+  api("/api/heat/segments").then((r) => { state.heatSegs = r; render(); }).catch((e) => { state.heatSegs = { error: e.message, segments: [] }; });
+}
 
 function heatList() {
   const q = (state.heatQ || "").trim().toLowerCase();
@@ -821,10 +845,12 @@ function heatList() {
     .filter((a) => a.heat && (!a.rfq || a.heat.tags.includes("repeat")))
     .filter((a) => !q || [a.company, a.contact.name, a.contact.email].some((v) => (v || "").toLowerCase().includes(q)))
     .filter((a) => !chip || a.heat.tags.some(chip[2]))
+    .filter((a) => !state.heatSeg || fitKey(a) === state.heatSeg)
     .sort((x, y) => order(x) - order(y) || y.heat.score - x.heat.score);
 }
 
 function heatPage() {
+  loadHeatSegments();
   const rows = heatList();
   const all = ((state.board && state.board.accounts) || []).filter((a) => a.heat && (!a.rfq || a.heat.tags.includes("repeat")));
   const by = Object.fromEntries(HEAT_BANDS.map(([k]) => [k, rows.filter((a) => heatBand(a) === k)]));
@@ -835,8 +861,8 @@ function heatPage() {
   const tags = (a) => el("span", { class: "htags" }, a.heat.tags.slice(0, 3).map((t) => el("span", { class: "htag", text: t })));
   // Already reached out today: it stays, faded, so you can see what's left (10/14).
   const doneToday = (a) => { const t = todayState(a); return t.reached ? "Reached today" : t.called ? "Called today" : null; };
-  const card = (a) => el("button", { class: `hcard${pick && pick.leadId === a.leadId ? " on" : ""}${doneToday(a) ? " done" : ""}`, onclick: () => open(a) }, [
-    el("span", { class: "htop" }, [el("span", { class: "co", text: a.company }), doneToday(a) ? el("span", { class: "hdone", text: doneToday(a) }) : pips(a)]),
+  const card = (a) => el("button", { class: `hcard b-${heatBand(a)}${pick && pick.leadId === a.leadId ? " on" : ""}${doneToday(a) ? " done" : ""}`, onclick: () => open(a) }, [
+    el("span", { class: "htop" }, [el("span", { class: "co", text: a.company }), doneToday(a) ? el("span", { class: "hdone", text: doneToday(a) }) : fitPill(a)]),
     el("span", { class: "hwhy", text: a.heat.reason }),
     a.heat.promise && a.heat.promise.quote ? el("span", { class: "hquote", text: `“${a.heat.promise.quote}”` }) : null,
     tags(a),
@@ -846,7 +872,7 @@ function heatPage() {
     el("i", { class: "hbar", "aria-hidden": "true" }),
     el("span", { class: "co", text: a.company }),
     el("span", { class: "hwhy2", text: a.heat.reason }),
-    pips(a),
+    fitPill(a) || pips(a),
     tel(a) || el("span"),
   ]);
   const meta = (k) => HEAT_BANDS.find(([b]) => b === k);
@@ -856,29 +882,44 @@ function heatPage() {
     list.length > 60 && !state.heatOpen[`${k}All`] ? el("button", { class: "linkbtn small3", text: `Show all ${list.length}`, onclick: () => { state.heatOpen[`${k}All`] = true; render(); } }) : null,
   ]);
   const total = Math.max(1, all.length);
+  // "Like your RFQ senders": the segments of the companies whose RFQs you brought in, and how many of your accounts match.
+  const segs = state.heatSegs;
+  const segRow = !segs ? el("p", { class: "sub2 hsegs-note", text: "Reading which kinds of company have sent you RFQs…" })
+    : segs.error ? null
+    : !segs.senders ? el("p", { class: "sub2 hsegs-note", text: "No RFQs on your line yet. Once some come in, this row shows what those companies have in common." })
+    : !segs.icp || !segs.segments.length ? el("p", { class: "sub2 hsegs-note", text: `${segs.senders} companies have sent you RFQs, but the ICP pass hasn't read them yet, so there's nothing to match on. Run it in Close and this fills in.` })
+    : el("div", { class: "hsegs" }, [
+      el("span", { class: "label", text: "Like your RFQ senders" }),
+      ...segs.segments.map((sg) => el("button", { class: `hchip hsegchip${state.heatSeg === sg.segment ? " on" : ""}`, title: `${sg.companies.slice(0, 8).join(", ")}${sg.companies.length > 8 ? "…" : ""}`, onclick: () => { state.heatSeg = state.heatSeg === sg.segment ? null : sg.segment; state.heatPick = null; render(); } }, [
+        segWord(sg.segment), el("b", { class: "mono", text: `${sg.rfqs} RFQ${sg.rfqs === 1 ? "" : "s"}` }), el("span", { class: "sub2", text: `${sg.onBoard} of yours` }),
+      ])),
+      segs.unread ? el("span", { class: "sub2", text: `${segs.unread} sender${segs.unread === 1 ? "" : "s"} not read yet` }) : null,
+    ]);
+  const section = (k, intro, list, asCards) => el("div", { id: `hb-${k}`, class: "hsec" }, [
+    el("div", { class: "hhead" }, [el("h2", { text: meta(k)[1] }), el("b", { class: "mono", text: list.filter((a) => !doneToday(a)).length }), list.some(doneToday) ? el("span", { class: "sub2", text: `+ ${list.filter(doneToday).length} done today ·` }) : null, el("span", { class: "sub2", text: intro })]),
+    !list.length ? el("p", { class: "empty", text: "Nobody here." })
+      : asCards ? el("div", { class: "hcards" }, [...list.filter((a) => !doneToday(a)), ...list.filter(doneToday)].map(card))
+      : el("div", { class: "hrows" }, (state.heatOpen[`${k}All`] ? list : list.slice(0, 40)).map(row)),
+    !asCards && list.length > 40 && !state.heatOpen[`${k}All`] ? el("button", { class: "linkbtn small3", text: `Show all ${list.length}`, onclick: () => { state.heatOpen[`${k}All`] = true; render(); } }) : null,
+  ]);
   return el("section", { class: `heat hv3${pick ? " drawer-open" : ""}` }, [
     el("div", { class: "head pagehead" }, [
       el("h1", { class: "ptitle", text: "Heat map" }),
       el("input", { class: "heatq", type: "search", placeholder: "Find an account, a name, an email", value: state.heatQ, oninput: (e) => { state.heatQ = e.target.value; state.heatPick = null; renderKeepFocus(".heatq"); } }),
     ]),
-    el("p", { class: "sub2 wrap hlede", text: "Who's most likely to send an RFQ soon, from what they said and did: promises, the day they said work comes, questions in their replies, clicks, real conversations and how much they buy. Never from how many times you've called. The same order runs Calls to make." }),
+    el("p", { class: "sub2 wrap hlede", text: "Who's likely to send an RFQ, then who to call. Two things per account: who they are (the ICP tier and segment from Close: A is a Gulf fab shop with a buyer, Avoid buys per project) and what they've done (a promise, a real conversation, a question in a reply, a click, a past quote). Never how many times you've called. The same order runs Calls to make." }),
     !state.board ? el("p", { class: "loading", text: "Reading your accounts from Close…" }) : el("div", { class: "hstrip" }, HEAT_BANDS.map(([k, label]) => el("button", {
-      class: `hseg b-${k}`, style: `flex-grow:${Math.max(counts[k], total * 0.07).toFixed(1)}`, title: `${counts[k]} · ${label}`,
+      class: `hseg b-${k}`, style: `flex-grow:${Math.max(counts[k], total * 0.11).toFixed(1)}`, title: `${counts[k]} · ${label}`,
       onclick: () => { if (k === "emails" || k === "later" || k === "off") { state.heatOpen[k] = true; render(); } document.getElementById(`hb-${k}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); },
     }, [el("b", { class: "mono", text: counts[k] }), el("span", { text: label })]))),
+    segRow,
     el("div", { class: "hchips" }, [
       el("button", { class: `hchip${!state.heatTag ? " on" : ""}`, onclick: () => { state.heatTag = null; render(); } }, ["All"]),
       ...HEAT_CHIPS.map(([k, label, test]) => el("button", { class: `hchip${state.heatTag === k ? " on" : ""}`, onclick: () => { state.heatTag = state.heatTag === k ? null : k; state.heatPick = null; render(); } }, [label, el("b", { class: "mono", text: all.filter((a) => a.heat.tags.some(test)).length })])),
     ]),
-    el("div", { id: "hb-today", class: "hsec" }, [
-      el("div", { class: "hhead" }, [el("h2", { text: "Call today" }), el("b", { class: "mono", text: by.today.filter((a) => !doneToday(a)).length }), by.today.some(doneToday) ? el("span", { class: "sub2", text: `+ ${by.today.filter(doneToday).length} done today ·` }) : null, el("span", { class: "sub2", text: "Most likely to send an RFQ now. The reason is in red." })]),
-      by.today.length ? el("div", { class: "hcards" }, [...by.today.filter((a) => !doneToday(a)), ...by.today.filter(doneToday)].map(card)) : el("p", { class: "empty", text: "Nobody's red-hot right now. Work This week." }),
-    ]),
-    el("div", { id: "hb-week", class: "hsec" }, [
-      el("div", { class: "hhead" }, [el("h2", { text: "This week" }), el("b", { class: "mono", text: by.week.length }), el("span", { class: "sub2", text: "Warm: talked recently, said the next one is yours, or wrote back." })]),
-      by.week.length ? el("div", { class: "hrows" }, (state.heatOpen.weekAll ? by.week : by.week.slice(0, 40)).map(row)) : el("p", { class: "empty", text: "Nobody here." }),
-      by.week.length > 40 && !state.heatOpen.weekAll ? el("button", { class: "linkbtn small3", text: `Show all ${by.week.length}`, onclick: () => { state.heatOpen.weekAll = true; render(); } }) : null,
-    ]),
+    section("expecting", "They promised an RFQ, or the day they named is here. Chase it.", by.expecting, true),
+    section("likely", "Something from them lately. A-fit shops first.", by.likely, true),
+    section("dial", "A-fit shops you haven't reached, or not in a month. Dial these.", by.dial, false),
     el("div", { id: "hb-emails" }, [folded("emails", by.emails)]),
     el("div", { id: "hb-later" }, [folded("later", by.later.slice().sort((x, y) => (x.heat.expected || "").localeCompare(y.heat.expected || "")))]),
     el("div", { id: "hb-off" }, [folded("off", by.off)]),
@@ -1080,7 +1121,7 @@ function emailThread(a) {
 
 function heatDrawer(a, rows) {
   const i = rows.findIndex((r) => r.leadId === a.leadId);
-  const w = { ...a.warmth, bucket: a.heat ? BAND_W[a.heat.band] : a.warmth.bucket }, c = a.contact;
+  const w = { ...a.warmth, bucket: a.heat ? BAND_W[heatBand(a)] || BAND_W[a.heat.band] : a.warmth.bucket }, c = a.contact;
   const goTo = (j) => { if (rows[j]) { state.heatPick = rows[j].leadId; render(); document.querySelector(".hcard.on, .hrow.on")?.scrollIntoView({ block: "nearest" }); } };
   const close = () => { state.heatPick = null; render(); };
   return el("aside", { class: `drawer w-${w.bucket}`, role: "dialog", "aria-label": a.company }, [
@@ -1088,9 +1129,11 @@ function heatDrawer(a, rows) {
       el("span", { class: "mono muted", text: `${i + 1} of ${rows.length}` }),
       el("button", { class: "linkbtn", text: "Close", onclick: close }),
     ]),
-    a.heat ? el("div", { class: `dr-heat b-${a.heat.band}` }, [
-      el("span", { class: "label", text: HEAT_BANDS.find(([k]) => k === a.heat.band)[1] }),
+    a.heat ? el("div", { class: `dr-heat b-${heatBand(a)}` }, [
+      el("span", { class: "label", text: (HEAT_BANDS.find(([k]) => k === heatBand(a)) || ["", "Heat"])[1] }),
       el("strong", { text: a.heat.reason }),
+      fitPill(a),
+      a.heat.fit && a.heat.fit.why ? el("span", { class: "sub2", text: a.heat.fit.why }) : null,
       a.heat.promise && a.heat.promise.quote ? el("span", { class: "hquote", text: `${a.heat.who || "They"} said: “${a.heat.promise.quote}”` }) : null,
       a.heat.tags.length ? el("span", { class: "htags" }, a.heat.tags.map((t) => el("span", { class: "htag", text: t }))) : null,
     ]) : el("span", { class: `warmth w-${w.bucket} big` }, [el("i", { "aria-hidden": "true" }), `${HEAT[w.bucket][0]} · ${w.score}`]),

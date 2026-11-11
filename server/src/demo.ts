@@ -42,7 +42,8 @@ export class FakeClose implements Close {
   names = new Map<string, string>();
   /** A lead's status once something changed it (Shot down, the funnel sync), so it reads back like Close. */
   leadStatus = new Map<string, string>();
-  async lead(id?: string) { return { ...structuredClone(this.lead_), ...(id ? { id } : {}), ...(id && this.names.has(id) ? { display_name: this.names.get(id)! } : {}), ...(id && this.leadStatus.has(id) ? { status_label: this.leadStatus.get(id)! } : {}) }; }
+  // Fields written with updateLead (custom fields, the ICP pass's tier and segment) read back on that lead, like Close.
+  async lead(id?: string) { return { ...structuredClone(this.lead_), ...(id ? { id } : {}), ...(id && this.names.has(id) ? { display_name: this.names.get(id)! } : {}), ...(id && this.leadStatus.has(id) ? { status_label: this.leadStatus.get(id)! } : {}), ...(id ? structuredClone(this.leadFields_[id] ?? {}) : {}) }; }
   async callOutcomes() { return new Map<string, string>(); }
   async leadName(id: string) { return this.names.get(id) ?? this.lead_.display_name; }
   async leadStatuses() { return statuses; }

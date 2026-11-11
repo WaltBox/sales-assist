@@ -113,3 +113,40 @@ test("an out-of-office reply isn't someone waiting on you (Alexander Mechanical,
   assert.ok(!h.tags.includes("waiting on you"));
   assert.notEqual(h.band, "today");
 });
+
+// ---------- v4 (Walt 11/11): who they are, from the ICP pass, and a band by how likely an RFQ is ----------
+
+test("fit comes from the ICP fields on the lead in Close, else the site read, else unknown", async () => {
+  const { fitFor } = await import("../src/heat.js");
+  const ids = { tier: "cf_tier", segment: "cf_seg", buys: "cf_buys", why: "cf_why" };
+  const lead = { addresses: [{ state: "TX" }], "custom.cf_tier": "A", "custom.cf_seg": "asme-vessel-skid", "custom.cf_buys": "purchasing-desk", "custom.cf_why": "ASME shop in Houston with a buyer" } as never;
+  assert.deepEqual(fitFor(lead, ids, "occasional"), { tier: "A", segment: "asme-vessel-skid", buysThrough: "purchasing-desk", state: "TX", why: "ASME shop in Houston with a buyer", source: "icp" });
+  assert.deepEqual(fitFor({ addresses: [] } as never, ids, "steady"), { tier: "B", segment: null, buysThrough: null, state: null, why: null, source: "site" }, "no ICP read yet: the site read's tier");
+  assert.equal(fitFor({ "custom.cf_tier": "Unknown" } as never, ids, "project").tier, "C");
+  assert.equal(fitFor(null, null, null).source, "none");
+});
+
+test("likelihood: a promise is expecting; a recent talk, reply or click is likely; an A-fit shop with nothing yet is worth the dial; Avoid is off unless they promised", () => {
+  const A = { tier: "A", segment: "asme-vessel-skid", buysThrough: "purchasing-desk", state: "TX", why: null, source: "icp" } as const;
+  const avoid = { tier: "Avoid", segment: "electrical-contractor", buysThrough: "pm-per-project", state: "TX", why: "electrical contractor, PMs buy per job", source: "icp" } as const;
+  const sig = (at: string, extra: Partial<Parameters<typeof heatFor>[0]["signals"][number]> = {}) => ({ at, callId: "c", tapped: "reached_buyer", buyer: true, promised: false, nextOne: false, softYes: false, noneNow: false, benchmark: false, expectedWhen: null, who: "Norma", summary: null, ...extra });
+  const quiet = heatFor(base({ fit: A }));
+  assert.equal(quiet.likelihood, "dial");
+  assert.match(quiet.headline, /an A-fit shop you haven't reached/);
+  assert.equal(quiet.fit?.tier, "A");
+  assert.equal(heatFor(base({ fit: { ...A, tier: "B" } })).likelihood, "emails", "a B with nothing yet: the emails carry it");
+  assert.equal(heatFor(base()).likelihood, "emails");
+  assert.equal(heatFor(base({ fit: A, signals: [sig("2026-10-14T13:00:00Z", { promised: true })] })).likelihood, "expecting", "a fresh promise is expecting, however the old band reads it");
+  assert.equal(heatFor(base({ fit: A, signals: [sig("2026-10-01T13:00:00Z")] })).likelihood, "likely", "talked two weeks ago");
+  assert.equal(heatFor(base({ fit: A, signals: [sig("2026-08-01T13:00:00Z")] })).likelihood, "dial", "talked ten weeks ago: back to worth the dial");
+  assert.equal(heatFor(base({ fit: { ...A, tier: "C" }, clickedAt: "2026-10-13T14:00:00Z" })).likelihood, "likely");
+  assert.equal(heatFor(base({ fit: { ...A, tier: "C" }, replies: [{ at: "2026-10-13T15:00:00Z", text: "What is the thickest galvanized plate you carry?" }] })).likelihood, "likely");
+  // Fit orders inside a band: the same click on an A outranks it on a C.
+  assert.ok(heatFor(base({ fit: A, clickedAt: "2026-10-13T14:00:00Z" })).score > heatFor(base({ fit: { ...A, tier: "C" }, clickedAt: "2026-10-13T14:00:00Z" })).score);
+  const off = heatFor(base({ fit: avoid, clickedAt: "2026-10-13T14:00:00Z" }));
+  assert.equal(off.likelihood, "off");
+  assert.deepEqual(off.tags, ["avoid"]);
+  assert.match(off.reason, /Not a fit: electrical contractor/);
+  assert.equal(heatFor(base({ fit: avoid, signals: [sig("2026-10-12T13:00:00Z", { promised: true })] })).likelihood, "expecting", "an Avoid that promised one still counts");
+  assert.equal(heatFor(base({ fit: avoid, rfq: { at: "2026-09-20T15:00:00Z", quotedAt: "2026-09-22T15:00:00Z" } })).likelihood, "likely", "quoted before: a repeat, whatever the site says");
+});

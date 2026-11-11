@@ -19,8 +19,28 @@ import { store } from "./store.js";
  * Each account gets a band (call today, this week, emails only, off) and one line in plain words.
  */
 export type Band = "today" | "week" | "emails" | "later" | "off";
+/**
+ * v4 (Walt 11/11: "who is likely to give an RFQ, then who do I call next"): two things per account, who they are
+ * (fit, from the ICP pass's fields in Close) and what they've done (readiness, from trusted signals), and a band by
+ * how likely an RFQ is. The call list follows the same order.
+ */
+export type FitTier = "A" | "B" | "C" | "Avoid" | "Unknown";
+export type Fit = {
+  tier: FitTier;
+  /** The ICP pass's segment ("asme-vessel-skid", "structural-steel"…) when it has read them. */
+  segment: string | null;
+  buysThrough: string | null;
+  state: string | null;
+  why: string | null;
+  /** icp: the website pass wrote it to Close; site: the app's older site read (how much they buy); none: not read yet. */
+  source: "icp" | "site" | "none";
+};
+export type Likelihood = "expecting" | "likely" | "dial" | "emails" | "later" | "off";
 export type Heat = {
   band: Band;
+  /** The v4 band (11/11): expecting, likely, worth the dial, emails carry it, later, off. */
+  likelihood: Likelihood;
+  fit: Fit | null;
   /** For ordering inside a band only; never shown. */
   score: number;
   /** One line, plain words: why they're here. */
@@ -155,7 +175,32 @@ export type HeatIn = {
   tier: string | null;
   /** "When they send them", from the purchasing answers ("Mondays"). */
   rfqTiming: string | null;
+  /** Who they are (11/11): the ICP tier and segment from Close, or the site read when the pass hasn't reached them. */
+  fit?: Fit | null;
 };
+
+/** The ICP pass's custom field ids in Close (found by name: icp_tier, segment, buys_through, icp_why). */
+export type IcpIds = { tier: string; segment: string | null; buys: string | null; why: string | null };
+export const ICP_FIELD_NAMES = { tier: "icp_tier", segment: "segment", buys: "buys_through", why: "icp_why" } as const;
+const SITE_TIER: Record<string, FitTier> = { steady: "B", project: "C", occasional: "C" };
+/** Who they are, from the lead in Close: the ICP fields when the pass has written them, else the app's site read. */
+export function fitFor(lead: { addresses?: Array<{ state?: string }>; [k: `custom.${string}`]: unknown } | null, ids: IcpIds | null, siteTier: string | null | undefined): Fit {
+  const state = lead?.addresses?.[0]?.state ?? null;
+  const v = (id: string | null | undefined) => { const x = id && lead ? lead[`custom.${id}`] : null; return typeof x === "string" && x ? x : null; };
+  const tier = v(ids?.tier);
+  if (tier && ["A", "B", "C", "Avoid"].includes(tier)) return { tier: tier as FitTier, segment: v(ids?.segment), buysThrough: v(ids?.buys), state, why: v(ids?.why), source: "icp" };
+  if (siteTier && SITE_TIER[siteTier]) return { tier: SITE_TIER[siteTier], segment: null, buysThrough: null, state, why: null, source: "site" };
+  return { tier: "Unknown", segment: null, buysThrough: null, state, why: null, source: "none" };
+}
+/** The ICP pass's segment names, said plainly in a reason line. */
+export const SEGMENT_WORDS: Record<string, string> = {
+  "asme-vessel-skid": "vessel and skid fab", "heat-exchanger": "heat exchanger shop", "structural-steel": "structural steel fab", "piping-contractor-shop": "piping contractor with a shop",
+  "equipment-oem": "equipment OEM", "mechanical-contractor": "mechanical contractor", "electrical-contractor": "electrical contractor", "general-contractor": "general contractor", "plant-mro": "plant MRO",
+  "water-wastewater": "water and wastewater", "machine-shop": "machine shop", distributor: "distributor", "service-only": "service only", other: "other", unknown: "unknown",
+};
+export const segmentWords = (k: string | null | undefined) => (k ? SEGMENT_WORDS[k] ?? k.replace(/-/g, " ") : null);
+/** Fit's part of the score: an A shop outranks a B with the same signal; Avoid sinks. Unknown is "not read yet", a nudge above C. */
+const FIT_BONUS: Record<FitTier, number> = { A: 30, B: 15, C: 0, Unknown: 5, Avoid: -20 };
 
 const firstName = (n: string | null | undefined) => {
   const w = (n ?? "").trim().split(/\s+/)[0] ?? "";
@@ -183,11 +228,12 @@ export function heatFor(x: HeatIn): Heat {
 
   // An RFQ in is the RFQs page's job (10/14: Kwan Wo's and ThermaPlate's RFQ emails read as "asked you"). A quote two
   // weeks old with nothing since: ask for the next one.
+  const fit = x.fit ?? null;
   if (x.rfq && !(x.rfq.quotedAt && daysSince(x.rfq.quotedAt) >= 14)) {
-    return { band: "off", score: 0, reason: x.rfq.quotedAt ? `Quoted ${short(x.rfq.quotedAt, tz)}: on the RFQs page.` : `RFQ in ${short(x.rfq.at, tz)}: on the RFQs page.`, headline: `${co}: RFQ in`, tags: ["rfq in"], who, expected: null, lastSignal: x.rfq.at };
+    return { band: "off", likelihood: "off", fit, score: 0, reason: x.rfq.quotedAt ? `Quoted ${short(x.rfq.quotedAt, tz)}: on the RFQs page.` : `RFQ in ${short(x.rfq.at, tz)}: on the RFQs page.`, headline: `${co}: RFQ in`, tags: ["rfq in"], who, expected: null, lastSignal: x.rfq.at };
   }
   if (x.paused && (x.paused.kind === "out" || x.paused.kind === "no_emails")) {
-    return { band: "off", score: 0, reason: x.paused.why, headline: `${co}: off the list`, tags: ["said no"], who, expected: null, lastSignal: null };
+    return { band: "off", likelihood: "off", fit, score: 0, reason: x.paused.why, headline: `${co}: off the list`, tags: ["said no"], who, expected: null, lastSignal: null };
   }
 
   // A promise, newest first, unless an RFQ came in after it. Their own words can make it softer (10/14: "when stuff
@@ -214,6 +260,11 @@ export function heatFor(x: HeatIn): Heat {
     else cands.push({ score: 40, reason: `${who ?? "They"} promised an RFQ on ${short(promisedAt, tz)} and never sent it. Worth a fresh ask.`, headline: `Ask ${who ?? co} again for the RFQ`, tag: "promised", at: promisedAt });
   }
 
+  // Buys per project, or a segment that never sent a usable RFQ (the ICP pass, 11/10): off the map, unless they've
+  // promised one or we've quoted them before. Not worth the dial otherwise.
+  if (fit?.tier === "Avoid" && !promisedAt && !(x.rfq?.quotedAt)) {
+    return { band: "off", likelihood: "off", fit, score: 0, reason: `Not a fit: ${fit.why ?? segmentWords(fit.segment) ?? "they buy per project"}. Not worth the dial.`, headline: `${co}: not a fit`, tags: ["avoid"], who, expected: null, lastSignal: null, promise: null };
+  }
   // When they said work is coming.
   const timed = [...calls].reverse().find((c) => c.expectedWhen && whenFromPhrase(c.expectedWhen, c.at, tz));
   if (timed) {
@@ -287,19 +338,31 @@ export function heatFor(x: HeatIn): Heat {
     if (!newer) {
       const back = dayIn(snooze.until, tz);
       tags.add("later");
-      return { band: "later", score: 0, reason: `Back ${shortDay(back)}: ${snooze.why.replace(/^They said: /, `${they} said `)}`, headline: `Call ${who ?? co} on ${shortDay(back)}`, tags: [...tags], who, expected: back, lastSignal: since || null };
+      return { band: "later", likelihood: "later", fit, score: 0, reason: `Back ${shortDay(back)}: ${snooze.why.replace(/^They said: /, `${they} said `)}`, headline: `Call ${who ?? co} on ${shortDay(back)}`, tags: [...tags], who, expected: back, lastSignal: since || null };
     }
   }
-  if (!cands.length) return { band: "emails", score: TIER_BONUS[x.tier ?? "unknown"] ?? 0, reason: "Nothing from them yet: the emails carry it.", headline: `Let the emails carry ${co}`, tags: [...tags], who, expected, lastSignal: null };
+  const bonus = fit ? FIT_BONUS[fit.tier] : (TIER_BONUS[x.tier ?? "unknown"] ?? 0);
+  // Likelihood (11/11): a promise or their day is "expecting"; anything they did lately (talked, wrote back, clicked,
+  // said the next one's yours, a past quote) is "likely"; an A-fit shop with nothing yet is worth the dial; the rest
+  // the emails carry. Fit orders inside a band through the score.
+  const lately = (at: string | null | undefined, days: number) => !!at && daysSince(at) <= days;
+  const expecting = !!promisedAt || (!!timed && !!expected && expected <= today);
+  const signal = cands.some((c) => ["talked", "asked", "replied", "clicked", "next one", "repeat"].includes(c.tag) && (c.tag === "repeat" || lately(c.at, c.tag === "talked" ? 30 : c.tag === "next one" ? 45 : 14)));
+  const likelihood: Likelihood = expecting ? "expecting" : signal ? "likely" : fit?.tier === "A" ? "dial" : "emails";
+  if (!cands.length) {
+    const dial = likelihood === "dial";
+    const what = [segmentWords(fit?.segment) ?? "an A-fit shop", fit?.state].filter(Boolean).join(" in ");
+    return { band: "emails", likelihood, fit, score: bonus, reason: dial ? `${what.replace(/^./, (c) => c.toUpperCase())}, and you haven't reached the buyer: worth the dial.` : "Nothing from them yet: the emails carry it.", headline: dial ? `Call ${co}: an A-fit shop you haven't reached` : `Let the emails carry ${co}`, tags: [...tags], who, expected, lastSignal: null };
+  }
   cands.sort((a, b) => b.score - a.score);
   const top = cands[0];
   // "Wait for their day" holds them back unless something stronger came after it.
   const waiting = cands.find((c) => c.tag === "their day" && c.band === "emails");
   const lead = waiting && top.score < 85 ? waiting : top;
-  const score = Math.round((lead.score + 0.15 * cands.filter((c) => c !== lead).reduce((s, c) => s + c.score, 0) + (TIER_BONUS[x.tier ?? "unknown"] ?? 0)) * 10) / 10;
+  const score = Math.round((lead.score + 0.15 * cands.filter((c) => c !== lead).reduce((s, c) => s + c.score, 0) + bonus) * 10) / 10;
   const band: Band = lead.band ?? (score >= 70 ? "today" : score >= 25 ? "week" : "emails");
   const lastSignal = cands.map((c) => c.at).filter((v): v is string => !!v).sort().pop() ?? null;
-  return { band, score, reason: lead.reason, headline: lead.headline, tags: [...tags], who, expected, lastSignal, promise: promiseOut };
+  return { band, likelihood, fit, score, reason: lead.reason, headline: lead.headline, tags: [...tags], who, expected, lastSignal, promise: promiseOut };
 }
 
 // ---------- their words, for promises made before the quote was saved (10/14) ----------

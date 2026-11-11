@@ -12,6 +12,18 @@ export const app = config.demo
   ? (() => {
       const fake = new FakeClose({ calls: [roddaCall()], simulateDial: true });
       demoLineCards(fake);
+      // The ICP pass's fields in the demo (11/11), so the heat map shows who each account is: a vessel fab in Texas,
+      // a steel fab, an electrical contractor to avoid, one the pass hasn't read.
+      fake.customFields_.push({ id: "cf_demo_tier", name: "icp_tier" }, { id: "cf_demo_seg", name: "segment" }, { id: "cf_demo_buys", name: "buys_through" }, { id: "cf_demo_why", name: "icp_why" });
+      const icp = (id: string, tier: string, seg: string, buys: string, why: string) => fake.leadFields_[id] = { "custom.cf_demo_tier": tier, "custom.cf_demo_seg": seg, "custom.cf_demo_buys": buys, "custom.cf_demo_why": why };
+      icp("lead_demoHarborFab000001", "A", "asme-vessel-skid", "purchasing-desk", "ASME U-stamp vessel and skid fab in Houston with a purchasing desk");
+      icp("lead_demoNorthline000001", "A", "asme-vessel-skid", "purchasing-desk", "Skid and process equipment packager, one named buyer");
+      icp("lead_demoMesaPipe0000001", "B", "structural-steel", "purchasing-desk", "Structural and misc steel fab with its own shop");
+      icp("lead_demoCrestMech000001", "Avoid", "electrical-contractor", "pm-per-project", "Electrical contractor: PMs buy per job");
+      icp("lead_demoValleyWeld00001", "A", "heat-exchanger", "purchasing-desk", "Shell and tube exchanger shop in Lake Charles");
+      // Northline sent an RFQ a few days ago, so the "like your RFQ senders" row has something to show.
+      const rfqAt = new Date(Date.now() - 2 * 86400000).toISOString();
+      fake.sentEmails.push({ id: "acti_rfq_demoNorthline", lead_id: "lead_demoNorthline000001", user_id: "user_demoWaltBoxwell000001", status: "inbox", direction: "incoming", subject: "RFQ 4471 - skid piping", date_sent: rfqAt, date_created: rfqAt, sender: "Pat Kim <pat@northline.test>", opens: [], attachments: [{ filename: "RFQ-4471.xlsx", content_type: "application/vnd.ms-excel" }], body_text: "Please quote the attached." });
       // My leads in the demo (10/19): a few leads owned by the demo rep.
       fake.customFields_.push({ id: "cf_demo_owner", name: "Lead owner" });
       fake.ownedLeads = [
