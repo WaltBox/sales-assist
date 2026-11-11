@@ -169,7 +169,8 @@ export async function handleCloseEvent(ev: CloseEvent, ctx: HookContext): Promis
   hookStats.lastAt = new Date().toISOString(); hookStats.lastKind = kind;
   const t0 = Date.now();
   const notes: string[] = [];
-  for (const s of sinks) {
+  // Side by side: the records take a moment (they wait for the burst to end), the game shouldn't wait on them.
+  await Promise.all(sinks.map(async (s) => {
     try {
       const said = await s.on(ev, ctx);
       if (said) notes.push(`${s.name}: ${said}`);
@@ -177,7 +178,7 @@ export async function handleCloseEvent(ev: CloseEvent, ctx: HookContext): Promis
       hookStats.lastError = `${kind} ${s.name}: ${(e as Error).message}`;
       notes.push(`${s.name} failed: ${(e as Error).message}`);
     }
-  }
+  }));
   console.info(`${new Date().toISOString()} [close] ${kind} ${ev.leadId ?? "-"} by ${ev.userId ?? "-"} (${Date.now() - t0}ms)${notes.length ? `: ${notes.join("; ")}` : ""}`);
 }
 

@@ -12,6 +12,7 @@ import { loadProfiles, potentialFor, recordPurchasing, recordRepSaid, refreshPro
 import { markReachedByHand, markReachedFromCalls, syncDialViews } from "./dialviews.js";
 import { askNext, confirmAnswers, FIELDS, type Field } from "./purchasing.js";
 import { config, ROOT, type Rep } from "./config.js";
+import { reconcileAccounts, reconciledAt } from "./accountstate.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
 import { background } from "./background.js";
@@ -1043,8 +1044,10 @@ export function createApp(appDeps: AppDeps) {
     ownerOnly(d);
     const sub = await storedWebhook();
     const close = await d.close.webhooks().catch((e) => ({ error: (e as Error).message }));
-    return { subscription: sub ? { id: sub.id, url: sub.url, events: sub.events, createdAt: sub.createdAt, by: sub.by } : null, close, stats: hookStats, keys: (await webhookKeys()).length };
+    return { subscription: sub ? { id: sub.id, url: sub.url, events: sub.events, createdAt: sub.createdAt, by: sub.by } : null, close, stats: hookStats, keys: (await webhookKeys()).length, recordsReconciledAt: await reconciledAt(d.rep.closeUserId) };
   }));
+  // The owner can rebuild their own records from a rescan now (the nightly reconcile, by hand).
+  app.post("/api/close/reconcile", authed, route(async (_req, d) => reconcileAccounts(d, { force: true })));
   app.post("/api/close/webhook/subscribe", authed, route(async (req, d) => {
     ownerOnly(d);
     const url = typeof req.body?.url === "string" && /^https:\/\//.test(req.body.url) ? req.body.url.replace(/\/$/, "") : null;
@@ -1076,6 +1079,10 @@ export function createApp(appDeps: AppDeps) {
         if (outOfTime(rep.email)) { lastAutoCheck = 0; break; }
         const d = await depsFor(rep).catch(() => null);
         if (!d) continue;
+        // The account records (11/10): once a day, every one rebuilt from a rescan of Close, so a missed event is
+        // caught up by morning. Close's webhooks keep them current the rest of the day.
+        if (!config.demo) await reconcileAccounts(d).then((r) => { if (r.ran) console.info(`[records] ${rep.email}: reconciled ${r.written} accounts`); })
+          .catch((err) => console.error(`reconcile ${rep.email}:`, (err as Error).message));
         // Only the hosted server plans the morning (10/8: the Mac copy planned too, 90 seconds after it, and 80 leads
         // got two emails). PLAN_MORNING=1 turns it on for a copy that runs alone.
         if (process.env.VERCEL || process.env.PLAN_MORNING === "1") {

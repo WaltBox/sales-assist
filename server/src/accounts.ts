@@ -13,6 +13,7 @@ import { store, type Automation } from "./store.js";
 import { realAttachments, theirFiles } from "./stats.js";
 import { warmthFor, type Warmth } from "./warmth.js";
 import { loadProfiles, potentialFor, siteFromEmail, type Potential, type Profile } from "./potential.js";
+import { boardFromRecords, forgetRecords, leadFacts, rebuildRecord, saveRescan, type LeadFacts } from "./accountstate.js";
 
 // The accounts page (Walt 9/26): one row per account we've sent the line card
 // to: where it stands, everything that's happened since, and what to do next.
@@ -20,7 +21,7 @@ import { loadProfiles, potentialFor, siteFromEmail, type Potential, type Profile
 // ("Michael said no RFQs right now, check in Oct 15" means hold, not bump).
 // Everything is read from Close; nothing is stored.
 
-const LINE_CARD = "Westgate_Supply_Line_Card.pdf";
+export const LINE_CARD = "Westgate_Supply_Line_Card.pdf";
 const DAY = 24 * 3600 * 1000;
 /**
  * Walt 9/26: bump every thread until they send an RFQ. Walt 10/5: the gaps count business days, not calendar
@@ -149,7 +150,7 @@ export async function markRfqReceived(d: Deps, leadId: string, what: string | nu
   const weekOut = new Date(Date.parse(nowIso) + 7 * DAY).toISOString();
   let completed = 0;
   for (const t of (await d.close.openTasksFor(d.rep.closeUserId).catch(() => [])).filter((t) => t.lead_id === leadId && t.date <= weekOut)) { await d.close.completeTask(t.id); completed++; }
-  forgetBoard(d.rep.closeUserId);
+  await refreshAccount(d, leadId);
   return { ok: true, note, saved: !already, completedTasks: completed };
 }
 
@@ -161,9 +162,9 @@ export const NOT_INTERESTED = "Not Interested";
 export const NOT_INTERESTED_TAG = "[Not interested]";
 export class ShotDownError extends Error {}
 
-const forgetLead = (d: Deps, leadId: string) => {
+const forgetLead = async (d: Deps, leadId: string) => {
   leadCache.delete(leadId);
-  forgetBoard(d.rep.closeUserId);
+  await refreshAccount(d, leadId);
 };
 
 export async function markNotInterested(d: Deps, leadId: string, why: string | null) {
@@ -182,7 +183,7 @@ export async function markNotInterested(d: Deps, leadId: string, why: string | n
   for (const t of (await d.close.openTasksFor(d.rep.closeUserId).catch(() => [])).filter((t) => t.lead_id === leadId)) {
     await d.close.completeTask(t.id).then(() => completed++).catch((e) => console.error(`[shot down ${leadId}] task ${t.id}:`, (e as Error).message));
   }
-  forgetLead(d, leadId);
+  await forgetLead(d, leadId);
   return { ok: true, status: target.label, prevStatus: already ? null : prevStatus, note, completedTasks: completed };
 }
 
@@ -194,14 +195,14 @@ export async function undoNotInterested(d: Deps, leadId: string, prevStatus: str
   if (lead.status_label?.trim().toLowerCase() !== NOT_INTERESTED.toLowerCase()) throw new ShotDownError(`It's already ${lead.status_label ?? "changed"} in Close.`);
   await d.close.updateLeadStatus(leadId, back.id);
   await d.close.createNote(leadId, `${NOT_INTERESTED_TAG} Undone: marked by mistake. Status back to ${back.label}.`, false);
-  forgetLead(d, leadId);
+  await forgetLead(d, leadId);
   return { ok: true, status: back.label };
 }
 
 export async function setRfqStatus(d: Deps, leadId: string, stage: RfqStage, note: string | null) {
   const text = `${RFQ_STATUS_TAG} ${stage}${note ? ` · ${note}` : ""}`;
   await d.close.createNote(leadId, text, false);
-  forgetBoard(d.rep.closeUserId);
+  await refreshAccount(d, leadId);
   return { ok: true, note: text };
 }
 /** No account in the sequence goes longer than this (business days) without a touch, email or call (Walt 10/12). */
@@ -348,13 +349,11 @@ export async function clearStaleCallbacks(d: Deps, accounts: Account[]) {
 export const isOwnLead = (a: Pick<Account, "company" | "contact">) =>
   /^test lead\b/i.test(a.company) || /@westgatesupply\.com$/i.test(a.contact.email ?? "");
 
-type Email = LeadEmail & { lead_id: string; user_id?: string; attachments?: Array<{ filename?: string }> };
+export type Email = LeadEmail & { lead_id: string; user_id?: string; attachments?: Array<{ filename?: string }> };
 
-const leadCache = new Map<string, { at: number; lead: CloseLead | null }>();
+export const leadCache = new Map<string, { at: number; lead: CloseLead | null }>();
 const boardCache = new Map<string, { at: number; value: Board }>();
-/** How old a stored board snapshot may be before a cold server rebuilds instead. */
-const BOARD_SNAPSHOT_MS = 10 * 60_000;
-type Board = { accounts: Account[]; counts: Record<NextKind, number> };
+export type Board = { accounts: Account[]; counts: Record<NextKind, number>; sections?: Record<Section, number> };
 /**
  * "Mid November to early December before I know anything" (Allison at Alcatex, 10/14): a Close task to call them on the
  * day they gave, made once per account and date, never when an open task already sits within two days of it. This is
@@ -383,10 +382,23 @@ export async function scheduleLaterTasks(d: Deps, accounts: Account[], open: Arr
 export function bustBoard(d: Deps) {
   forgetBoard(d.rep.closeUserId);
 }
-/** Both the in-memory board and the stored snapshot: a change in Close (a status, a hold) must show on the next read anywhere. */
+/**
+ * Something of ours changed (a hold, a sequence edit, a hand-off): the board on this server is assembled again on
+ * the next read, from the records and the settings as they are now. A change in Close (a status, a note) reaches
+ * the records through Close's webhook; `refreshAccount` brings one lead's record up to date right away.
+ */
 export function forgetBoard(repId: string) {
-  for (const k of boardCache.keys()) if (k.startsWith(`${repId}:`)) { boardCache.delete(k); void store.cacheDelete(`board:${k}`).catch(() => undefined); }
-  void store.cacheDelete(`board:${repId}:45`).catch(() => undefined);
+  forgetAssembled(repId);
+  forgetRecords(repId);
+}
+/** The assembled board only: a record changed, and the records memory already has the new row. */
+export function forgetAssembled(repId: string) {
+  for (const k of boardCache.keys()) if (k.startsWith(`${repId}:`)) boardCache.delete(k);
+}
+/** One lead's record from Close now (a tap that wrote to Close: off the board at once, not when the webhook lands). */
+export async function refreshAccount(d: Deps, leadId: string) {
+  await rebuildRecord(d, leadId, "refresh").catch((e) => console.error(`[record ${leadId}]`, (e as Error).message));
+  forgetBoard(d.rep.closeUserId);
 }
 
 const addr = (s: string | null | undefined) => (s ?? "").match(/<([^>]+)>/)?.[1] ?? (s ?? "").trim();
@@ -437,7 +449,8 @@ export async function finishTask(d: Deps, taskId: string) {
   const open = await d.close.openTasksFor(d.rep.closeUserId);
   if (!open.some((t) => t.id === taskId)) throw new Error("That task isn't one of your open tasks.");
   await d.close.completeTask(taskId);
-  forgetBoard(d.rep.closeUserId);
+  const t = open.find((x) => x.id === taskId);
+  if (t) await refreshAccount(d, t.lead_id);
   return { ok: true, id: taskId };
 }
 
@@ -459,44 +472,43 @@ export const isBounce = (e: { subject?: string | null; sender?: string | null })
 const ownWords = (body: string) => (body ?? "").split(/\n\s*On .{5,140}wrote:|\n-{2,}\s*Original Message|\nFrom: .+\n(Sent|Date): |\n_{5,}/i)[0].split(/\n\s*(Regards|Thanks|Thank you|Best|Cheers),?\s*\n/i)[0].replace(/\s+/g, " ").trim().slice(0, 400);
 const oneLine = (s: string, n = 140) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
+/**
+ * The board (11/10): read from the account records when the rep has them, the rows Close's webhooks keep current
+ * (`boardFromRecords`); a rescan of 45 days of Close (`buildBoard`) only when there are none yet, when `fresh` is
+ * asked for, or for a window other than the usual 45 days. The rescan writes the records as it goes, so the next
+ * read comes from them. Before 11/10 every read rebuilt from a rescan at most ten minutes old, and nothing was live.
+ */
 export async function accountsBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number } = {}): Promise<Board> {
   const key = `${d.rep.closeUserId}:${opts.days ?? 45}`;
   if (!opts.fresh) {
-    let hit = boardCache.get(key);
-    // A cold server (the hosted copy starts cold on most page loads) takes the last snapshot any copy wrote.
-    if (!hit) {
-      const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
-      if (snap) { hit = { at: snap.at, value: snap.value }; boardCache.set(key, hit); }
+    const hit = boardCache.get(key);
+    if (hit && Date.now() - hit.at < Math.min(opts.maxAgeMs ?? BOARD_MEM_MS, BOARD_MEM_MS)) return hit.value;
+    if ((opts.days ?? 45) === 45) {
+      const fromRecords = await boardFromRecords(d).catch((e) => { console.error(`[board ${d.rep.email}] records:`, (e as Error).message); return null; });
+      if (fromRecords) { boardCache.set(key, { at: Date.now(), value: fromRecords }); return fromRecords; }
     }
-    if (hit) {
-      const age = Date.now() - hit.at;
-      // Fresh enough for this caller: use it.
-      if (age < (opts.maxAgeMs ?? 60_000)) return hit.value;
-      // Older but still recent (10/8: pages waited ~20s on every rebuild): show it now, rebuild behind it.
-      if (age < BOARD_STALE_OK_MS) {
-        if (!boardRebuilding.has(key)) {
-          boardRebuilding.add(key);
-          background(buildBoard(d, opts, key).finally(() => boardRebuilding.delete(key)), "board refresh");
-        }
-        return hit.value;
-      }
-    }
+    // A rescan is slow (~20s): while one runs, a second asker shares it.
+    const running = boardBuilds.get(key);
+    if (running) return running;
   }
-  return buildBoard(d, opts, key);
+  const p = buildBoard(d, opts, key).finally(() => { if (boardBuilds.get(key) === p) boardBuilds.delete(key); });
+  boardBuilds.set(key, p);
+  return p;
 }
-const BOARD_STALE_OK_MS = 30 * 60_000;
+/** How long an assembled board is reused on this server. Short: the records under it change by the second. */
+const BOARD_MEM_MS = 15_000;
+const boardBuilds = new Map<string, Promise<Board>>();
 /**
- * A teammate's board for the team's RFQs (10/19): never waits on a rebuild. The last snapshot, whatever its age
- * (refreshed behind it when it's old), or null while the first one is built in the background.
+ * A teammate's board for the team's RFQs (10/19): never waits on a rescan. From the records when there are any
+ * (refreshed by events, so never old); none yet means a rescan in the background and null this time.
  */
 export async function cachedBoard(d: Deps): Promise<Board | null> {
   const key = `${d.rep.closeUserId}:45`;
-  let hit = boardCache.get(key);
-  if (!hit) {
-    const snap = await store.cacheGet<{ at: number; value: Board }>(`board:${key}`).catch(() => null);
-    if (snap) { hit = { at: snap.at, value: snap.value }; boardCache.set(key, hit); }
-  }
-  if ((!hit || Date.now() - hit.at > BOARD_STALE_OK_MS) && !boardRebuilding.has(key)) {
+  const hit = boardCache.get(key);
+  if (hit && Date.now() - hit.at < BOARD_MEM_MS) return hit.value;
+  const fromRecords = await boardFromRecords(d).catch(() => null);
+  if (fromRecords) { boardCache.set(key, { at: Date.now(), value: fromRecords }); return fromRecords; }
+  if (!boardRebuilding.has(key)) {
     boardRebuilding.add(key);
     background(buildBoard(d, {}, key).finally(() => boardRebuilding.delete(key)), "teammate board");
   }
@@ -504,96 +516,103 @@ export async function cachedBoard(d: Deps): Promise<Board | null> {
 }
 const boardRebuilding = new Set<string>();
 
-async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number }, key: string): Promise<Board> {
+/** What the rep's side of a board build reads from the store: the same for every account, read once a build. */
+export type RepContext = {
+  now: Date; since: Date;
+  hand: Awaited<ReturnType<typeof handoffsStrict>>; rules: Awaited<ReturnType<typeof handoffRules>>;
+  seq: Awaited<ReturnType<typeof sequencePicker>>;
+  autoOn: boolean; profiles: Record<string, Profile>; clicks: Record<string, string>; signals: Record<string, CallSignal[]>;
+  taps: Map<string, string>; nextEmail: Record<string, string>; cooling: Record<string, { until: string | null; why: string | null }>;
+  drafts: Record<string, string>; autos: Automation[];
+};
+export async function loadRepContext(d: Deps, opts: { days?: number } = {}): Promise<RepContext> {
   const now = d.now?.() ?? new Date();
   const since = new Date(now.getTime() - (opts.days ?? 45) * DAY);
-  const ours = (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();
-  const [all, notes, tasks, calls, autos, drafts, autoOn, arms, profiles, hand, rules, seq] = await Promise.all([
-    d.close.listSince<Email>("email", {
-      since: new Date(since.getTime() - 14 * DAY).toISOString(), max: 5000,
-      fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,opens,to,sender,attachments,thread_id,contact_id",
-    }),
-    d.close.listSince<{ id: string; lead_id: string; note: string; date_created: string }>("note", { since: since.toISOString(), fields: "id,lead_id,note,date_created", max: 3000 }),
-    d.close.openTasksFor(d.rep.closeUserId).catch(() => []),
-    d.close.calls({ since: since.toISOString(), withTranscripts: false, max: 3000 }),
+  const [autos, drafts, autoOn, profiles, hand, rules, seq, clicks, signals, reviews, nextEmail, cooling] = await Promise.all([
     store.listAutomations(d.rep.closeUserId, since.toISOString()).catch(() => [] as Automation[]),
     rescueDrafts(d),
     store.getSetting<boolean>(d.rep.closeUserId, "autoBumps").then((v) => v === true).catch(() => false),
-    // The follow-up test (10/2): the account's own gap between automatic emails, once it's been dealt one.
-    store.getSetting<Record<string, number>>(d.rep.closeUserId, "cadenceArms").then((v) => v ?? {}).catch(() => ({} as Record<string, number>)),
     loadProfiles(d.rep.closeUserId),
     // Read strictly (11/10): a list that can't be read is an error, not "nothing was handed over".
     handoffsStrict(),
     handoffRules(),
     // The rep's sequences from the builder (11/9), or the default; since 11/10 a company can be on one of its own.
     sequencePicker(d.rep.closeUserId),
+    clicksFor(d.rep.closeUserId),
+    loadCallSignals(d.rep.closeUserId),
+    // What you tapped after each call (10/13): "Got a name" was the front desk, whatever the call's length.
+    store.listReviews<{ callId: string | null; outcome: string; auto?: boolean }>(d.rep.closeUserId, since.toISOString()).catch(() => []),
+    store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").then((v) => v ?? {}).catch(() => ({} as Record<string, string>)),
+    store.getSetting<Record<string, { until: string | null; why: string | null }>>(d.rep.closeUserId, "cooling").then((v) => v ?? {}).catch(() => ({} as Record<string, { until: string | null; why: string | null }>)),
   ]);
-  const clicks = await clicksFor(d.rep.closeUserId);
-  const callSignals = await loadCallSignals(d.rep.closeUserId);
-  // What you tapped after each call (10/13): "Got a name" was the front desk, whatever the call's length.
-  const taps = new Map((await store.listReviews<{ callId: string | null; outcome: string; auto?: boolean }>(d.rep.closeUserId, since.toISOString()).catch(() => []))
-    .filter((it) => it.callId && !it.auto).map((it) => [it.callId!, it.outcome]));
-  const nextEmail = (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "nextEmail").catch(() => null)) ?? {};
+  const taps = new Map(reviews.filter((it) => it.callId && !it.auto).map((it) => [it.callId!, it.outcome]));
+  return { now, since, hand, rules, seq, autoOn, profiles, clicks, signals, taps, nextEmail, cooling, drafts, autos };
+}
+
+/** An account built from one lead's facts: the Account, plus what the board's hand-off step needs to know about it. */
+export type BuiltAccount = { account: Account; cardSenderId: string; repEmailed: boolean };
+export const ours = (d: Deps) => (who: string | null | undefined) => !who || /@westgatesupply\.com$/i.test(addr(who)) || addr(who).toLowerCase() === d.rep.email.toLowerCase();
+/**
+ * One lead's account for this rep, from the lead's facts (Close's emails, notes, calls and tasks on it, the lead
+ * itself) and the rep's context. Null when the rep has no line card on it in the window: a card a teammate sent
+ * counts as yours once the account was handed to you, and theirs no longer (10/28).
+ */
+export function accountFromFacts(d: Deps, facts: LeadFacts, ctx: RepContext): BuiltAccount | null {
   const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
+  const me = d.rep.closeUserId;
+  const emails = facts.emails as Email[];
   // The line card you sent, not an automatic email that carries it as an attachment (10/13: every bump attaches the
   // card since 10/6, and each one was read as a fresh line card, resetting the account's start date).
-  const autoIds = new Set(autos.map((au) => au.id));
-  // A card a teammate sent counts as yours once the account was handed to you, and theirs no longer (10/28).
-  const cards = all.filter((e) => e.direction === "outgoing" && e.status === "sent" && cardOwner(hand, rules, e.lead_id, String(e.user_id)) === d.rep.closeUserId && at(e) >= since.toISOString()
+  const autoIds = new Set(ctx.autos.map((au) => au.id));
+  const cards = emails.filter((e) => e.direction === "outgoing" && e.status === "sent" && cardOwner(ctx.hand, ctx.rules, e.lead_id, String(e.user_id)) === me && at(e) >= ctx.since.toISOString()
     && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && !autoIds.has(e.id));
-  const latestCard = new Map<string, Email>();
-  for (const e of cards) if (!latestCard.has(e.lead_id) || at(e) > at(latestCard.get(e.lead_id)!)) latestCard.set(e.lead_id, e);
-
-  // Company names and contact phones, remembered for 10 minutes.
-  const ids = [...latestCard.keys()];
-  const stale = ids.filter((id) => { const c = leadCache.get(id); return !c || Date.now() - c.at > 10 * 60_000; });
-  for (let i = 0; i < stale.length; i += 5) {
-    await Promise.all(stale.slice(i, i + 5).map(async (id) => leadCache.set(id, { at: Date.now(), lead: await d.close.lead(id).catch(() => null) })));
-  }
-
-  // Bounce notices: read the body to see which address bounced (CIBS 9/24: blocked; Metal Rise: a typo'd second address).
-  // The bulk list has no email text, so fetch it for the few that need reading: bounce notices (which address
-  // bounced), and their replies with no file (an RFQ typed into the email, Josipa 9/25).
-  const bounceIds = new Set(all.filter((e) => ids.includes(e.lead_id) && e.direction === "incoming"
-    && (isBounce(e) || (!ours(e.sender) && !theirFiles(e.attachments).length))).map((e) => e.id));
-  const bounceBodies = new Map<string, string>();
-  await Promise.all([...new Set(all.filter((e) => bounceIds.has(e.id)).map((e) => e.lead_id))].map(async (leadId) => {
-    for (const e of await d.close.leadEmails(leadId).catch(() => [])) if (bounceIds.has(e.id)) bounceBodies.set(e.id, e.body_text ?? "");
-  }));
-  const cooling = (await store.getSetting<Record<string, { until: string | null; why: string | null }>>(d.rep.closeUserId, "cooling").catch(() => null)) ?? {};
-  const built = ids.map((leadId) => buildAccount({
-    d, now, card: latestCard.get(leadId)!, lead: leadCache.get(leadId)?.lead ?? null, ours,
-    emails: all.filter((e) => e.lead_id === leadId && e.status !== "draft"),
+  const card = cards.sort((a, b) => at(b).localeCompare(at(a)))[0];
+  if (!card) return null;
+  const leadId = card.lead_id;
+  const account = buildAccount({
+    d, now: ctx.now, card, lead: facts.lead, ours: ours(d),
+    emails: emails.filter((e) => e.status !== "draft"),
     // Not the call screen's saved "Say" lines: they're what you said, not what happened.
-    notes: notes.filter((n) => n.lead_id === leadId && !n.note.startsWith("Opener:") && !n.note.startsWith("[Said on the call]")),
-    tasks: tasks.filter((t) => t.lead_id === leadId),
-    calls: calls.filter((c) => c.lead_id === leadId),
-    autos: autos.filter((a) => a.leadId === leadId),
-    rescueDraft: drafts[leadId] ?? null,
-    autoOn,
-    profile: profiles[leadId] ?? null,
-    clickedAt: clicks[leadId] ?? null,
-    taps,
-    seq: seq.of(leadId),
-    nextEmailAt: nextEmail[leadId] ?? null,
-    signals: callSignals[leadId] ?? [],
-    bounceBodies,
-    cooling: cooling[leadId] ?? null,
-  }));
+    notes: facts.notes.filter((n) => !n.note.startsWith("Opener:") && !n.note.startsWith("[Said on the call]")),
+    tasks: facts.tasks.filter((t) => !t.assigned_to || t.assigned_to === me),
+    calls: facts.calls as CloseCall[],
+    autos: ctx.autos.filter((a) => a.leadId === leadId),
+    rescueDraft: ctx.drafts[leadId] ?? null,
+    autoOn: ctx.autoOn,
+    profile: ctx.profiles[leadId] ?? null,
+    clickedAt: ctx.clicks[leadId] ?? null,
+    taps: ctx.taps,
+    seq: ctx.seq.of(leadId),
+    nextEmailAt: ctx.nextEmail[leadId] ?? null,
+    signals: ctx.signals[leadId] ?? [],
+    bounceBodies: new Map(Object.entries(facts.bodies)),
+    cooling: ctx.cooling[leadId] ?? null,
+  });
+  return { account, cardSenderId: String(card.user_id ?? ""), repEmailed: emails.some((e) => e.direction === "outgoing" && e.status === "sent" && e.user_id === me) };
+}
+
+/**
+ * The board from its accounts: who's really on it, hand-offs, the sequence's calls for today in priority order, the
+ * sections and the counts. The same whether the accounts came from the records or a rescan.
+ */
+export function assembleBoard(d: Deps, built: BuiltAccount[], ctx: RepContext, opts: { openTasks?: Array<{ lead_id: string; date: string }> } = {}): Board {
+  const now = ctx.now;
+  const byLead = new Map(built.map((b) => [b.account.leadId, b]));
   // Not Interested, Bad Fit, Disqualified in Close (by hand, or Shot down in the side panel): off the board and
   // out of the automatic emails (Walt 10/5: West Coast Air Conditioning was Not Interested and still in line for
   // a rescue call). One that already sent an RFQ stays on the RFQs page.
-  const accounts = built.filter((a) => !isOwnLead(a) && !(isOutStatus(a.status) && !a.rfq));
+  const accounts = built.map((b) => b.account).filter((a) => !isOwnLead(a) && !(isOutStatus(a.status) && !a.rfq));
   // Handed over (10/28): yours to call from today; your automatic emails start after your first email to them (the
   // new line card goes from you), never as a reply inside your teammate's thread.
   // Yours by a standing rule (10/29): written down as a hand-off, so Close's Lead owner follows.
-  const byRule = accounts.filter((a) => !hand[a.leadId] && rules[String(latestCard.get(a.leadId)?.user_id)]?.to === d.rep.closeUserId)
-    .map((a) => { const r = rules[String(latestCard.get(a.leadId)!.user_id)]; return { leadId: a.leadId, from: String(latestCard.get(a.leadId)!.user_id), fromName: r.fromName }; });
+  const byRule = accounts.filter((a) => !ctx.hand[a.leadId] && ctx.rules[byLead.get(a.leadId)!.cardSenderId]?.to === d.rep.closeUserId)
+    .map((a) => { const sender = byLead.get(a.leadId)!.cardSenderId; return { leadId: a.leadId, from: sender, fromName: ctx.rules[sender].fromName }; });
   if (byRule.length) background(adoptByRule(d, byRule), "hand-off by rule");
   for (const a of accounts) {
-    const hnd = hand[a.leadId] ?? (byRule.some((b) => b.leadId === a.leadId) ? { to: d.rep.closeUserId, fromName: rules[String(latestCard.get(a.leadId)!.user_id)].fromName, at: now.toISOString() } : null);
+    const sender = byLead.get(a.leadId)!.cardSenderId;
+    const hnd = ctx.hand[a.leadId] ?? (byRule.some((b) => b.leadId === a.leadId) ? { to: d.rep.closeUserId, fromName: ctx.rules[sender].fromName, at: now.toISOString() } : null);
     if (!hnd || hnd.to !== d.rep.closeUserId) continue;
-    if (all.some((e) => e.lead_id === a.leadId && e.direction === "outgoing" && e.status === "sent" && e.user_id === d.rep.closeUserId)) continue;
+    if (byLead.get(a.leadId)!.repEmailed) continue;
     a.handedFrom = hnd.fromName;
     if ((a.next.kind === "bump" && a.next.tag !== "Call") || a.next.kind === "rescue") {
       const who = hnd.fromName.split(/\s+/)[0];
@@ -630,9 +649,66 @@ async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAg
   void syncStatuses(d, accounts).catch((e) => console.error("[status sync]", (e as Error).message));
   void clearStaleCallbacks(d, accounts).catch((e) => console.error("[stale callbacks]", (e as Error).message));
   // They gave a date: a task in Close to call them that day (10/14), once.
-  void scheduleLaterTasks(d, accounts, tasks).catch((e) => console.error("[later tasks]", (e as Error).message));
+  void scheduleLaterTasks(d, accounts, opts.openTasks ?? []).catch((e) => console.error("[later tasks]", (e as Error).message));
+  return value;
+}
+
+/**
+ * The rescan: 45 days of the rep's emails, notes, calls and tasks from Close in bulk, every account built from
+ * them, and each lead's facts written to its record so the next read needs no rescan. The nightly reconcile and a
+ * `fresh` read come here; everything else reads the records.
+ */
+async function buildBoard(d: Deps, opts: { days?: number; fresh?: boolean; maxAgeMs?: number }, key: string): Promise<Board> {
+  const ctx = await loadRepContext(d, opts);
+  const { now, since } = ctx;
+  const isOurs = ours(d);
+  const [all, notes, tasks, calls] = await Promise.all([
+    d.close.listSince<Email>("email", {
+      since: new Date(since.getTime() - 14 * DAY).toISOString(), max: 5000,
+      fields: "id,user_id,lead_id,status,direction,subject,date_sent,date_created,opens,to,sender,attachments,thread_id,contact_id",
+    }),
+    d.close.listSince<{ id: string; lead_id: string; note: string; date_created: string }>("note", { since: since.toISOString(), fields: "id,lead_id,note,date_created", max: 3000 }),
+    d.close.openTasksFor(d.rep.closeUserId).catch(() => []),
+    d.close.calls({ since: since.toISOString(), withTranscripts: false, max: 3000 }),
+  ]);
+  const at = (e: Email) => e.date_sent ?? e.date_created ?? "";
+  const autoIds = new Set(ctx.autos.map((au) => au.id));
+  // Which leads have a card of this rep's (the same rule accountFromFacts applies), so only their facts are gathered.
+  const ids = [...new Set(all.filter((e) => e.direction === "outgoing" && e.status === "sent" && cardOwner(ctx.hand, ctx.rules, e.lead_id, String(e.user_id)) === d.rep.closeUserId && at(e) >= since.toISOString()
+    && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && !autoIds.has(e.id)).map((e) => e.lead_id))];
+
+  // Company names and contact phones, remembered for 10 minutes.
+  const stale = ids.filter((id) => { const c = leadCache.get(id); return !c || Date.now() - c.at > 10 * 60_000; });
+  for (let i = 0; i < stale.length; i += 5) {
+    await Promise.all(stale.slice(i, i + 5).map(async (id) => leadCache.set(id, { at: Date.now(), lead: await d.close.lead(id).catch(() => null) })));
+  }
+
+  // Bounce notices: read the body to see which address bounced (CIBS 9/24: blocked; Metal Rise: a typo'd second address).
+  // The bulk list has no email text, so fetch it for the few that need reading: bounce notices (which address
+  // bounced), and their replies with no file (an RFQ typed into the email, Josipa 9/25).
+  const bounceIds = new Set(all.filter((e) => ids.includes(e.lead_id) && e.direction === "incoming"
+    && (isBounce(e) || (!isOurs(e.sender) && !theirFiles(e.attachments).length))).map((e) => e.id));
+  const bounceBodies = new Map<string, string>();
+  await Promise.all([...new Set(all.filter((e) => bounceIds.has(e.id)).map((e) => e.lead_id))].map(async (leadId) => {
+    for (const e of await d.close.leadEmails(leadId).catch(() => [])) if (bounceIds.has(e.id)) bounceBodies.set(e.id, e.body_text ?? "");
+  }));
+  const facts = ids.map((leadId) => leadFacts({
+    lead: leadCache.get(leadId)?.lead ?? null, leadId,
+    emails: all.filter((e) => e.lead_id === leadId), bodies: Object.fromEntries([...bounceBodies].filter(([id]) => all.some((e) => e.id === id && e.lead_id === leadId))),
+    notes: notes.filter((n) => n.lead_id === leadId), tasks: tasks.filter((t) => t.lead_id === leadId), calls: calls.filter((c) => c.lead_id === leadId), at: now,
+  }));
+  const built: BuiltAccount[] = [];
+  const records: Array<{ facts: LeadFacts; built: BuiltAccount | null }> = [];
+  for (const f of facts) {
+    const b = accountFromFacts(d, f, ctx);
+    records.push({ facts: f, built: b });
+    if (b) built.push(b);
+  }
+  const value = assembleBoard(d, built, ctx, { openTasks: tasks });
   boardCache.set(key, { at: Date.now(), value });
-  void store.cacheSet(`board:${key}`, { at: Date.now(), value }, BOARD_SNAPSHOT_MS).catch(() => undefined);
+  // The records (11/10): every lead's facts and account, written so the next read is from them, and leads that fell
+  // out of the window dropped. In the background: the page has its board.
+  if ((opts.days ?? 45) === 45) background(saveRescan(d, records, "rescan"), "records from rescan");
   return value;
 }
 
@@ -1081,7 +1157,7 @@ export async function markRescue(d: Deps, leadId: string, found: boolean, name: 
     const open = (await d.close.openTasksFor(d.rep.closeUserId).catch(() => [])).filter((t) => t.lead_id === leadId && t.date <= weekOut);
     for (const t of open) { await d.close.completeTask(t.id); completed++; }
   }
-  forgetBoard(d.rep.closeUserId);
+  await refreshAccount(d, leadId);
   return { ok: true, note, saved: !today, completedTasks: completed };
 }
 
@@ -1097,7 +1173,7 @@ function scheduledBump(autos: Automation[] | undefined, tz: string, who: string 
 // Every account whose line card nobody opened gets its rescue email drafted in Close, so the rep can
 // call from Close and click Send there once the buyer is on the phone. One draft per account.
 
-async function rescueDrafts(d: Deps): Promise<Record<string, string>> {
+export async function rescueDrafts(d: Deps): Promise<Record<string, string>> {
   return (await store.getSetting<Record<string, string>>(d.rep.closeUserId, "rescueDrafts").catch(() => null)) ?? {};
 }
 
