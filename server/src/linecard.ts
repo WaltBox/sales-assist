@@ -227,8 +227,16 @@ export async function sendLineCard(d: Deps, leadId: string, req: { to: string; n
   // Give that contact the address, so it's on file next time.
   if (contactId && !owner && contactId === (named?.id ?? asked?.id)) await d.close.updateContact(contactId, { emails: [{ email: to, type: "office" }] }).catch(() => null);
   if (!contactId) {
-    const name = req.name?.trim() || nameFromEmail(to) || to.split("@")[0];
-    contactId = (await d.close.createContact(leadId, { name, title: null, email: to, phone: null }).catch(() => null))?.id ?? null;
+    const name = req.name?.trim() || nameFromEmail(to);
+    // No name for the address (11/11, Power Source Services: a card to psscolorado@gmail.com made a person called
+    // "psscolorado", and the buyer Trevor had nowhere to go): it's the office's inbox, so it goes on the office contact.
+    const office = !name ? lead?.contacts.find((c) => /main|office|front desk|reception/i.test(c.name)) : undefined;
+    if (office) {
+      contactId = office.id;
+      await d.close.updateContact(office.id, { emails: [...office.emails, { email: to, type: "office" }] }).catch(() => null);
+    } else {
+      contactId = (await d.close.createContact(leadId, { name: name ?? "Office", title: null, email: to, phone: null }).catch(() => null))?.id ?? null;
+    }
   }
   const attachments = email.attach ? await lineCardAttachments(d).catch(() => []) : [];
   if (email.attach && !attachments.length) throw new LineCardError("Couldn't load the line card PDF from Close, so nothing was sent. Try again, or send it from Close.");

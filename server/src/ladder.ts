@@ -61,7 +61,10 @@ export type Buyer = { id: string; name: string; title: string | null; email: str
 
 /** The best buyer on the lead: a named person with a buying title or a non-generic email; `direct` when there's a line or address that reaches them. */
 export function buyerOf(contacts: CloseContact[] | null | undefined): Buyer | null {
-  const people = (contacts ?? []).filter((c) => c.name && !NOT_A_PERSON.test(c.name.trim()));
+  // A contact named after its mailbox (Power Source Services, 11/11: "psscolorado" for psscolorado@gmail.com, made by
+  // a card send with no name) is the inbox, not the buyer; the buyer there was Trevor, named after the send.
+  const handleOnly = (c: CloseContact) => !/\s/.test(c.name.trim()) && (c.emails ?? []).some((e) => e.email.split("@")[0].toLowerCase() === c.name.trim().toLowerCase());
+  const people = (contacts ?? []).filter((c) => c.name && !NOT_A_PERSON.test(c.name.trim()) && !handleOnly(c));
   const scored = people.map((c) => {
     const email = (c.emails ?? []).map((e) => e.email).find((e) => !GENERIC.test(e)) ?? null;
     const phone = (c.phones ?? []).find((p) => p.type && p.type !== "office")?.phone ?? (c.phones ?? [])[0]?.phone ?? null;

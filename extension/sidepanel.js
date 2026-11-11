@@ -1676,9 +1676,9 @@ function objectiveCard(st) {
   const key = (k) => `buyer-${k}:${st.leadId}`;
   const val = (k) => (drafts[key(k)] || "").trim();
   const forget = () => { for (const k of ["name", "title", "email", "phone"]) delete drafts[key(k)]; };
-  const save = async (fields) => {
+  const save = async (fields, newPerson = false) => {
     if (f.busy) return;
-    const body = { contactId: buyer ? buyer.id : null, name: buyer ? buyer.name : val("name"), title: fields.includes("title") ? val("title") : null, email: fields.includes("email") ? val("email") : null, phone: fields.includes("phone") ? val("phone") : null };
+    const body = { contactId: buyer && !newPerson ? buyer.id : null, name: buyer && !newPerson ? buyer.name : val("name"), title: fields.includes("title") ? val("title") : null, email: fields.includes("email") ? val("email") : null, phone: fields.includes("phone") ? val("phone") : null };
     if (!body.name) { f.error = "A name is needed."; render(); return; }
     f.busy = true; f.error = null; render();
     try { await api(`/api/leads/${st.leadId}/buyer`, body); forget(); st.buyerForm = null; await loadBrief(st); }
@@ -1692,9 +1692,11 @@ function objectiveCard(st) {
     catch (e) { f.busy = false; f.error = e.message || String(e); render(); }
   };
   const sendCard = () => { st.lcOpen = true; render(); setTimeout(() => { const n = document.querySelector(".afterlc"); if (n) n.scrollIntoView({ behavior: "smooth", block: "start" }); }, 0); };
-  // The control for this rung.
+  // The control for this rung. The name form opens at any rung (Walt 11/11, Power Source Services: the inbox came
+  // first, the card went out, then the front desk named Trevor; the order on a call is theirs, not ours).
   let control = null;
-  if (L.stage === "potential" || L.stage === "fit") {
+  const nameForm = L.stage === "potential" || L.stage === "fit" || f.open;
+  if (nameForm) {
     const fields = ["name", "title", "email", "phone"];
     // Name and email are the ask; title and a line are optional and look it (Walt 11/11).
     control = el("div", { class: "objform" }, [
@@ -1703,9 +1705,10 @@ function objectiveCard(st) {
       draftInput(key("title"), { type: "text", class: "opt", placeholder: "Title (optional)", autocomplete: "off", onkeydown: onEnter(fields) }),
       draftInput(key("phone"), { type: "tel", class: "opt", placeholder: "Direct line (optional)", autocomplete: "off", onkeydown: onEnter(fields) }),
       el("div", { class: "objsave" }, [
-        el("button", { class: "btn primary", disabled: f.busy, text: f.busy ? "Saving…" : "Save to Close", onclick: () => save(fields) }),
-        pay(L.next ? L.next.points : 3),
-        el("span", { class: "muted small", text: "goes on the lead as the buyer" }),
+        el("button", { class: "btn primary", disabled: f.busy, text: f.busy ? "Saving…" : "Save to Close", onclick: () => save(["name", "title", "email", "phone"], true) }),
+        pay(buyer ? 0 : (L.next ? L.next.points : 3)),
+        el("span", { class: "muted small", text: buyer ? "replaces who the card is about" : "goes on the lead as the buyer" }),
+        f.open ? el("button", { class: "link", text: "Cancel", onclick: () => { f.open = false; render(); } }) : null,
       ]),
     ]);
   } else if (L.stage === "named" && buyer && !buyer.email) {
@@ -1744,6 +1747,15 @@ function objectiveCard(st) {
         : el("button", { class: "btn block", disabled: f.busy, text: f.busy ? "Saving…" : `RFQ incoming: ${first || "they"} said they'll send one`, onclick: incoming }),
     ]);
   }
+  // "RFQ incoming" from Named on (Walt 11/11): a promise can come on the discovery call, before any reach.
+  const incomingBtn = !L.promised && !nameForm && (L.stage === "named" || L.stage === "card") && buyer
+    ? el("button", { class: "link objlink", disabled: f.busy, text: `RFQ incoming: ${first} said they'll send one`, onclick: async () => {
+        if (f.busy) return; f.busy = true; f.error = null; render();
+        try { await api(`/api/leads/${st.leadId}/rfq-incoming`, { name: first }); st.buyerForm = null; await loadBrief(st); }
+        catch (e) { f.busy = false; f.error = e.message || String(e); render(); }
+      } })
+    : null;
+  const otherName = !nameForm && L.stage !== "out" ? el("button", { class: "link objlink", text: buyer ? `Not ${first}? Add the right name` : "Add the buyer's name", onclick: () => { f.open = true; render(); } }) : null;
   // What's already in Close, one line, so the rep knows what the card is working from.
   const soFar = [];
   if (buyer) soFar.push(buyer.title ? `${buyer.name}, ${buyer.title}` : buyer.name);
@@ -1763,6 +1775,7 @@ function objectiveCard(st) {
     L.steps && L.steps.length ? el("ol", { class: "objsteps" }, L.steps.map((s) => el("li", { text: s }))) : el("p", { class: "objtext", text: L.objective }),
     L.steps && L.steps.length && L.statusAhead ? el("p", { class: "objnote", text: L.objective }) : null,
     control,
+    incomingBtn || otherName ? el("div", { class: "objlinks" }, [incomingBtn, otherName]) : null,
     f.error ? el("p", { class: "bad small", text: `Couldn't save: ${f.error}` }) : null,
     soFar.length ? el("p", { class: "objsofar", text: `In Close: ${soFar.join(" · ")}` }) : null,
     spot ? el("p", { class: "objqueue", text: `Queue ${spot.rank} of ${spot.of} · ${spot.why}` }) : null,

@@ -107,3 +107,11 @@ test("RFQ incoming (Walt 11/11): a promise keeps the rung, reads as warm, pays n
   assert.equal(ladderFor({ lead: lead("Reached buyer", jim), tier: "A" }).promised, null);
   assert.equal(ladderFor({ lead: lead("RFQ Received", jim), tier: "A", rfqAt: "x", promisedAt: "2026-11-11T15:20:00Z" }).promised, null, "landed: no longer waiting");
 });
+
+test("a contact named after its mailbox is the inbox, not the buyer (Power Source Services, 11/11): the lead stays in discovery", () => {
+  const inbox = [{ id: "cont_pss", name: "psscolorado", title: null, emails: [{ email: "psscolorado@gmail.com", type: "office" }], phones: [] }];
+  assert.equal(buyerOf(inbox as never), null);
+  const L = ladderFor({ lead: lead("Sent Line Card", inbox as never), tier: "A" });
+  assert.equal(L.stage, "fit");
+  assert.equal(L.statusAhead, true);
+});
