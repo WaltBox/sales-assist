@@ -95,3 +95,15 @@ test("the finish is quite hard (Walt 11/11): a full morning is ~130, three new R
   assert.ok(120 * RUNG_POINTS.dial < LADDER_GOAL, "never on dials alone");
   assert.ok(monster < LADDER_GOAL, "never on names and conversations alone");
 });
+
+test("RFQ incoming (Walt 11/11): a promise keeps the rung, reads as warm, pays nothing until the RFQ lands", () => {
+  const jim = [{ name: "Jim Colley", title: "Purchasing", email: "jcolley@jrhoe.com" }];
+  const waiting = ladderFor({ lead: lead("Reached buyer", jim), tier: "A", reachedAt: "2026-11-11T15:00:00Z", promisedAt: "2026-11-11T15:20:00Z" });
+  assert.equal(waiting.stage, "reached");
+  assert.deepEqual(waiting.promised, { at: "2026-11-11T15:20:00Z" });
+  assert.equal(waiting.label, "RFQ incoming");
+  assert.match(waiting.steps[0], /^Watch for Jim's RFQ/);
+  assert.equal(waiting.next?.rung, "rfq", "the next rung is still the RFQ, paid when it lands");
+  assert.equal(ladderFor({ lead: lead("Reached buyer", jim), tier: "A" }).promised, null);
+  assert.equal(ladderFor({ lead: lead("RFQ Received", jim), tier: "A", rfqAt: "x", promisedAt: "2026-11-11T15:20:00Z" }).promised, null, "landed: no longer waiting");
+});

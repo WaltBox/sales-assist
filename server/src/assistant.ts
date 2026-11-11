@@ -118,7 +118,11 @@ async function ladderInfo(d: Deps, ctx: LeadContext, emails: LeadEmail[]): Promi
   const reachedAt = buyer ? ctx.calls.filter((c) => c.direction === "outbound" && c.disposition === "answered" && (c.duration ?? 0) >= 60 && c.contact_id === buyer.id)
     .map((c) => c.date_created).sort().pop() ?? null : null;
   const rfqAt = /^(rfq received|quoted|customer)$/i.test(ctx.lead.status_label ?? "") ? ctx.lead.status_label : null;
-  return ladderFor({ lead: ctx.lead, tier, cardSentAt, reachedAt, rfqAt, repFirst: d.rep.name.split(/\s+/)[0] || null });
+  // They said they'd send one: the newest promise note, unless an RFQ has come in since.
+  const notes = ctx.notes ?? [];
+  const promisedAt = notes.filter((n) => n.note.includes(RFQ_TAG)).map((n) => n.date_created).sort().pop() ?? null;
+  const landedAt = notes.filter((n) => n.note.includes(RFQ_IN_TAG)).map((n) => n.date_created).sort().pop() ?? null;
+  return ladderFor({ lead: ctx.lead, tier, cardSentAt, reachedAt, rfqAt, promisedAt: promisedAt && (!landedAt || landedAt < promisedAt) ? promisedAt : null, repFirst: d.rep.name.split(/\s+/)[0] || null });
 }
 
 // Briefs are cached (Supabase when hosted) so reopening a lead is instant. A

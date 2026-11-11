@@ -84,6 +84,8 @@ export type LadderIn = {
   reachedAt?: string | null;
   /** The last RFQ in (file, forward, or tapped). */
   rfqAt?: string | null;
+  /** They said they'd send one (an "[RFQ promised]" note, newest): warm, not paid (Walt 11/11: "RFQ incoming doesnt reward points"). */
+  promisedAt?: string | null;
   /** First name of the rep, for the line to say. */
   repFirst?: string | null;
 };
@@ -92,6 +94,8 @@ export type Ladder = {
   label: string;
   /** The objective for this lead, in plain words. */
   objective: string;
+  /** An RFQ is on its way, they said: the card waits for it instead of asking again. No points until it lands. */
+  promised: { at: string } | null;
   /** The same as short numbered steps (Walt 11/11: "1. Reach Jim. 2. Retrieve RFQ"), for the card; empty when out. */
   steps: string[];
   /** The one line to say, when there is one. */
@@ -157,8 +161,8 @@ export function ladderFor(x: LadderIn): Ladder {
   const name = first(buyer?.name);
   const company = co(x.lead.display_name);
   const me = x.repFirst ?? "me";
-  const next = (rung: Rung, points: number, label: string) => ({ rung, points, label });
   const who = name ?? "the buyer";
+  const next = (rung: Rung, points: number, label: string) => ({ rung, points, label });
   const STEPS: Record<Stage, string[]> = {
     out: [],
     potential: ["Get the buyer's name", "Get their email"],
@@ -170,7 +174,11 @@ export function ladderFor(x: LadderIn): Ladder {
     quoted: ["Follow up on the quote", "Ask what else they buy"],
     customer: ["Ask what else they buy"],
   };
-  const base = { buyer, statusLags, statusAhead, label: RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x), steps: STEPS[stage] };
+  // RFQ incoming (Walt 11/11: "Reached Jim -> RFQ incoming ... we could track that and store them somewhere as like
+  // really warm"): the promise note keeps the lead at its rung, warm, with the card watching for the file.
+  const promised = x.promisedAt && (stage === "reached" || stage === "card" || stage === "named") ? { at: x.promisedAt } : null;
+  const base = { buyer, statusLags, statusAhead, promised, label: promised ? "RFQ incoming" : RUNG_LABEL[stage], boxes: boxesFor(stage, buyer, x),
+    steps: promised ? [`Watch for ${who}'s RFQ`, "Not here in two days? One line in the thread, then call"] : STEPS[stage] };
   switch (stage) {
     case "out":
       return { ...base, stage, objective: "Don't dial. If that's wrong, change the status in Close.", say: null, next: null };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Deps } from "../src/assistant.js";
-import { markBuyerReached, saveBuyer } from "../src/buyer.js";
+import { markBuyerReached, markRfqIncoming, saveBuyer } from "../src/buyer.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID } from "../src/fixtures.js";
 
@@ -45,4 +45,14 @@ test("Reached marks the buyer reached in Close: the status moves to Reached buye
   close.leadStatus.set(DEMO_LEAD_ID, "RFQ Received");
   assert.equal((await markBuyerReached(deps(close), DEMO_LEAD_ID)).status, null);
   assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "RFQ Received");
+});
+
+test("RFQ incoming writes the promise note Close and the heat map already read, with the name and when; no status move", async () => {
+  const close = new FakeClose({ calls: [] });
+  close.leadStatus.set(DEMO_LEAD_ID, "Reached buyer");
+  await markRfqIncoming(deps(close), DEMO_LEAD_ID, { name: "Jim", when: "by Thursday" });
+  const note = close.writes.find((w) => w.op === "note");
+  assert.ok(note);
+  assert.deepEqual(note!.body, { leadId: DEMO_LEAD_ID, note: "[RFQ promised] Jim said they'll send one, by Thursday (tapped on the call card).", pinned: false });
+  assert.equal(close.leadStatus.get(DEMO_LEAD_ID), "Reached buyer");
 });

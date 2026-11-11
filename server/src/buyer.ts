@@ -1,5 +1,5 @@
 import { advanceStatus } from "./accounts.js";
-import type { Deps } from "./assistant.js";
+import { RFQ_TAG, type Deps } from "./assistant.js";
 import { markReachedByHand } from "./dialviews.js";
 
 /**
@@ -33,6 +33,17 @@ export async function saveBuyer(d: Deps, leadId: string, b: BuyerIn): Promise<{ 
   // Named buyer in Close (paid once there), never backwards; an org without the status keeps the one it has.
   const status = await advanceStatus(d, leadId, "Named buyer").catch(() => null);
   return { contactId, status };
+}
+
+/**
+ * "RFQ incoming" (Walt 11/11): they said they'd send one. A promise note on the lead, the same tag the after-call
+ * review writes, so the heat map's Expecting band, the automatic bump and the stats all see it. No points.
+ */
+export async function markRfqIncoming(d: Deps, leadId: string, o: { name?: string | null; when?: string | null }): Promise<{ noteId: string }> {
+  const who = (o.name ?? "").trim() || "They";
+  const when = (o.when ?? "").trim().slice(0, 80);
+  const r = await d.close.createNote(leadId, `${RFQ_TAG} ${who} said they'll send one${when ? `, ${when}` : ""} (tapped on the call card).`, false);
+  return { noteId: r.id };
 }
 
 /** The rep says they reached the buyer: Reached buyer in Close (what pays), and today's reach for the dial views. */

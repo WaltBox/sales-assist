@@ -1018,6 +1018,7 @@ async function sendLineCardNow(st) {
     st.lc.sent = r;
     watchBounce(st, r);
     bumpGame();
+    loadBrief(st).catch(() => {}); // the ladder moves to Card sent (11/11)
   } catch (e) {
     st.lc.error = e.message;
   }
@@ -1069,6 +1070,7 @@ function rfqButton(st) {
       st.rfqIn = { saved: true, completed: res.completedTasks };
       if (res.race && game && game.playNow) game.playNow(res.race);
       bumpGame();
+      loadBrief(st).catch(() => {}); // the ladder moves to RFQ received (11/11)
     } catch (e) { st.rfqIn = { ...st.rfqIn, busy: false, error: e.message }; }
     if (st === S) render();
   };
@@ -1722,8 +1724,21 @@ function objectiveCard(st) {
       pay(L.next ? L.next.points : 5),
       el("span", { class: "muted small", text: "a real conversation, not the front desk" }),
     ]);
-  } else if (L.stage === "reached") {
-    control = rfqButton(st);
+  } else if (L.stage === "reached" || L.promised) {
+    // Reached: the RFQ button, and "RFQ incoming" for the call where they said they'd send one (no points: warm,
+    // tracked, the card watches for it).
+    const incoming = async () => {
+      if (f.busy) return;
+      f.busy = true; f.error = null; render();
+      try { await api(`/api/leads/${st.leadId}/rfq-incoming`, { name: first }); st.buyerForm = null; await loadBrief(st); }
+      catch (e) { f.busy = false; f.error = e.message || String(e); render(); }
+    };
+    control = el("div", { class: "objstack" }, [
+      rfqButton(st),
+      L.promised
+        ? el("p", { class: "objsofar", text: `${first || "They"} said ${first ? "they'd" : "they'd"} send one · ${new Date(L.promised.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Warm, no points until it lands.` })
+        : el("button", { class: "btn block", disabled: f.busy, text: f.busy ? "Saving…" : `RFQ incoming: ${first || "they"} said they'll send one`, onclick: incoming }),
+    ]);
   }
   // What's already in Close, one line, so the rep knows what the card is working from.
   const soFar = [];
@@ -2012,8 +2027,11 @@ function renderOnCall() {
       el("div", { class: "linerow" }, [myLineButton("callbar"), callsChip(st.header, true), opensChip(st.header)]),
     ]),
     el("div", { class: "body" }, [
-      el("div", { class: `stagegoal oncallgoal k-${stage.kind}` }, [el("span", { class: "label", text: stage.banner }), el("strong", { text: stage.goal })]),
-      rfqButton(st),
+      // The objective and its one control, on the call too (Walt 11/11: "discovery, line card send, and RFQ promised in a
+      // single call. All of that needs to be completable in a call"): each save reloads the ladder, so the next control
+      // is there before they hang up.
+      objectiveCard(st) || el("div", { class: `stagegoal oncallgoal k-${stage.kind}` }, [el("span", { class: "label", text: stage.banner }), el("strong", { text: stage.goal })]),
+      st.header && st.header.ladder && (st.header.ladder.stage === "reached" || st.header.ladder.promised) ? null : rfqButton(st),
       st.rescue ? rescueBlock(st) : lineCardAsk(st),
       glanceBlock(st),
       fu ? el("div", {}, [

@@ -702,6 +702,7 @@ body.has-race .chatbar, body.has-race .footer, body.has-race .oncall .foot { bot
 .objsave { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .objsave .objact { flex: 1 1 auto; }
 .objpay { font-family: var(--display); font-size: 16px; color: var(--green); white-space: nowrap; }
+.objstack { display: flex; flex-direction: column; gap: 8px; }
 .objsofar { margin: 0; font-size: 12.5px; color: var(--ink); }
 .objact { margin-top: 2px; }
 .objqueue { margin: 0; font-size: 12px; color: var(--muted); }
