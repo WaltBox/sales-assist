@@ -35,7 +35,7 @@ const state = {
   details: {}, // `${period}:${metric}` -> table
 };
 
-function pageFromHash() { return location.hash === "#team" ? "team" : location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : location.hash === "#game" ? "game" : "accounts"; }
+function pageFromHash() { return location.hash === "#calls" ? "calls" : location.hash === "#team" ? "team" : location.hash === "#extension" ? "extension" : location.hash === "#guests" ? "guests" : location.hash === "#emails" ? "emails" : location.hash === "#rfqs" ? "rfqs" : location.hash === "#heat" ? "heat" : location.hash === "#tasks" ? "tasks" : location.hash === "#game" ? "game" : "accounts"; }
 
 function el(tag, attrs = {}, kids = []) {
   const n = document.createElement(tag);
@@ -220,7 +220,8 @@ function render() {
     : state.page === "team" ? [teamPage()]
     : state.page === "game" ? [gamePage()]
       : state.page === "heat" ? [err, heatPage()]
-        : [hello(), err, accountsSection()])])]));
+        : state.page === "calls" ? [err, callsPage()]
+          : [hello(), err, accountsSection()])])]));
 }
 
 // Sign in with your @westgatesupply.com email. First time: create a password
@@ -325,7 +326,7 @@ function topBar() {
       el("div", { class: "brand" }, [el("img", { src: "brand/world-mark-filled.svg", alt: "" }), el("span", { class: "brandtext" }, ["Westgate", el("span", { class: "sub", text: "Assistant" })])]),
       el("button", { class: "fold", title: sideFolded ? "Open the menu" : "Collapse the menu", "aria-label": sideFolded ? "Open the menu" : "Collapse the menu", text: sideFolded ? "»" : "«", onclick: foldSide }),
     ]),
-    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["rfqs", "RFQs"], ["emails", "Email Sequence"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
+    el("nav", { class: "nav" }, [["accounts", "Accounts"], ["tasks", "Tasks"], ["heat", "Heat map"], ["calls", "Calls"], ["rfqs", "RFQs"], ["emails", "Email Sequence"], ["guests", "Guests"], ["game", "West Game"]].map(([k, label]) => el("button", {
       class: state.page === k ? "on" : "", title: label, onclick: () => go(k),
     }, [icon(k), el("span", { class: "navlabel", text: label }),
       k === "emails" && state.autos ? el("span", { class: "navc mono", text: mailRows(state.autos, "upcoming").length }) : null,
@@ -850,6 +851,72 @@ function heatList() {
     .sort((x, y) => order(x) - order(y) || y.heat.score - x.heat.score);
 }
 
+// The call analyzer (Walt 11/12): a month of a rep's conversations, what followed each, and the two lists.
+function loadCalls(rep, fresh) {
+  const key = `${rep || "me"}`;
+  state.calls = state.calls || {};
+  if (state.calls[key] && !fresh && !state.calls[key].error) return;
+  state.calls[key] = { loading: true };
+  api(`/api/calls/analysis?${rep ? `rep=${encodeURIComponent(rep)}&` : ""}${fresh ? "fresh=1" : ""}`).then((r) => { state.calls[key] = r; render(); }).catch((e) => { state.calls[key] = { error: e.message }; render(); });
+}
+function callsPage() {
+  const rep = state.callsRep || null;
+  loadCalls(rep, false);
+  const a = (state.calls || {})[rep || "me"] || { loading: true };
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const pct = (won, n) => (n ? `${Math.round(100 * won / n)}%` : "–");
+  const picker = a.reps && a.reps.length ? el("select", { class: "callsrep", onchange: (e) => { state.callsRep = e.target.value || null; render(); } }, [
+    el("option", { value: "", text: "Me" }), ...a.reps.map((r) => el("option", { value: r.email, text: r.name, selected: rep === r.email ? "selected" : null })),
+  ]) : null;
+  const head = el("div", { class: "phead" }, [
+    el("h1", { class: "ptitle", text: "Call analyzer" }),
+    el("div", { class: "prow" }, [picker, a.at ? el("span", { class: "muted small", text: `Last 30 days · read ${new Date(a.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }) : null,
+      el("button", { class: "linkbtn", text: "Read again", onclick: () => loadCalls(rep, true) })]),
+  ]);
+  if (a.loading) return el("section", { class: "callspage" }, [head, el("p", { class: "muted", text: "Reading the month's calls…" })]);
+  if (a.error) return el("section", { class: "callspage" }, [head, el("p", { class: "bad", text: a.error })]);
+  const s = a.stats;
+  const tile = (k, v, sub) => el("div", { class: "ctile" }, [el("div", { class: "k", text: k }), el("div", { class: "v", text: String(v) }), sub ? el("div", { class: "s", text: sub }) : null]);
+  const tiles = el("div", { class: "ctiles" }, [
+    tile("Conversations", s.conversations, `${s.days} days · median ${mmss(s.medianSeconds)}`),
+    tile("Named after", s.after.named, pct(s.after.named, s.conversations)),
+    tile("Card to buyer after", s.after.card, pct(s.after.card, s.conversations)),
+    tile("Buyer reached after", s.after.reached, pct(s.after.reached, s.conversations)),
+    tile("RFQ after", s.after.rfq, pct(s.after.rfq, s.conversations)),
+  ]);
+  const table = (title, rows, label) => el("div", { class: "ctable" }, [
+    el("p", { class: "label", text: title }),
+    el("table", {}, [el("tr", {}, [el("th", { text: "" }), el("th", { text: "Calls" }), el("th", { text: "Went somewhere" })]),
+      ...rows.map((r) => el("tr", {}, [el("td", { text: label(r) }), el("td", { text: String(r.n) }), el("td", { text: `${r.won} · ${pct(r.won, r.n)}` })]))]),
+  ]);
+  const tables = el("div", { class: "ctables" }, [
+    table("Who answered", s.byWho, (r) => r.who),
+    table("What was tapped", s.byOutcome, (r) => r.label),
+    table("How long", s.byLength, (r) => r.band),
+  ]);
+  const list = (title, cls, items, instead) => el("div", { class: `clist ${cls}` }, [
+    el("h2", { text: title }),
+    ...items.map((x) => el("div", { class: "citem" }, [
+      el("p", { class: "cpat", text: x.pattern }),
+      el("p", { class: "cwhy", text: x.why }),
+      x.quotes && x.quotes.length ? el("ul", { class: "cquotes" }, x.quotes.map((q) => el("li", { text: `“${q}”` }))) : null,
+      instead && x.instead ? el("p", { class: "cinstead" }, [el("b", { text: "Instead: " }), x.instead]) : null,
+    ])),
+  ]);
+  const syn = a.synthesis ? el("div", { class: "csyn" }, [
+    el("div", { class: "conechange" }, [el("span", { class: "label", text: "The one change" }), el("strong", { text: a.synthesis.one_change })]),
+    el("div", { class: "clists" }, [list("What works", "good", a.synthesis.works), list("What fails", "bad", a.synthesis.fails, true)]),
+  ]) : el("p", { class: "muted", text: a.synthesisError || "No read yet." });
+  const recent = el("details", { class: "crecent" }, [
+    el("summary", { text: `The calls (${a.calls.length})` }),
+    el("table", {}, [el("tr", {}, [el("th", { text: "Day" }), el("th", { text: "Company" }), el("th", { text: "With" }), el("th", { text: "Length" }), el("th", { text: "Tap" }), el("th", { text: "After" }), el("th", { text: "Next time" })]),
+      ...a.calls.map((c) => el("tr", {}, [
+        el("td", { text: c.day.slice(5) }), el("td", { text: c.company }), el("td", { text: c.with || "" }), el("td", { text: mmss(c.seconds) }), el("td", { text: c.label || c.outcome }),
+        el("td", { text: Object.entries(c.after).filter(([, v]) => v).map(([k]) => k).join(", ") || "–" }), el("td", { class: "cnext", text: c.next || "" }),
+      ]))]),
+  ]);
+  return el("section", { class: "callspage" }, [head, tiles, syn, tables, recent]);
+}
 function heatPage() {
   loadHeatSegments();
   const rows = heatList();

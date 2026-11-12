@@ -16,6 +16,7 @@ import { reconcileAccounts, reconciledAt } from "./accountstate.js";
 import { cachedQueue, nextUp, queueSpot, syncQueue, syncQueues } from "./dialqueue.js";
 import { markBuyerReached, markRfqIncoming, saveBuyer } from "./buyer.js";
 import { backfillEvents, careerFor, writeDayEvents } from "./events.js";
+import { analyzeCalls } from "./analyzer.js";
 import { RUNG_POINTS } from "./ladder.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
@@ -508,6 +509,19 @@ export function createApp(appDeps: AppDeps) {
     })) };
   }));
   // Team stats (10/19): each rep's numbers for a period, the same ones they see on their own home page. Owner only.
+  // The call analyzer (11/12): a rep's own, or any rep's for the owner (?rep=email); ?fresh=1 rebuilds today's.
+  app.get("/api/calls/analysis", authed, route(async (req, d) => {
+    const want = typeof req.query.rep === "string" ? normalizeEmail(req.query.rep) : null;
+    let target = d;
+    if (want && want !== normalizeEmail(d.rep.email)) {
+      ownerOnly(d);
+      const r = (await allReps()).find((x) => normalizeEmail(x.email) === want);
+      if (!r) throw new AuthError(404, "No such rep.");
+      target = await depsFor(r);
+    }
+    const reps = normalizeEmail(d.rep.email) === config.ownerEmail ? (await allReps()).map((r) => ({ email: normalizeEmail(r.email), name: r.name })) : [];
+    return { ...(await analyzeCalls(target, { fresh: req.query.fresh === "1" })), reps };
+  }));
   app.get("/api/team/stats", authed, route(async (req, d) => {
     ownerOnly(d);
     const period = z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "week");
