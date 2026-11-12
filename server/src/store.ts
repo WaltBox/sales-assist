@@ -55,6 +55,8 @@ export interface Store {
   putRungEvents(rows: RungEvent[]): Promise<void>;
   /** A rep's events, oldest first; by local day when given. */
   listRungEvents(repId: string, opts?: { sinceDay?: string; untilDay?: string }): Promise<RungEvent[]>;
+  /** A rep's rows for one local day, dropped before that day is written again (a rewrite is exact, never a merge). */
+  deleteRungEvents(repId: string, day: string): Promise<void>;
 
   putAutomation(a: Automation): Promise<void>;
   /** A rep's rows since a date; with a lead, only that lead's. */
@@ -151,6 +153,7 @@ export class FileStore implements Store {
   async putAccountState(row: AccountStateRow) { this.m.accountStates[`${row.repId}:${row.leadId}`] = structuredClone(row); this.save(); }
   async deleteAccountState(repId: string, leadId: string) { delete this.m.accountStates[`${repId}:${leadId}`]; this.save(); }
   async putRungEvents(rows: RungEvent[]) { for (const r of rows) this.m.rungEvents[r.id] = structuredClone(r); this.save(); }
+  async deleteRungEvents(repId: string, day: string) { for (const [id, r] of Object.entries(this.m.rungEvents)) if (r.repId === repId && r.day === day) delete this.m.rungEvents[id]; this.save(); }
   async listRungEvents(repId: string, opts: { sinceDay?: string; untilDay?: string } = {}) {
     return Object.values(this.m.rungEvents).filter((r) => r.repId === repId && (!opts.sinceDay || r.day >= opts.sinceDay) && (!opts.untilDay || r.day <= opts.untilDay))
       .sort((a, b) => a.at.localeCompare(b.at)).map((r) => structuredClone(r));
@@ -350,6 +353,9 @@ export class SupabaseStore implements Store {
       const body = rows.slice(i, i + 500).map((r) => ({ id: r.id, rep_id: r.repId, lead_id: r.leadId, company: r.company, kind: r.kind, at: r.at, day: r.day, points: r.points, first: r.first, data: r.data ?? null }));
       await this.req("POST", "rung_events?on_conflict=id", body, "resolution=merge-duplicates,return=minimal");
     }
+  }
+  async deleteRungEvents(repId: string, day: string) {
+    await this.req("DELETE", `rung_events?${this.q({ rep_id: `eq.${repId}`, day: `eq.${day}` })}`, { rep_id: repId }, "return=minimal");
   }
   async listRungEvents(repId: string, opts: { sinceDay?: string; untilDay?: string } = {}) {
     const out: RungEvent[] = [];

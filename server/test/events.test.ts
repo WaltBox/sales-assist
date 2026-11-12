@@ -35,9 +35,22 @@ test("a season from the table: all time, this month, the best day and the RFQ li
   assert.equal(c.all.firstRfqs, 2);
   assert.equal(c.month.dials, 3);
   assert.equal(c.month.rfqs, 1);
+  assert.equal(c.week.dials, 3, "the week from Monday Nov 9");
+  assert.equal(c.today.dials, 0, "nothing on the 12th");
   assert.equal(c.best?.day, "2026-10-27", "two RFQs on one day beat the ladder day");
   assert.equal(c.rfqs.length, 3);
   // Written again, the same rows: nothing doubles.
   await store.putRungEvents(rows);
   assert.equal((await careerFor("user_season", "America/Chicago", new Date("2026-11-12T15:00:00Z"))).all.dials, 6);
+});
+
+test("a day written again is exact (11/12): rows that no longer hold are gone, not merged in", async () => {
+  const day = { ...facts, day: "2026-11-05" };
+  await store.putRungEvents(eventsOf("user_exact", day, [{ leadId: "lead_x", company: "Existing Customer", first: false }]));
+  assert.equal((await careerFor("user_exact", "America/Chicago", new Date("2026-11-12T15:00:00Z"))).all.rfqs, 1);
+  await store.deleteRungEvents("user_exact", "2026-11-05");
+  await store.putRungEvents(eventsOf("user_exact", day, []));
+  const c = await careerFor("user_exact", "America/Chicago", new Date("2026-11-12T15:00:00Z"));
+  assert.equal(c.all.rfqs, 0);
+  assert.equal(c.all.dials, 3);
 });

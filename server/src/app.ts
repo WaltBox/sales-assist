@@ -618,7 +618,7 @@ export function createApp(appDeps: AppDeps) {
     const reps = (await Promise.all(team.map(async (t) => {
       const c = await careerFor(t.rep.closeUserId, t.rep.timeZone).catch(() => null);
       if (!c) return null;
-      return { first: t.rep.name.split(/\s+/)[0] || t.rep.name, since: c.since, days: c.days, all: c.all, month: c.month, best: c.best, rfqDays: c.rfqs.map((r) => r.day) };
+      return { first: t.rep.name.split(/\s+/)[0] || t.rep.name, since: c.since, days: c.days, today: c.today, week: c.week, month: c.month, all: c.all, best: c.best };
     }))).filter((r): r is NonNullable<typeof r> => !!r);
     boardMem = { at: Date.now(), value: { at: new Date().toISOString(), points: RUNG_POINTS, reps } };
     return boardMem.value;

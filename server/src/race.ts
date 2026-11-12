@@ -174,7 +174,7 @@ function weekOf(week: { dials: number; reached: number; lineCards: number; named
 }
 
 /** Monday of the week containing `day` (YYYY-MM-DD). */
-function weekStart(day: string) {
+export function weekStart(day: string) {
   const t = Date.parse(`${day}T12:00:00Z`);
   const back = (new Date(t).getUTCDay() + 6) % 7;
   return new Date(t - back * 86_400_000).toISOString().slice(0, 10);
@@ -404,7 +404,7 @@ function withTaps(line: RfqLine, taps: RaceTap[], today: string): RfqLine {
 }
 
 /** Only new companies score (Walt 10/26: "not companies that have been compounding over time"). */
-function newCompaniesOnly(line: RfqLine): RfqLine {
+export function newCompaniesOnly(line: RfqLine): RfqLine {
   return line ? { ...line, days: line.days.map((x) => ({ ...x, accounts: x.accounts.filter((a) => a.first) })) } : line;
 }
 type RfqLine = Awaited<ReturnType<typeof rfqTimeline>>;

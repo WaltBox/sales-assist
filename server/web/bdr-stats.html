@@ -14,7 +14,7 @@
   @font-face { font-family: "42dot Sans"; src: url("fonts/42dotSans-Medium.woff2") format("woff2"); font-weight: 500 700; font-display: swap; }
   :root {
     --paper: #e5e0d1; --paper-dark: #d7d1c1; --white: #fff; --ink: #111114; --ink-line: rgba(17,17,20,.25); --muted: #53524f;
-    --red: #dc0025; --navy: #001939; --green: #0b6b2f; --amber: #8a5a00;
+    --red: #dc0025; --navy: #001939; --green: #0b6b2f;
     --display: "Saira", Arial, sans-serif; --label: "WDXL Lubrifont JP N", Arial, sans-serif; --sans: "42dot Sans", Helvetica, system-ui, sans-serif;
     color-scheme: light;
   }
@@ -25,14 +25,16 @@
   header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
   .brand { font-family: var(--label); font-size: 13px; letter-spacing: .18em; text-transform: uppercase; }
   h1 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(30px, 5vw, 48px); line-height: .95; letter-spacing: -.01em; margin: 6px 0 0; }
-  .sub { color: var(--muted); font-size: 14px; }
   .when { font-family: var(--label); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-  .team { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 22px 0 28px; }
+  .toggle { display: flex; gap: 0; margin: 18px 0 22px; }
+  .toggle button { font: inherit; font-family: var(--label); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: 9px 16px; background: var(--white); border: 2px solid var(--ink); border-right-width: 0; color: var(--ink); cursor: pointer; }
+  .toggle button:last-child { border-right-width: 2px; }
+  .toggle button.on { background: var(--ink); color: var(--paper); }
+  .team { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 28px; }
   .tile { background: var(--white); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 14px 16px; }
   .tile .k { font-family: var(--label); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   .tile .v { font-family: var(--display); font-weight: 700; font-size: 38px; line-height: 1; margin-top: 4px; }
   .tile .v.red { color: var(--red); }
-  .tile .s { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
   .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
   .bdr { background: var(--white); border: 2px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 16px 18px 14px; position: relative; }
   .bdr.p1 { border-color: var(--red); box-shadow: 5px 5px 0 var(--red); }
@@ -42,22 +44,13 @@
   .name b { font-family: var(--display); font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; }
   .pts { font-family: var(--display); font-weight: 700; font-size: 30px; color: var(--red); line-height: 1; white-space: nowrap; }
   .pts small { font-family: var(--label); font-size: 10px; letter-spacing: .12em; color: var(--muted); margin-left: 4px; }
-  .funnel { margin: 12px 0 8px; display: flex; flex-direction: column; gap: 7px; }
-  .row { display: grid; grid-template-columns: 118px 1fr 44px 54px; align-items: center; gap: 8px; font-size: 13px; }
-  .row .l { font-weight: 600; }
-  .bar { height: 14px; background: var(--paper-dark); border: 1px solid var(--ink-line); overflow: hidden; position: relative; }
-  .bar i { display: block; height: 100%; background: var(--navy); }
-  .bar em { position: absolute; right: 5px; top: 0; line-height: 12px; font-style: normal; font-family: var(--label); font-size: 10px; letter-spacing: .06em; color: var(--muted); }
-  .row.on .bar i { background: var(--green); }
-  .row.on .bar em { color: #fff; }
-  .row.rfq .bar i { background: var(--red); }
-  .row .n { font-family: var(--display); font-weight: 700; font-size: 16px; text-align: right; }
-  .row .a { font-family: var(--label); font-size: 10.5px; letter-spacing: .06em; color: var(--muted); text-align: right; white-space: nowrap; }
-  .foot { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--ink-line); padding-top: 8px; margin-top: 8px; color: var(--muted); font-size: 12.5px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 14px; margin-top: 14px; }
+  .cell .k { font-family: var(--label); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .cell .v { font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1.1; }
+  .cell.rfq .v { color: var(--red); }
+  .foot { border-top: 1px dashed var(--ink-line); padding-top: 8px; margin-top: 12px; color: var(--muted); font-size: 12.5px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .foot b { color: var(--ink); }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
-  .legend { margin-top: 26px; color: var(--muted); font-size: 12.5px; }
-  @media (max-width: 480px) { .row { grid-template-columns: 100px 1fr 40px 50px; } .name b { font-size: 22px; } }
 </style>
 </head>
 <body>
@@ -66,76 +59,52 @@
     <div>
       <div class="brand">Westgate Supply</div>
       <h1>BDR board</h1>
-      <div class="sub" id="sub">Pipeline built and RFQs brought in, this month.</div>
     </div>
     <div class="when" id="when">Loading…</div>
   </header>
+  <div class="toggle" id="toggle"></div>
   <section class="team" id="team"></section>
   <section class="board" id="board"><div class="empty">Loading the board…</div></section>
-  <p class="legend" id="legend"></p>
 </div>
 <script>
 (function () {
-  const el = (tag, attrs = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else n.setAttribute(k, v); } for (const k of kids) if (k) n.append(k); return n; };
+  const el = (tag, attrs = {}, kids = []) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else if (k === "onclick") n.onclick = v; else n.setAttribute(k, v); } for (const k of kids) if (k) n.append(k); return n; };
   const num = (n) => Number(n || 0).toLocaleString();
-  const month = new Date().toLocaleDateString([], { month: "long" });
-  document.getElementById("sub").textContent = "Pipeline built and RFQs brought in, " + month + ".";
-  function tile(k, v, s, red) { return el("div", { class: "tile" }, [el("div", { class: "k", text: k }), el("div", { class: "v" + (red ? " red" : ""), text: num(v) }), s ? el("div", { class: "s", text: s }) : null]); }
-  // The bars are pace (Walt 11/12: a full bar "as if its at 100%" meant nothing with one rep): how far along a
-  // finish-level month each rung is, by the workdays so far. A finish-level day is 12 buyers named, 12 cards to them,
-  // 10 buyers reached and 3 RFQs, the day the 350 was set on (Walt 11/11).
-  const PACE = { named: 12, cards: 12, reached: 10, rfqs: 3 };
-  function workdaysSoFar() {
-    const now = new Date(); let n = 0;
-    for (let d = 1; d <= now.getDate(); d++) { const w = new Date(now.getFullYear(), now.getMonth(), d).getDay(); if (w !== 0 && w !== 6) n++; }
-    return Math.max(1, n);
-  }
-  function row(label, n, all, key, cls) {
-    const goal = PACE[key] * workdaysSoFar();
-    const pct = Math.round(100 * n / goal);
-    const w = Math.min(100, Math.max(n ? 2 : 0, pct));
-    return el("div", { class: "row " + (cls || "") + (pct >= 100 ? " on" : ""), title: num(n) + " of " + num(goal) + " for a finish-level month so far (" + pct + "%)" }, [
-      el("span", { class: "l", text: label }),
-      el("div", { class: "bar" }, [el("i", { style: "width:" + w + "%" }), el("em", { text: pct + "%" })]),
-      el("span", { class: "n", text: num(n) }), el("span", { class: "a", text: num(all) + " all" }),
-    ]);
-  }
-  function draw(data) {
-    const reps = (data.reps || []).slice().sort((a, b) => (b.month.points - a.month.points) || (b.all.points - a.all.points));
-    const sum = (k) => reps.reduce((n, r) => n + (r.month[k] || 0), 0);
-    const team = document.getElementById("team");
-    team.replaceChildren(
-      tile("RFQs this month", sum("rfqs"), sum("firstRfqs") + " from new companies", true),
-      tile("Buyers reached", sum("reached"), "real conversations with the buyer"),
-      tile("Buyers named", sum("named"), "new purchasing contacts found"),
-      tile("Cards to a buyer", sum("cards"), "line cards in a buyer's inbox"),
-      tile("Dials", sum("dials"), reps.length + " BDRs"),
+  const RANGES = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All time"]];
+  let range = (() => { try { return localStorage.getItem("bdr-range") || "week"; } catch { return "week"; } })();
+  let data = null;
+  function cell(k, v, cls) { return el("div", { class: "cell " + (cls || "") }, [el("div", { class: "k", text: k }), el("div", { class: "v", text: num(v) })]); }
+  function tile(k, v, red) { return el("div", { class: "tile" }, [el("div", { class: "k", text: k }), el("div", { class: "v" + (red ? " red" : ""), text: num(v) })]); }
+  function draw() {
+    document.getElementById("toggle").replaceChildren(...RANGES.map(([k, label]) => el("button", { class: k === range ? "on" : "", text: label, onclick: () => { range = k; try { localStorage.setItem("bdr-range", k); } catch {} draw(); } })));
+    if (!data) return;
+    const reps = (data.reps || []).map((r) => ({ ...r, t: r[range] || {} })).sort((a, b) => (b.t.points || 0) - (a.t.points || 0) || (b.all.points || 0) - (a.all.points || 0));
+    const sum = (k) => reps.reduce((n, r) => n + (r.t[k] || 0), 0);
+    document.getElementById("team").replaceChildren(
+      tile("RFQs", sum("rfqs"), true), tile("New companies", sum("firstRfqs")), tile("Buyers reached", sum("reached")), tile("Buyers named", sum("named")), tile("Cards to a buyer", sum("cards")), tile("Dials", sum("dials")),
     );
     const board = document.getElementById("board");
-    if (!reps.length) { board.replaceChildren(el("div", { class: "empty", text: "Nothing on the board yet. The first day's numbers land tonight." })); return; }
-    board.replaceChildren(...reps.map((r, i) => el("article", { class: "bdr" + (i === 0 && r.month.points > 0 ? " p1" : "") }, [
+    if (!reps.length) { board.replaceChildren(el("div", { class: "empty", text: "Nothing on the board yet." })); return; }
+    const label = RANGES.find((x) => x[0] === range)[1].toLowerCase();
+    board.replaceChildren(...reps.map((r, i) => el("article", { class: "bdr" + (i === 0 && r.t.points > 0 ? " p1" : "") }, [
       el("span", { class: "rank", text: "#" + (i + 1) }),
-      el("div", { class: "name" }, [el("b", { text: r.first }), el("span", { class: "pts" }, [document.createTextNode(num(r.month.points)), el("small", { text: "pts " + month })])]),
-      el("div", { class: "funnel" }, [
-        row("Buyers named", r.month.named, r.all.named, "named"),
-        row("Cards to buyer", r.month.cards, r.all.cards, "cards"),
-        row("Buyers reached", r.month.reached, r.all.reached, "reached"),
-        row("RFQs in", r.month.rfqs, r.all.rfqs, "rfqs", "rfq"),
+      el("div", { class: "name" }, [el("b", { text: r.first }), el("span", { class: "pts" }, [document.createTextNode(num(r.t.points)), el("small", { text: "pts " + label })])]),
+      el("div", { class: "grid" }, [
+        cell("RFQs", r.t.rfqs, "rfq"), cell("New companies", r.t.firstRfqs), cell("Dials", r.t.dials),
+        cell("Buyers named", r.t.named), cell("Cards to a buyer", r.t.cards), cell("Buyers reached", r.t.reached),
       ]),
       el("div", { class: "foot" }, [
-        el("span", {}, [document.createTextNode("New companies: "), el("b", { text: num(r.month.firstRfqs) })]),
-        el("span", {}, [document.createTextNode("Dials: "), el("b", { text: num(r.month.dials) })]),
-        r.best ? el("span", {}, [document.createTextNode("Best day: "), el("b", { text: num(r.best.points) + " pts" })]) : null,
+        r.best ? el("span", {}, [document.createTextNode("Best day: "), el("b", { text: num(r.best.points) + " pts, " + new Date(r.best.day + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }) })]) : el("span"),
+        r.since ? el("span", {}, [document.createTextNode("Since "), el("b", { text: new Date(r.since + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }) })]) : null,
       ]),
     ])));
-    const p = data.points || {};
-    document.getElementById("legend").textContent = "Bars are pace: how far along a finish-level month each rung is by the workdays so far, where a finish-level day is " + PACE.named + " buyers named, " + PACE.cards + " cards to them, " + PACE.reached + " buyers reached and " + PACE.rfqs + " RFQs. Points: a dial " + (p.dial || 1) + ", a buyer named " + (p.named || 3) + ", the card to them " + (p.card || 2) + ", the buyer reached " + (p.reached || 5) + ", an RFQ " + (p.rfq || 30) + " and " + (p.firstRfq || 10) + " more for a company's first. Each paid once per company.";
     document.getElementById("when").textContent = "Updated " + new Date(data.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
   async function load() {
-    try { const r = await fetch("/api/public/bdr-stats", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); draw(await r.json()); }
+    try { const r = await fetch("/api/public/bdr-stats", { cache: "no-store" }); if (!r.ok) throw new Error(r.status); data = await r.json(); draw(); }
     catch (e) { document.getElementById("when").textContent = "Couldn't load the board"; }
   }
+  draw();
   load();
   setInterval(load, 5 * 60 * 1000);
 })();
