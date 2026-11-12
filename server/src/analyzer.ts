@@ -75,16 +75,16 @@ export function callStats(facts: CallFact[]): CallStats {
 
 const SynthesisSchema = z.object({
   works: z.array(z.object({
-    pattern: z.string().describe("What the rep does that tends to end in a name, a card to the buyer, a real conversation or an RFQ: one plain sentence, in the second person"),
+    pattern: z.string().describe("What the rep does that tends to end in a name, a card to the buyer, a real conversation or an RFQ: one plain sentence, in the second person. At most five patterns in all."),
     why: z.string().describe("Why it works, one sentence, from the calls themselves"),
-    quotes: z.array(z.string()).max(3).describe("The rep's own words from those calls, verbatim from the summaries or coaching, 1 to 3"),
-  })).max(5),
+    quotes: z.array(z.string()).describe("The rep's own words from those calls, verbatim from the summaries or coaching, one to three"),
+  })),
   fails: z.array(z.object({
     pattern: z.string().describe("What the rep does that tends to end in nothing: one plain sentence, in the second person"),
     why: z.string().describe("Why it fails, one sentence, from the calls"),
-    quotes: z.array(z.string()).max(3).describe("The moments, verbatim from the summaries or coaching, 1 to 3"),
+    quotes: z.array(z.string()).describe("The moments, verbatim from the summaries or coaching, 1 to 3"),
     instead: z.string().describe("What to do instead, one sentence they could use on the next call"),
-  })).max(5),
+  })),
   one_change: z.string().describe("The single change that would turn the most calls, one sentence"),
 });
 export type Synthesis = z.infer<typeof SynthesisSchema>;

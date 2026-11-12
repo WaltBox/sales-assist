@@ -182,7 +182,7 @@ export function createApp(appDeps: AppDeps) {
     const reps = (await Promise.all(listed.map(async (r) => {
       const dead = deadKeys.get(normalizeEmail(r.email));
       if (dead && Date.now() - dead < 60 * 60_000) return null;
-      try { await depsFor(r).then((d) => d.close.me()); deadKeys.delete(normalizeEmail(r.email)); return r; }
+      try { await depsFor(r).then((d) => d.close.leadStatuses()); deadKeys.delete(normalizeEmail(r.email)); return r; }
       catch (err) {
         if (/no access to this organization|401|403/i.test((err as Error).message)) { deadKeys.set(normalizeEmail(r.email), Date.now()); console.warn(`[reps] ${r.email}: Close key no longer works; left out for an hour`); return null; }
         return r;
