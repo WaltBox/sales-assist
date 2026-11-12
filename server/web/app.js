@@ -897,7 +897,7 @@ function callsPage() {
   const list = (title, cls, items, instead) => el("div", { class: `clist ${cls}` }, [
     el("h2", { text: title }),
     ...items.map((x) => el("div", { class: "citem" }, [
-      el("p", { class: "cpat", text: x.pattern }),
+      el("p", { class: "cpat", text: x.does || x.pattern }),
       el("p", { class: "cwhy", text: x.why }),
       x.quotes && x.quotes.length ? el("ul", { class: "cquotes" }, x.quotes.map((q) => el("li", { text: `“${q}”` }))) : null,
       instead && x.instead ? el("p", { class: "cinstead" }, [el("b", { text: "Instead: " }), x.instead]) : null,
