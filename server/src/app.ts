@@ -176,10 +176,22 @@ export function createApp(appDeps: AppDeps) {
     if (repsList && Date.now() - repsList.at < REPS_MS) return repsList.reps;
     const local = [...appDeps.reps.values()];
     const seen = new Set(local.map((r) => normalizeEmail(r.email)));
-    const reps = [...local, ...(await store.listReps()).filter((r) => !seen.has(r.email)).map(asRep)];
+    const listed = [...local, ...(await store.listReps()).filter((r) => !seen.has(r.email)).map(asRep)];
+    // A rep whose Close key no longer reaches the org is left out (11/12: two old keys, Ulysses and sales@, failed
+    // with a 403 on every teammate board, every lead open, all day). Checked once an hour, one cheap read each.
+    const reps = (await Promise.all(listed.map(async (r) => {
+      const dead = deadKeys.get(normalizeEmail(r.email));
+      if (dead && Date.now() - dead < 60 * 60_000) return null;
+      try { await depsFor(r).then((d) => d.close.me()); deadKeys.delete(normalizeEmail(r.email)); return r; }
+      catch (err) {
+        if (/no access to this organization|401|403/i.test((err as Error).message)) { deadKeys.set(normalizeEmail(r.email), Date.now()); console.warn(`[reps] ${r.email}: Close key no longer works; left out for an hour`); return null; }
+        return r;
+      }
+    }))).filter((r): r is Rep => !!r);
     repsList = { at: Date.now(), reps };
     return reps;
   };
+  const deadKeys = new Map<string, number>();
 
   // ---------- sign-in ----------
   const Email = z.object({ email: z.string().max(200) });
@@ -1236,6 +1248,7 @@ export function createApp(appDeps: AppDeps) {
   const liveRun = async () => {
     const deadline = Date.now() + 240_000;
     const out: Record<string, unknown> = {};
+    console.info("[live] run started");
     const owner = await hookContext.ownerDeps().catch(() => null);
     if (owner) out.webhook = await ensureCloseWebhook(owner).catch((err) => ({ error: (err as Error).message }));
     for (const rep of await allReps().catch(() => [])) {
@@ -1248,6 +1261,7 @@ export function createApp(appDeps: AppDeps) {
       await writeDayEvents(d).then((x) => { r.events = x.written; }).then(() => backfillEvents(d, { perRun: 2 })).then((b) => { r.backfill = b.days; }).catch((err) => { r.events = (err as Error).message; });
       out[rep.email] = r;
     }
+    console.info(`[live] done: ${JSON.stringify(out).slice(0, 600)}`);
     return out;
   };
   app.get("/api/cron/live", async (req: Request, res: Response, next: NextFunction) => {
