@@ -48,11 +48,12 @@ export async function writeDayEvents(d: Deps, day?: string): Promise<{ day: stri
 type Backfill = { nextDay: string; stopAt: string };
 const BACKFILL_DAYS = 60;
 /** Past days, a few per run (the cron's budget), newest first, back to sixty days; done once, then only today is written. */
-export async function backfillEvents(d: Deps, opts: { perRun?: number } = {}): Promise<{ days: string[]; done: boolean }> {
+export async function backfillEvents(d: Deps, opts: { perRun?: number; reset?: boolean } = {}): Promise<{ days: string[]; done: boolean }> {
   const key = d.rep.closeUserId;
   const now = d.now?.() ?? new Date();
   const today = localDay(d.rep.timeZone, now).day;
-  const saved = await store.getSetting<Backfill>(key, "rungEventsBackfill").catch(() => null);
+  // reset: start over from yesterday (11/12: every day rewritten after the RFQ count changed).
+  const saved = opts.reset ? null : await store.getSetting<Backfill>(key, "rungEventsBackfill").catch(() => null);
   const state: Backfill = saved ?? { nextDay: shiftDay(today, -1), stopAt: shiftDay(today, -BACKFILL_DAYS) };
   const days: string[] = [];
   for (let i = 0; i < (opts.perRun ?? 3) && state.nextDay >= state.stopAt; i++) {
