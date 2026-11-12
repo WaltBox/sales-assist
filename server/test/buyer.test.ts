@@ -71,10 +71,11 @@ test("only the name is required (Walt 11/11): a name alone is saved as the buyer
 test("the card goes the moment the buyer is reached (Walt 11/12): with an address and no card to it yet; nothing without an address", async () => {
   const close = new FakeClose({ calls: [] });
   close.leadStatus.set(DEMO_LEAD_ID, "Named buyer");
-  assert.deepEqual(await cardOnReach(deps(close), DEMO_LEAD_ID), { sent: null, why: "no email for Rob Roy" });
+  assert.deepEqual(await cardOnReach(deps(close), DEMO_LEAD_ID), { sent: null, again: false, why: "no email for Rob Roy" });
   close.lead_.contacts[1].emails = [{ email: "rob@roddaelectric.com", type: "office" }];
   const r = await cardOnReach(deps(close), DEMO_LEAD_ID);
   assert.equal(r.sent, "rob@roddaelectric.com");
+  assert.equal(r.again, false);
   assert.ok(close.writes.some((w) => w.op === "send" || w.op === "draft" || w.op === "email"), "an email went out");
   // It pays nothing: recorded as the app's own send, which the hand-card count leaves out (Walt 11/12).
   const auto = (await store.getSetting<Array<{ id: string }>>("user_buyer_walt", "autoCardIds")) ?? [];

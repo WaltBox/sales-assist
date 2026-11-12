@@ -2129,7 +2129,7 @@ function renderEnded() {
     !down && o && o.picked === "reached_buyer" && st.header && st.header.ladder && !st.header.ladder.buyer
       ? (() => { st.buyerForm = { ...(st.buyerForm || {}), open: true }; return el("div", { class: "namefirst" }, [el("p", { class: "label", text: "Who did you reach? Name them so the reach counts" }), objectiveCard(st)]); })()
       : null,
-    o && o.result && o.result.card && o.result.card.sent ? el("p", { class: "good small", text: `Line card sent to ${o.result.card.sent} on the reach.` }) : null,
+    o && o.result && o.result.card && o.result.card.sent ? el("p", { class: "good small", text: o.result.card.again ? `Line card sent again to ${o.result.card.sent}, top of their inbox.` : `Line card sent to ${o.result.card.sent} on the reach.` }) : null,
     !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? lineCardRow(st) : null,
     !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),

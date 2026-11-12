@@ -146,7 +146,7 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   // A real conversation: "Last reached" is today, so today's call lists in Close drop them (10/6).
   if (req.outcome === "reached_buyer" || req.outcome === "got_name") void markReached(d, leadId);
   // Reached: the card goes to the named buyer now, if they have an address and none has gone to it (Walt 11/12).
-  const cardOnReachP = req.outcome === "reached_buyer" ? cardOnReach(d, leadId).catch((err) => ({ sent: null, why: (err as Error).message })) : Promise.resolve(null);
+  const cardOnReachP = req.outcome === "reached_buyer" ? cardOnReach(d, leadId).catch((err) => ({ sent: null, again: false, why: (err as Error).message })) : Promise.resolve(null);
   recentTaps.set(tapKey, Date.now());
 
   const now = d.now?.() ?? new Date();
