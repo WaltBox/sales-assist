@@ -625,8 +625,9 @@ export function createApp(appDeps: AppDeps) {
   }));
   // Served relative to the web folder: an absolute path under a dot-directory (a worktree's .claude) is refused as a dotfile.
   app.get("/bdr-stats", (_req, res) => res.sendFile("bdr-stats.html", { root: path.resolve(ROOT, "web") }));
-  app.post("/api/game/events/backfill", authed, route(async (_req, d) => { careerMem = null; return backfillEvents(d, { perRun: 5 }); }));
-  app.post("/api/game/events/today", authed, route(async (_req, d) => { careerMem = null; return writeDayEvents(d); }));
+  // A write drops both cached reads (11/12: the board was read once before the first backfill and showed zeros for five minutes).
+  app.post("/api/game/events/backfill", authed, route(async (_req, d) => { careerMem = null; boardMem = null; return backfillEvents(d, { perRun: 5 }); }));
+  app.post("/api/game/events/today", authed, route(async (_req, d) => { careerMem = null; boardMem = null; return writeDayEvents(d); }));
   app.get("/api/race/roster", authed, route(async (_req, d) => {
     ownerOnly(d);
     const { ownerId } = await raceTeam(d);
