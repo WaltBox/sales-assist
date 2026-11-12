@@ -92,9 +92,11 @@ export type Synthesis = z.infer<typeof SynthesisSchema>;
 
 export type CallAnalysis = { rep: { email: string; name: string }; since: string; at: string; stats: CallStats; synthesis: Synthesis | null; synthesisError: string | null; calls: CallFact[] };
 
+// Kept short (11/12: Liam's 307 conversations ran the model's answer past its limit): a clipped summary and coaching line each.
+const clip = (s: string | null, n: number) => (s ?? "").replace(/\s+/g, " ").slice(0, n);
 const line = (f: CallFact) => {
   const after = Object.entries(f.after).filter(([, v]) => v).map(([k]) => k).join(",") || "nothing";
-  return `[${f.day} ${Math.round(f.seconds / 60)}m ${f.company} | with: ${f.with ?? "?"} | tap: ${f.label ?? f.outcome} | after: ${after}]\n  summary: ${f.summary ?? ""}\n  did well: ${f.nice ?? ""}\n  next time: ${f.next ?? ""}`;
+  return `[${f.day} ${Math.round(f.seconds / 60)}m ${f.company} | with: ${clip(f.with, 40) || "?"} | tap: ${f.label ?? f.outcome} | after: ${after}] ${clip(f.summary, 220)} | well: ${clip(f.nice, 140)} | next: ${clip(f.next, 140)}`;
 };
 
 export async function analyzeCalls(d: Deps, opts: { days?: number; fresh?: boolean } = {}): Promise<CallAnalysis> {
@@ -114,9 +116,9 @@ export async function analyzeCalls(d: Deps, opts: { days?: number; fresh?: boole
   const stats = callStats(calls);
   let synthesis: Synthesis | null = null, synthesisError: string | null = null;
   if (calls.length >= 5) {
-    const sample = [...calls.filter(WON).slice(0, 30), ...calls.filter((f) => !WON(f)).slice(0, 40)];
+    const sample = [...calls.filter(WON).slice(0, 20), ...calls.filter((f) => !WON(f)).slice(0, 28)];
     const context = `Rep: ${d.rep.name}. ${calls.length} conversations of 45 seconds or more in the last ${days} days; ${stats.after.named} were followed by a buyer named, ${stats.after.card} by a card to the buyer, ${stats.after.reached} by a real conversation with the buyer, ${stats.after.rfq} by an RFQ.\n\nThe calls (newest first; "after" is what the company did in the two weeks following):\n\n${sample.map(line).join("\n\n")}`;
-    const task = "You are coaching one BDR at an industrial PVF supplier (pipe, valves, fittings, flanges, structural steel). The job on a call is: get the buyer's name and email, get the line card to the buyer, reach the buyer, and get an RFQ (the last one they sent out, a quote they got, a PO, or three items). From these calls, find what this rep does that typically works and what typically fails. Patterns, not single calls: name a pattern only when it shows up in several calls. Quote the rep's or prospect's actual words from the summaries and coaching lines; never invent a quote. Plain words, second person, no jargon, no praise padding. Then the one change that would turn the most calls.";
+    const task = "You are coaching one BDR at an industrial PVF supplier (pipe, valves, fittings, flanges, structural steel). The job on a call is: get the buyer's name and email, get the line card to the buyer, reach the buyer, and get an RFQ (the last one they sent out, a quote they got, a PO, or three items). From these calls, find what this rep does that typically works and what typically fails. Patterns, not single calls: name a pattern only when it shows up in several calls. Quote the rep's or prospect's actual words from the summaries and coaching lines; never invent a quote. Plain words, second person, no jargon, no praise padding. Keep it tight: three to five patterns each side, one sentence per field, at most two short quotes per pattern. Then the one change that would turn the most calls.";
     try { synthesis = (await d.llm({ schema: SynthesisSchema, effort: config.effortEmail, model: config.briefModel, context, task })).data; }
     catch (err) { synthesisError = (err as Error).message; }
   } else synthesisError = calls.length ? `Only ${calls.length} conversations in the last ${days} days; the patterns need a few more.` : "No conversations read in this window.";
