@@ -1,6 +1,9 @@
 import { advanceStatus } from "./accounts.js";
 import { RFQ_TAG, type Deps } from "./assistant.js";
 import { markReachedByHand } from "./dialviews.js";
+import { buyerOf } from "./ladder.js";
+import { sendLineCard } from "./linecard.js";
+import { LINE_CARD } from "./stats.js";
 
 /**
  * The one control under the objective (Walt 11/11: "there needs to be like a Do this. Mark it's done"): the rep types
@@ -49,9 +52,27 @@ export async function markRfqIncoming(d: Deps, leadId: string, o: { name?: strin
   return { noteId: r.id };
 }
 
-/** The rep says they reached the buyer: Reached buyer in Close (what pays), and today's reach for the dial views. */
-export async function markBuyerReached(d: Deps, leadId: string): Promise<{ status: string | null; reached: boolean }> {
+/**
+ * The card goes the moment the buyer is reached (Walt 11/12: "maybe we should have a line card sent out when we reach
+ * that person"): the named buyer has an address and no card has gone to it yet, so it goes now, not with tomorrow's
+ * follow-up. No address, nothing to send: the card asks for one.
+ */
+export async function cardOnReach(d: Deps, leadId: string): Promise<{ sent: string | null; why: string | null }> {
+  const lead = await d.close.lead(leadId).catch(() => null);
+  const buyer = buyerOf(lead?.contacts);
+  if (!buyer) return { sent: null, why: "nobody named" };
+  if (!buyer.email) return { sent: null, why: `no email for ${buyer.name}` };
+  const emails = await d.close.leadEmails(leadId).catch(() => []);
+  const had = emails.some((e) => e.direction === "outgoing" && ["sent", "outbox"].includes(e.status) && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && (e.to ?? []).some((t) => t.toLowerCase().includes(buyer.email!.toLowerCase())));
+  if (had) return { sent: null, why: `${buyer.name} already has it` };
+  await sendLineCard(d, leadId, { to: buyer.email, name: buyer.name, cold: false });
+  return { sent: buyer.email, why: null };
+}
+
+/** The rep says they reached the buyer: Reached buyer in Close (what pays), today's reach for the dial views, and the card to them. */
+export async function markBuyerReached(d: Deps, leadId: string): Promise<{ status: string | null; reached: boolean; card: { sent: string | null; why: string | null } }> {
   const status = await advanceStatus(d, leadId, "Reached buyer").catch(() => null);
   const reached = await markReachedByHand(d, leadId).catch(() => false);
-  return { status, reached };
+  const card = await cardOnReach(d, leadId).catch((err) => ({ sent: null, why: (err as Error).message }));
+  return { status, reached, card };
 }

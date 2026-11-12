@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cardOnReach } from "./buyer.js";
 import {
   afterCall, afterCallExtras, applyProposals, DuplicateApplyError, leadChat, RFQ_ASKED_TAG, tagNote, taskText, taskTitle, type ApplyResult, type Coaching, type Deps,
 } from "./assistant.js";
@@ -144,6 +145,8 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   if (!change && last && Date.now() - last < 10 * 60 * 1000) throw new QueueError("You already saved an outcome for this call.");
   // A real conversation: "Last reached" is today, so today's call lists in Close drop them (10/6).
   if (req.outcome === "reached_buyer" || req.outcome === "got_name") void markReached(d, leadId);
+  // Reached: the card goes to the named buyer now, if they have an address and none has gone to it (Walt 11/12).
+  const cardOnReachP = req.outcome === "reached_buyer" ? cardOnReach(d, leadId).catch((err) => ({ sent: null, why: (err as Error).message })) : Promise.resolve(null);
   recentTaps.set(tapKey, Date.now());
 
   const now = d.now?.() ?? new Date();
@@ -273,6 +276,7 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
       return {
         saved, results, queued: prev.id, label: OUTCOME_LABEL[req.outcome], prevStatus: f.statusLabel, setStatus: savedStatus,
         task: taskId && savedTaskAt ? { id: taskId, due_at: savedTaskAt, when: formatLocal(due, tz, true), options: rescheduleOptions(tz, now) } : null,
+        card: await cardOnReachP,
       };
     }
   }
@@ -304,6 +308,7 @@ export async function quickOutcome(d: Deps, leadId: string, req: {
   return {
     saved, results, queued: queued?.id ?? null, label: OUTCOME_LABEL[req.outcome], prevStatus: f.statusLabel, setStatus: savedStatus,
     task: taskId && savedTaskAt ? { id: taskId, due_at: savedTaskAt, when: formatLocal(due, tz, true), options: rescheduleOptions(tz, now) } : null,
+    card: await cardOnReachP,
   };
 }
 

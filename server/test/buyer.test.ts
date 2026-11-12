@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Deps } from "../src/assistant.js";
-import { markBuyerReached, markRfqIncoming, saveBuyer } from "../src/buyer.js";
+import { cardOnReach, markBuyerReached, markRfqIncoming, saveBuyer } from "../src/buyer.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID } from "../src/fixtures.js";
 
@@ -65,4 +65,14 @@ test("only the name is required (Walt 11/11): a name alone is saved as the buyer
   const close2 = new FakeClose({ calls: [] });
   await saveBuyer(deps(close2), DEMO_LEAD_ID, { name: "Jim", email: "jim@jrhoe.com" });
   assert.deepEqual(close2.writes.find((w) => w.op === "contact")!.body, { leadId: DEMO_LEAD_ID, name: "Jim", title: null, email: "jim@jrhoe.com", phone: null });
+});
+
+test("the card goes the moment the buyer is reached (Walt 11/12): with an address and no card to it yet; nothing without an address", async () => {
+  const close = new FakeClose({ calls: [] });
+  close.leadStatus.set(DEMO_LEAD_ID, "Named buyer");
+  assert.deepEqual(await cardOnReach(deps(close), DEMO_LEAD_ID), { sent: null, why: "no email for Rob Roy" });
+  close.lead_.contacts[1].emails = [{ email: "rob@roddaelectric.com", type: "office" }];
+  const r = await cardOnReach(deps(close), DEMO_LEAD_ID);
+  assert.equal(r.sent, "rob@roddaelectric.com");
+  assert.ok(close.writes.some((w) => w.op === "send" || w.op === "draft" || w.op === "email"), "an email went out");
 });

@@ -258,6 +258,8 @@ async function pickOutcome(outcome) {
     st.outcome = { picked: outcome, busy: false, result: r, noteSent: drafts[`note:${st.leadId}`] || "",
       origStatus: change ? change.prev_status : r.prevStatus, changedFrom: prev ? prev.picked : null };
     st.handledCallId = st.callId;
+    // The card went to the buyer on the reach (11/12): the ladder and the line card row catch up.
+    if (r.card && r.card.sent) loadBrief(st).catch(() => {});
     if (change) syncStats(true); // the reached count follows the corrected outcome
     else if (outcome === "reached_buyer" || outcome === "got_name") countReached(st.callId);
     refreshQueue();
@@ -2127,6 +2129,7 @@ function renderEnded() {
     !down && o && o.picked === "reached_buyer" && st.header && st.header.ladder && !st.header.ladder.buyer
       ? (() => { st.buyerForm = { ...(st.buyerForm || {}), open: true }; return el("div", { class: "namefirst" }, [el("p", { class: "label", text: "Who did you reach? Name them so the reach counts" }), objectiveCard(st)]); })()
       : null,
+    o && o.result && o.result.card && o.result.card.sent ? el("p", { class: "good small", text: `Line card sent to ${o.result.card.sent} on the reach.` }) : null,
     !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? lineCardRow(st) : null,
     !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),
