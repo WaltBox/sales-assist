@@ -373,7 +373,7 @@ export function createApp(appDeps: AppDeps) {
     }
     return null;
   };
-  app.get("/g/:token", (_req, res) => res.sendFile(path.resolve(ROOT, "web", "guest.html")));
+  app.get("/g/:token", (_req, res) => res.sendFile("guest.html", { root: path.resolve(ROOT, "web") }));
   app.get("/api/guest/:token", async (req, res, next) => {
     try {
       const g = await guestFromToken(String(req.params.token));
@@ -607,6 +607,24 @@ export function createApp(appDeps: AppDeps) {
     careerMem = { at: Date.now(), value: { reps, points: RUNG_POINTS } };
     return careerMem.value;
   }));
+  // The public BDR board (Walt 11/12: "a webpage that shows each bdrs stats ... a public page, at /bdr-stats"): the
+  // roster's reps from the events table, first names and counts only, no company names, cached five minutes.
+  let boardMem: { at: number; value: unknown } | null = null;
+  app.get("/api/public/bdr-stats", route(async () => {
+    if (boardMem && Date.now() - boardMem.at < 5 * 60_000) return boardMem.value;
+    const owner = await hookContext.ownerDeps();
+    const excluded = new Set(owner ? (await raceRoster(owner.rep.closeUserId)).excluded : []);
+    const team = (await hookContext.allDeps()).filter((t) => !excluded.has(t.rep.email.toLowerCase()));
+    const reps = (await Promise.all(team.map(async (t) => {
+      const c = await careerFor(t.rep.closeUserId, t.rep.timeZone).catch(() => null);
+      if (!c) return null;
+      return { first: t.rep.name.split(/\s+/)[0] || t.rep.name, since: c.since, days: c.days, all: c.all, month: c.month, best: c.best, rfqDays: c.rfqs.map((r) => r.day) };
+    }))).filter((r): r is NonNullable<typeof r> => !!r);
+    boardMem = { at: Date.now(), value: { at: new Date().toISOString(), points: RUNG_POINTS, reps } };
+    return boardMem.value;
+  }));
+  // Served relative to the web folder: an absolute path under a dot-directory (a worktree's .claude) is refused as a dotfile.
+  app.get("/bdr-stats", (_req, res) => res.sendFile("bdr-stats.html", { root: path.resolve(ROOT, "web") }));
   app.post("/api/game/events/backfill", authed, route(async (_req, d) => { careerMem = null; return backfillEvents(d, { perRun: 5 }); }));
   app.post("/api/game/events/today", authed, route(async (_req, d) => { careerMem = null; return writeDayEvents(d); }));
   app.get("/api/race/roster", authed, route(async (_req, d) => {
