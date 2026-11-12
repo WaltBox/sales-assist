@@ -1216,6 +1216,30 @@ export function createApp(appDeps: AppDeps) {
     await sweep().catch(() => {});
     return { waiting: waiting.length };
   };
+  // The live parts, every half hour on weekdays (11/12: the catch-up runs twice a day at 5 AM, so the Close
+  // subscription, the records, the queue and the events table sat empty all day). No emails here: the morning wave
+  // stays the catch-up's, once a morning.
+  const liveRun = async () => {
+    const deadline = Date.now() + 240_000;
+    const out: Record<string, unknown> = {};
+    const owner = await hookContext.ownerDeps().catch(() => null);
+    if (owner) out.webhook = await ensureCloseWebhook(owner).catch((err) => ({ error: (err as Error).message }));
+    for (const rep of await allReps().catch(() => [])) {
+      if (Date.now() > deadline) { out[rep.email] = "out of time"; break; }
+      const d = await depsFor(rep).catch(() => null);
+      if (!d) continue;
+      const r: Record<string, unknown> = {};
+      await syncQueues([d]).catch((err) => { r.queue = (err as Error).message; });
+      await reconcileAccounts(d).then((x) => { r.records = x.ran ? x.written : "fresh"; }).catch((err) => { r.records = (err as Error).message; });
+      await writeDayEvents(d).then((x) => { r.events = x.written; }).then(() => backfillEvents(d, { perRun: 2 })).then((b) => { r.backfill = b.days; }).catch((err) => { r.events = (err as Error).message; });
+      out[rep.email] = r;
+    }
+    return out;
+  };
+  app.get("/api/cron/live", async (req: Request, res: Response, next: NextFunction) => {
+    if (!config.cronSecret || req.header("authorization") !== `Bearer ${config.cronSecret}`) { res.status(401).json({ error: "cron secret" }); return; }
+    try { res.json(await liveRun()); } catch (err) { next(err); }
+  });
   app.locals.catchUp = catchUp;
   app.get("/api/cron/catch-up", async (req: Request, res: Response, next: NextFunction) => {
     if (!config.cronSecret || req.header("authorization") !== `Bearer ${config.cronSecret}`) {

@@ -7,6 +7,7 @@
   },
   "crons": [
     { "path": "/api/cron/catch-up", "schedule": "5 11 * * *" },
-    { "path": "/api/cron/catch-up", "schedule": "40 11 * * *" }
+    { "path": "/api/cron/catch-up", "schedule": "40 11 * * *" },
+    { "path": "/api/cron/live", "schedule": "*/30 12-23 * * 1-5" }
   ]
 }
