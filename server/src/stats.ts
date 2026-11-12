@@ -3,6 +3,7 @@ import { classifyOpen, RFQ_ASKED_TAG, RFQ_IN_TAG, RFQ_TAG, type Deps } from "./a
 import type { CloseCall } from "./close.js";
 import { transcriptText } from "./close.js";
 import { callSummaries, tappedOutcomes } from "./queue.js";
+import { buyerOf } from "./ladder.js";
 import { store } from "./store.js";
 import { config } from "./config.js";
 import { localParts, zonedTime } from "./rules.js";
@@ -95,12 +96,12 @@ export const toAPerson = (e: { to?: unknown }) => Array.isArray(e.to) && e.to.le
  */
 /** The days a contact the rep made still backs a Named buyer move (the status can lag the contact by a sync or two). */
 export const NAMED_BACKING_DAYS = 7;
-export function ladderCounts(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[], contacts: Array<{ lead_id: string; date_created: string }> = []) {
-  const { named, reached } = ladderLeads(moves, calls, contacts);
+export function ladderCounts(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[], contacts: Array<{ lead_id: string; date_created: string }> = [], namedLeads?: Set<string>) {
+  const { named, reached } = ladderLeads(moves, calls, contacts, namedLeads);
   return { namedBuyers: named.size, reachedBuyers: reached.size };
 }
 /** The leads behind those counts, with when each rung was reached (for the events table, 11/11). */
-export function ladderLeads(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[], contacts: Array<{ lead_id: string; date_created: string }> = []) {
+export function ladderLeads(moves: Array<{ lead_id: string; date_created: string; new_status_label: string }>, calls: CloseCall[], contacts: Array<{ lead_id: string; date_created: string }> = [], namedLeads?: Set<string>) {
   const talked = new Set(calls.filter((c) => c.disposition === "answered" && (c.duration ?? 0) >= 60).map((c) => c.lead_id));
   // A buyer named is a move to Named buyer backed by a contact this rep created on that lead in the week before it
   // (11/11: the ladder migration moved thousands of leads with Walt's key and the move alone paid him 440).
@@ -110,9 +111,23 @@ export function ladderLeads(moves: Array<{ lead_id: string; date_created: string
   const named = new Map<string, string>(), reached = new Map<string, string>();
   for (const m of moves) {
     if (/^named buyer$/i.test(m.new_status_label) && backed(m) && !named.has(m.lead_id)) named.set(m.lead_id, m.date_created);
-    if (/^(reached buyer|qualified)$/i.test(m.new_status_label) && talked.has(m.lead_id) && !reached.has(m.lead_id)) reached.set(m.lead_id, m.date_created);
+    // A reach needs a named buyer on the lead (Walt 11/12: "They should have to name the buyer if they aren't named
+    // already"); without one it was a conversation with whoever answered, and it pays once the name is in.
+    if (/^(reached buyer|qualified)$/i.test(m.new_status_label) && talked.has(m.lead_id) && !reached.has(m.lead_id) && (!namedLeads || namedLeads.has(m.lead_id))) reached.set(m.lead_id, m.date_created);
   }
   return { named, reached };
+}
+/** Of these leads, the ones with a named buyer on them now (a person with a buying title or their own address). */
+const buyerMem = new Map<string, { at: number; has: boolean }>();
+export async function leadsWithBuyer(d: Deps, leadIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  await Promise.all([...new Set(leadIds)].map(async (id) => {
+    const hit = buyerMem.get(id);
+    const has = hit && Date.now() - hit.at < 5 * 60_000 ? hit.has : !!buyerOf((await d.close.lead(id).catch(() => null))?.contacts);
+    buyerMem.set(id, { at: Date.now(), has });
+    if (has) out.add(id);
+  }));
+  return out;
 }
 /** What a day's counts were made of (11/11): the events table is written from these, not from the counts. */
 export type DayFacts = { day: string; calls: Array<{ id: string; leadId: string; at: string }>; named: Array<{ leadId: string; at: string }>; reached: Array<{ leadId: string; at: string }>; cards: Array<{ leadId: string; at: string }> };
@@ -171,7 +186,9 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
   const tapped = await tappedOutcomes(me);
 
   const reached = calls.filter((c) => isReached(c, tapped));
-  const rungs = ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts);
+  const inPeriod = moves.filter((m) => inRange(m.date_created, since, until));
+  const namedLeads = await leadsWithBuyer(d, inPeriod.filter((m) => /^(reached buyer|qualified)$/i.test(m.new_status_label)).map((m) => m.lead_id));
+  const rungs = ladderCounts(inPeriod, calls, contacts, namedLeads);
   const sent = emails.filter((e) => e.user_id === me && e.status === "sent" && e.direction !== "incoming"
     && inRange(e.date_sent ?? e.date_updated, since, until));
   const lineCards = sent.filter((e) => ((e.attachments as Array<{ filename?: string }> | undefined) ?? []).some((a) => a.filename === LINE_CARD));
@@ -213,7 +230,7 @@ export async function dayStats(d: Deps, opts: { fresh?: boolean } = {}): Promise
   });
 
   const buyerCardLeads = await handLineCardLeads(lineCards.filter(toAPerson), me, since);
-  const rungLeads = ladderLeads(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts);
+  const rungLeads = ladderLeads(inPeriod, calls, contacts, namedLeads);
   dayFactsMem.set(key, {
     day,
     calls: calls.map((c) => ({ id: c.id, leadId: c.lead_id, at: c.date_created })),
@@ -366,7 +383,8 @@ async function loadPeriod(d: Deps, period: Period, opts: { fresh?: boolean } = {
     rfqs: tagged(RFQ_TAG, true).size,
     rfqAsked: tagged(RFQ_ASKED_TAG, true).size,
     rfqReceived: new Set([...rfqInMails.map((e) => e.lead_id), ...rfqInNotes.map((n) => n.lead_id)]).size,
-    ...ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts),
+    ...ladderCounts(moves.filter((m) => inRange(m.date_created, since, until)), calls, contacts,
+      await leadsWithBuyer(d, moves.filter((m) => inRange(m.date_created, since, until) && /^(reached buyer|qualified)$/i.test(m.new_status_label)).map((m) => m.lead_id))),
     buyerCards: (await handLineCardLeads(lineCardMails.filter(toAPerson), me, since)).size,
   };
   const data = { value, calls, tapped, lineCardMails, replyMails, rfqInMails, rfqNotes, rfqInNotes, notes };

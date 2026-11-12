@@ -2122,6 +2122,11 @@ function renderEnded() {
     el("div", {}, [el("p", { class: "label", text: "Anything to add? Optional", style: "margin: 4px 8px 6px" }),
       noteInput(st)]),
     // Send the line card from here once you've hung up, instead of staying on the call (Walt 9/29).
+    // Reached buyer with nobody named on the lead (Walt 11/12: "They should have to name the buyer"): the name fields,
+    // right here; the reach pays once the name is in Close.
+    !down && o && o.picked === "reached_buyer" && st.header && st.header.ladder && !st.header.ladder.buyer
+      ? (() => { st.buyerForm = { ...(st.buyerForm || {}), open: true }; return el("div", { class: "namefirst" }, [el("p", { class: "label", text: "Who did you reach? Name them so the reach counts" }), objectiveCard(st)]); })()
+      : null,
     !down && (!o || o.picked === "reached_buyer" || o.picked === "pms_buy" || o.picked === "got_name") ? lineCardRow(st) : null,
     !down && st.header && st.header.opens && st.header.opens.emails > 0 ? el("div", { class: "afterfollow" }, [
       el("p", { class: "label", text: "You've emailed them before" }),

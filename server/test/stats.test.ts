@@ -169,6 +169,9 @@ test("the ladder counts (11/11): a buyer named needs a contact the rep made behi
     { lead_id: "lead_c", date_created: "2026-10-01T12:00:00.000Z" }, // too old to be today's work
   ];
   assert.deepEqual(ladderCounts(moves, calls, contacts), { namedBuyers: 2, reachedBuyers: 1 });
+  // A reach needs a named buyer on the lead (Walt 11/12): a minute on the main line with nobody named pays nothing.
+  assert.deepEqual(ladderCounts(moves, calls, contacts, new Set(["lead_a"])), { namedBuyers: 2, reachedBuyers: 0 });
+  assert.deepEqual(ladderCounts(moves, calls, contacts, new Set(["lead_d"])), { namedBuyers: 2, reachedBuyers: 1 });
   // The migration: thousands of moves, no contacts.
   assert.deepEqual(ladderCounts(moves, calls, []), { namedBuyers: 0, reachedBuyers: 1 });
 });

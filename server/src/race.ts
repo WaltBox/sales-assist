@@ -2,7 +2,7 @@ import type { Deps } from "./assistant.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 import { background } from "./background.js";
 import { onCloseEvent } from "./closehooks.js";
-import { LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
+import { buyerOf, LADDER_GOAL, RUNG_POINTS } from "./ladder.js";
 import { ADMIN_DOC, dayStats, LINE_CARD, localDay, OUR_QUOTE, periodStats, rfqTimeline, theirFiles, toAPerson, NAMED_BACKING_DAYS } from "./stats.js";
 import { earlierCalls, getList, guestLeadIds, listGuests, type Guest } from "./guests.js";
 import { ownerFieldId } from "./myleads.js";
@@ -557,6 +557,8 @@ export async function recordStatusEvent(d: Deps, change: { lead_id?: string | nu
     const made = await d.close.contactsCreatedSince(since, d.rep.closeUserId).catch(() => []);
     if (!made.some((c) => c.lead_id === change.lead_id)) return false;
   }
+  // A reach needs a named buyer on the lead (Walt 11/12); it pays on the next check once the name is in.
+  if (kind === "reached" && !buyerOf((await d.close.lead(change.lead_id).catch(() => null))?.contacts)) return false;
   const day = todayOf(d, at);
   if (!day) return false;
   await tally(d, day, (cur) => { cur[kind] = { ...(cur[kind] ?? {}), [change.lead_id!]: at }; });
