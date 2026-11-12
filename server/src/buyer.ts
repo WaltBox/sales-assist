@@ -3,7 +3,7 @@ import { RFQ_TAG, type Deps } from "./assistant.js";
 import { markReachedByHand } from "./dialviews.js";
 import { buyerOf } from "./ladder.js";
 import { sendLineCard } from "./linecard.js";
-import { LINE_CARD } from "./stats.js";
+import { LINE_CARD, rememberAutoCard } from "./stats.js";
 
 /**
  * The one control under the objective (Walt 11/11: "there needs to be like a Do this. Mark it's done"): the rep types
@@ -65,7 +65,10 @@ export async function cardOnReach(d: Deps, leadId: string): Promise<{ sent: stri
   const emails = await d.close.leadEmails(leadId).catch(() => []);
   const had = emails.some((e) => e.direction === "outgoing" && ["sent", "outbox"].includes(e.status) && (e.attachments ?? []).some((a) => a.filename === LINE_CARD) && (e.to ?? []).some((t) => t.toLowerCase().includes(buyer.email!.toLowerCase())));
   if (had) return { sent: null, why: `${buyer.name} already has it` };
-  await sendLineCard(d, leadId, { to: buyer.email, name: buyer.name, cold: false });
+  const sent = await sendLineCard(d, leadId, { to: buyer.email, name: buyer.name, cold: false });
+  // The reach paid its 5; a card the app sent on its own pays nothing (Walt 11/12: "that shouldn't reward additional
+  // points"). Recorded like the sequence's sends, which the hand-card count leaves out.
+  await rememberAutoCard(d.rep.closeUserId, sent.id, sent.at).catch(() => undefined);
   return { sent: buyer.email, why: null };
 }
 

@@ -22,9 +22,18 @@ const DAY_MS = 24 * 3600 * 1000;
  * the automatic sequence sent, which are recorded by their Close email id. Counted by company, so a resend to a
  * corrected address doesn't count twice. (Counting attachments alone gave Walt 57 on a day he sent none by hand.)
  */
+/** Cards the app sent on its own (on a reach, 11/12), by Close email id, so they never pay as a hand card. */
+export const AUTO_CARDS_KEY = "autoCardIds";
+export type AutoCard = { id: string; at: string };
+export async function rememberAutoCard(repId: string, id: string, at: string) {
+  const keep = new Date(Date.parse(at) - 45 * DAY_MS).toISOString();
+  const rows = ((await store.getSetting<AutoCard[]>(repId, AUTO_CARDS_KEY).catch(() => null)) ?? []).filter((r) => r.at >= keep);
+  await store.putSetting(repId, AUTO_CARDS_KEY, [...rows, { id, at }]);
+}
 async function handLineCardLeads(lineCardMails: Array<Record<string, unknown>>, me: string, since: Date): Promise<Set<string>> {
   const rows = await store.listAutomations(me, new Date(since.getTime() - 21 * DAY_MS).toISOString()).catch(() => []);
-  const automatic = new Set(rows.map((r) => r.id));
+  const auto = (await store.getSetting<AutoCard[]>(me, AUTO_CARDS_KEY).catch(() => null)) ?? [];
+  const automatic = new Set([...rows.map((r) => r.id), ...auto.map((r) => r.id)]);
   return new Set(lineCardMails.filter((e) => !automatic.has(String(e.id))).map((e) => String(e.lead_id)));
 }
 

@@ -4,6 +4,7 @@ import type { Deps } from "../src/assistant.js";
 import { cardOnReach, markBuyerReached, markRfqIncoming, saveBuyer } from "../src/buyer.js";
 import { demoLlm, FakeClose } from "../src/demo.js";
 import { DEMO_LEAD_ID } from "../src/fixtures.js";
+import { store } from "../src/store.js";
 
 const rep = { name: "Walt Boxwell", email: "walt@westgatesupply.com", closeUserId: "user_buyer_walt", timeZone: "America/Chicago", sender: null, emailAccountId: null };
 const deps = (close: FakeClose): Deps => ({ close: close as unknown as Deps["close"], llm: demoLlm, rep, now: () => new Date("2026-11-12T15:00:00Z") });
@@ -75,4 +76,8 @@ test("the card goes the moment the buyer is reached (Walt 11/12): with an addres
   const r = await cardOnReach(deps(close), DEMO_LEAD_ID);
   assert.equal(r.sent, "rob@roddaelectric.com");
   assert.ok(close.writes.some((w) => w.op === "send" || w.op === "draft" || w.op === "email"), "an email went out");
+  // It pays nothing: recorded as the app's own send, which the hand-card count leaves out (Walt 11/12).
+  const auto = (await store.getSetting<Array<{ id: string }>>("user_buyer_walt", "autoCardIds")) ?? [];
+  assert.equal(auto.length, 1);
+  // (Real Close lists the send on the lead afterwards, so a second reach finds "already has it"; the fake doesn't.)
 });
