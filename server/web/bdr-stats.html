@@ -45,8 +45,11 @@
   .funnel { margin: 12px 0 8px; display: flex; flex-direction: column; gap: 7px; }
   .row { display: grid; grid-template-columns: 118px 1fr 44px 54px; align-items: center; gap: 8px; font-size: 13px; }
   .row .l { font-weight: 600; }
-  .bar { height: 12px; background: var(--paper-dark); border: 1px solid var(--ink-line); overflow: hidden; }
+  .bar { height: 14px; background: var(--paper-dark); border: 1px solid var(--ink-line); overflow: hidden; position: relative; }
   .bar i { display: block; height: 100%; background: var(--navy); }
+  .bar em { position: absolute; right: 5px; top: 0; line-height: 12px; font-style: normal; font-family: var(--label); font-size: 10px; letter-spacing: .06em; color: var(--muted); }
+  .row.on .bar i { background: var(--green); }
+  .row.on .bar em { color: #fff; }
   .row.rfq .bar i { background: var(--red); }
   .row .n { font-family: var(--display); font-weight: 700; font-size: 16px; text-align: right; }
   .row .a { font-family: var(--label); font-size: 10.5px; letter-spacing: .06em; color: var(--muted); text-align: right; white-space: nowrap; }
@@ -78,9 +81,24 @@
   const month = new Date().toLocaleDateString([], { month: "long" });
   document.getElementById("sub").textContent = "Pipeline built and RFQs brought in, " + month + ".";
   function tile(k, v, s, red) { return el("div", { class: "tile" }, [el("div", { class: "k", text: k }), el("div", { class: "v" + (red ? " red" : ""), text: num(v) }), s ? el("div", { class: "s", text: s }) : null]); }
-  function row(label, n, all, max, cls) {
-    const w = max ? Math.max(2, Math.round(100 * n / max)) : 0;
-    return el("div", { class: "row " + (cls || "") }, [el("span", { class: "l", text: label }), el("div", { class: "bar" }, [el("i", { style: "width:" + w + "%" })]), el("span", { class: "n", text: num(n) }), el("span", { class: "a", text: num(all) + " all" })]);
+  // The bars are pace (Walt 11/12: a full bar "as if its at 100%" meant nothing with one rep): how far along a
+  // finish-level month each rung is, by the workdays so far. A finish-level day is 12 buyers named, 12 cards to them,
+  // 10 buyers reached and 3 RFQs, the day the 350 was set on (Walt 11/11).
+  const PACE = { named: 12, cards: 12, reached: 10, rfqs: 3 };
+  function workdaysSoFar() {
+    const now = new Date(); let n = 0;
+    for (let d = 1; d <= now.getDate(); d++) { const w = new Date(now.getFullYear(), now.getMonth(), d).getDay(); if (w !== 0 && w !== 6) n++; }
+    return Math.max(1, n);
+  }
+  function row(label, n, all, key, cls) {
+    const goal = PACE[key] * workdaysSoFar();
+    const pct = Math.round(100 * n / goal);
+    const w = Math.min(100, Math.max(n ? 2 : 0, pct));
+    return el("div", { class: "row " + (cls || "") + (pct >= 100 ? " on" : ""), title: num(n) + " of " + num(goal) + " for a finish-level month so far (" + pct + "%)" }, [
+      el("span", { class: "l", text: label }),
+      el("div", { class: "bar" }, [el("i", { style: "width:" + w + "%" }), el("em", { text: pct + "%" })]),
+      el("span", { class: "n", text: num(n) }), el("span", { class: "a", text: num(all) + " all" }),
+    ]);
   }
   function draw(data) {
     const reps = (data.reps || []).slice().sort((a, b) => (b.month.points - a.month.points) || (b.all.points - a.all.points));
@@ -93,17 +111,16 @@
       tile("Cards to a buyer", sum("cards"), "line cards in a buyer's inbox"),
       tile("Dials", sum("dials"), reps.length + " BDRs"),
     );
-    const maxNamed = Math.max(1, ...reps.map((r) => r.month.named)), maxRfq = Math.max(1, ...reps.map((r) => r.month.rfqs));
     const board = document.getElementById("board");
     if (!reps.length) { board.replaceChildren(el("div", { class: "empty", text: "Nothing on the board yet. The first day's numbers land tonight." })); return; }
     board.replaceChildren(...reps.map((r, i) => el("article", { class: "bdr" + (i === 0 && r.month.points > 0 ? " p1" : "") }, [
       el("span", { class: "rank", text: "#" + (i + 1) }),
       el("div", { class: "name" }, [el("b", { text: r.first }), el("span", { class: "pts" }, [document.createTextNode(num(r.month.points)), el("small", { text: "pts " + month })])]),
       el("div", { class: "funnel" }, [
-        row("Buyers named", r.month.named, r.all.named, maxNamed),
-        row("Cards to buyer", r.month.cards, r.all.cards, maxNamed),
-        row("Buyers reached", r.month.reached, r.all.reached, maxNamed),
-        row("RFQs in", r.month.rfqs, r.all.rfqs, maxRfq, "rfq"),
+        row("Buyers named", r.month.named, r.all.named, "named"),
+        row("Cards to buyer", r.month.cards, r.all.cards, "cards"),
+        row("Buyers reached", r.month.reached, r.all.reached, "reached"),
+        row("RFQs in", r.month.rfqs, r.all.rfqs, "rfqs", "rfq"),
       ]),
       el("div", { class: "foot" }, [
         el("span", {}, [document.createTextNode("New companies: "), el("b", { text: num(r.month.firstRfqs) })]),
@@ -112,7 +129,7 @@
       ]),
     ])));
     const p = data.points || {};
-    document.getElementById("legend").textContent = "Points: a dial " + (p.dial || 1) + ", a buyer named " + (p.named || 3) + ", the card to them " + (p.card || 2) + ", the buyer reached " + (p.reached || 5) + ", an RFQ " + (p.rfq || 30) + " and " + (p.firstRfq || 10) + " more for a company's first. Each paid once per company.";
+    document.getElementById("legend").textContent = "Bars are pace: how far along a finish-level month each rung is by the workdays so far, where a finish-level day is " + PACE.named + " buyers named, " + PACE.cards + " cards to them, " + PACE.reached + " buyers reached and " + PACE.rfqs + " RFQs. Points: a dial " + (p.dial || 1) + ", a buyer named " + (p.named || 3) + ", the card to them " + (p.card || 2) + ", the buyer reached " + (p.reached || 5) + ", an RFQ " + (p.rfq || 30) + " and " + (p.firstRfq || 10) + " more for a company's first. Each paid once per company.";
     document.getElementById("when").textContent = "Updated " + new Date(data.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
   async function load() {
