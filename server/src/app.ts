@@ -628,6 +628,24 @@ export function createApp(appDeps: AppDeps) {
   // A write drops both cached reads (11/12: the board was read once before the first backfill and showed zeros for five minutes).
   app.post("/api/game/events/backfill", authed, route(async (_req, d) => { careerMem = null; boardMem = null; return backfillEvents(d, { perRun: 5 }); }));
   app.post("/api/game/events/today", authed, route(async (_req, d) => { careerMem = null; boardMem = null; return writeDayEvents(d); }));
+  // Everyone at once, for the owner (11/12: the board went up with five reps at zero and the cron fills two days a
+  // run): today's events and a few past days per rep, inside the request's time budget.
+  app.post("/api/game/events/backfill-all", authed, route(async (req, d) => {
+    if (d.rep.email.toLowerCase() !== config.ownerEmail) throw new Error("Only the owner can run this.");
+    const deadline = Date.now() + 200_000;
+    const perRun = Math.min(10, Math.max(1, Number(req.body?.days) || 3));
+    const out: Array<{ email: string; today?: number; days?: string[]; done?: boolean; error?: string }> = [];
+    for (const t of await hookContext.allDeps()) {
+      if (Date.now() > deadline) { out.push({ email: t.rep.email, error: "out of time; call again" }); continue; }
+      try {
+        const today = await writeDayEvents(t);
+        const b = await backfillEvents(t, { perRun });
+        out.push({ email: t.rep.email, today: today.written, days: b.days, done: b.done });
+      } catch (err) { out.push({ email: t.rep.email, error: (err as Error).message }); }
+    }
+    careerMem = null; boardMem = null;
+    return { reps: out };
+  }));
   app.get("/api/race/roster", authed, route(async (_req, d) => {
     ownerOnly(d);
     const { ownerId } = await raceTeam(d);
