@@ -17,6 +17,7 @@ import { cachedQueue, nextUp, queueSpot, syncQueue, syncQueues } from "./dialque
 import { markBuyerReached, markRfqIncoming, saveBuyer } from "./buyer.js";
 import { backfillEvents, careerFor, writeDayEvents } from "./events.js";
 import { analyzeCalls } from "./analyzer.js";
+import { cardBatch } from "./cardbatch.js";
 import { RUNG_POINTS } from "./ladder.js";
 import { ensureCloseWebhook, firstTime, handleCloseEvent, hookStats, onCloseEvent, parseCloseEvent, signatureMatches, storedWebhook, timestampFresh, webhookKeys, WEBHOOK_PATH, type HookContext } from "./closehooks.js";
 import type { RepInfo } from "./context.js";
@@ -534,6 +535,9 @@ export function createApp(appDeps: AppDeps) {
     const reps = normalizeEmail(d.rep.email) === config.ownerEmail ? (await allReps()).map((r) => ({ email: normalizeEmail(r.email), name: r.name })) : [];
     return { ...(await analyzeCalls(target, { fresh: req.query.fresh === "1" })), reps };
   }));
+  // A batch of line cards to named buyers, scheduled in Close (11/13). dryRun first; the rep's own leads.
+  const CardBatchRequest = z.object({ leadIds: z.array(z.string()).min(1).max(60), dryRun: z.boolean().optional(), startAt: z.string().optional(), gapMinutes: z.number().optional() });
+  app.post("/api/linecards/batch", authed, route(async (req, d) => { const b = CardBatchRequest.parse(req.body); return cardBatch(d, b.leadIds, b); }));
   app.get("/api/team/stats", authed, route(async (req, d) => {
     ownerOnly(d);
     const period = z.enum(["today", "week", "month", "all"]).parse(req.query.p ?? "week");

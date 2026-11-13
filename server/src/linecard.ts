@@ -206,7 +206,7 @@ export async function lineCardFor(d: Deps, leadId: string, opts: { to?: string |
 }
 
 /** Send it now: one email, to the address the rep confirmed on the call, line card attached. */
-export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null; cc?: string[] | null }) {
+export async function sendLineCard(d: Deps, leadId: string, req: { to: string; name?: string | null; referredBy?: string | null; askFor?: string | null; buys?: string[]; cold?: boolean; meme?: Meme | null; format?: OnCallFormat | null; cc?: string[] | null; scheduleAt?: string | null }) {
   const to = req.to.trim();
   if (!EMAIL.test(to)) throw new LineCardError(`"${to}" doesn't look like an email address.`);
   const email = await lineCardFor(d, leadId, { to, name: req.name, referredBy: req.referredBy, askFor: req.askFor, buys: req.buys, cold: req.cold, meme: req.meme, format: req.format });
@@ -244,8 +244,10 @@ export async function sendLineCard(d: Deps, leadId: string, req: { to: string; n
     contactId, to: [to], cc: (req.cc ?? []).filter((c) => c && c.toLowerCase() !== to.toLowerCase()), subject: email.subject, body: email.body, html: email.html, attachments,
     sender: d.rep.sender ?? null, emailAccountId: d.rep.emailAccountId ?? null,
     inReplyToId: email.reply?.id ?? null, threadId: email.reply?.threadId ?? null,
+    // A batch (11/13: "Can u have 30 sent out"): Close holds it and sends at that time.
+    ...(req.scheduleAt ? { scheduleAt: req.scheduleAt } : {}),
   });
-  await d.close.sendDraft(draft.id);
+  if (!req.scheduleAt) await d.close.sendDraft(draft.id);
   if (email.meme) await rememberMeme(d, leadId, email.meme).catch(() => null);
   // The token in the email's image link (11/10): who it went to, so a dynamic meme draws their name and company.
   if (email.meme && email.track) await trackMeme({ token: email.track, repId: d.rep.closeUserId, repName: d.rep.name, repEmail: d.rep.email, leadId, meme: email.meme, emailId: draft.id, fills: { first: email.first, company: email.company } }).catch(() => null);
