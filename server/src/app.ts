@@ -536,7 +536,7 @@ export function createApp(appDeps: AppDeps) {
     return { ...(await analyzeCalls(target, { fresh: req.query.fresh === "1" })), reps };
   }));
   // A batch of line cards to named buyers, scheduled in Close (11/13). dryRun first; the rep's own leads.
-  const CardBatchRequest = z.object({ leadIds: z.array(z.string()).min(1).max(60), dryRun: z.boolean().optional(), startAt: z.string().optional(), gapMinutes: z.number().optional() });
+  const CardBatchRequest = z.object({ leadIds: z.array(z.string()).min(1).max(60), dryRun: z.boolean().optional(), startAt: z.string().optional(), gapMinutes: z.number().optional(), perSlot: z.number().optional() });
   app.post("/api/linecards/batch", authed, route(async (req, d) => { const b = CardBatchRequest.parse(req.body); return cardBatch(d, b.leadIds, b); }));
   app.get("/api/team/stats", authed, route(async (req, d) => {
     ownerOnly(d);

@@ -15,9 +15,12 @@ export type CardPlan = { leadId: string; company: string; to: string | null; nam
 const GENERIC = /^(info|sales|accounting|accounts|ap|ar|office|main|admin|purchasing|procurement|contact|hello|support|frontdesk|billing|estimating|reception|general|service|orders|shop|quotes?|bids?|inquiries|mail|team)@/i;
 const OFFSET: Record<string, number> = { "America/New_York": 0, "America/Detroit": 0, "America/Indiana/Indianapolis": 0, "America/Chicago": 1, "America/Denver": 2, "America/Phoenix": 2, "America/Boise": 2, "America/Los_Angeles": 3 };
 
-export async function cardBatch(d: Deps, leadIds: string[], opts: { dryRun?: boolean; startAt?: string; gapMinutes?: number } = {}): Promise<{ plan: CardPlan[]; scheduled: number; skipped: number }> {
+export async function cardBatch(d: Deps, leadIds: string[], opts: { dryRun?: boolean; startAt?: string; gapMinutes?: number; perSlot?: number } = {}): Promise<{ plan: CardPlan[]; scheduled: number; skipped: number }> {
   const now = d.now?.() ?? new Date();
-  const gap = Math.max(2, Math.min(30, opts.gapMinutes ?? 4)) * 60_000;
+  // Two every ten minutes by default (Walt 11/13: "Can these go out in batches? like 1 every 15 mins? Or two every 10?").
+  const gap = Math.max(2, Math.min(30, opts.gapMinutes ?? 10)) * 60_000;
+  const perSlot = Math.max(1, Math.min(5, opts.perSlot ?? 2));
+  let inSlot = 0;
   const plan: CardPlan[] = [];
   for (const leadId of leadIds) {
     const lead = await d.close.lead(leadId).catch(() => null);
@@ -47,7 +50,7 @@ export async function cardBatch(d: Deps, leadIds: string[], opts: { dryRun?: boo
       at = new Date(zonedTime(q.year, q.month, q.day, 8, 30, p.tz!).getTime() + go.indexOf(p) * 60_000);
     } else if (mins < 8 * 60 + 30) {
       at = zonedTime(lp.year, lp.month, lp.day, 8, 30, p.tz!);
-    } else t += gap;
+    } else if (++inSlot >= perSlot) { t += gap; inSlot = 0; }
     p.at = at.toISOString();
   }
   if (!opts.dryRun) {
