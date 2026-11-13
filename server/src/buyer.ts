@@ -21,6 +21,11 @@ export async function saveBuyer(d: Deps, leadId: string, b: BuyerIn): Promise<{ 
   if (email && !EMAIL.test(email)) throw new Error("That email doesn't look right.");
   const title = clean(b.title), phone = clean(b.phone);
   let contactId = b.contactId ?? null;
+  // The same name already on the lead (11/13: a double tap put Jeff Gallon on Hahn & Clay twice): that person, updated.
+  if (!contactId) {
+    const same = (await d.close.lead(leadId).catch(() => null))?.contacts.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (same) contactId = same.id;
+  }
   if (contactId) {
     // Adding to a person already on the lead (an email for a named buyer): Close replaces the lists it's sent, so
     // the ones already there come along.

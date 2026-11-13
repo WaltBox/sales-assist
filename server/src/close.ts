@@ -364,14 +364,18 @@ export class CloseClient {
   async contactsCreatedSince(since: string, userId: string, max = 2000): Promise<Array<{ lead_id: string; contact_id: string; name: string | null; date_created: string }>> {
     const out: Array<{ lead_id: string; contact_id: string; name: string | null; date_created: string }> = [];
     let cursor: string | null = null;
-    for (let page = 0; page * 100 < max; page++) {
-      const q: Record<string, string> = { object_type: "contact", action: "created", date_updated__gte: since, user_id: userId, _limit: "100" };
+    // Close's event log pages at 50 at most (11/13: asking for 100 was refused, the read came back empty, and every
+    // buyer named since 11/11 paid nothing; Jeff Gallon at Hahn & Clay).
+    for (let page = 0; page * 50 < max; page++) {
+      const q: Record<string, string> = { object_type: "contact", action: "created", date_updated__gte: since, user_id: userId, _limit: "50" };
       if (cursor) q._cursor = cursor;
       type EventPage = { data: Array<{ lead_id: string | null; object_id: string; date_created: string; data?: { name?: string | null } }>; cursor_next?: string | null };
       const r: EventPage = await this.request<EventPage>("GET", `/event/?${new URLSearchParams(q)}`);
-      for (const e of r.data) if (e.lead_id) out.push({ lead_id: e.lead_id, contact_id: e.object_id, name: e.data?.name ?? null, date_created: e.date_created });
+      // The event log's times carry no zone ("2026-11-13T18:26:32.569000"): they're UTC, so say so.
+      const utc = (t: string) => (/[zZ]|[+-]\d\d:?\d\d$/.test(t) ? t : `${t}Z`);
+      for (const e of r.data) if (e.lead_id) out.push({ lead_id: e.lead_id, contact_id: e.object_id, name: e.data?.name ?? null, date_created: utc(e.date_created) });
       cursor = r.cursor_next ?? null;
-      if (!cursor || r.data.length < 100) break;
+      if (!cursor || r.data.length < 50) break;
     }
     return out;
   }

@@ -82,3 +82,11 @@ test("the card goes the moment the buyer is reached (Walt 11/12): with an addres
   assert.equal(auto.length, 1);
   // (Real Close lists the send on the lead afterwards, so a second reach finds "already has it"; the fake doesn't.)
 });
+
+test("a second Save with the same name updates that person, never a twin (11/13: Jeff Gallon twice at Hahn & Clay)", async () => {
+  const close = new FakeClose({ calls: [] });
+  close.leadStatus.set(DEMO_LEAD_ID, "Fit");
+  await saveBuyer(deps(close), DEMO_LEAD_ID, { name: "Rob Roy", email: "rob@roddaelectric.com" });
+  assert.equal(close.writes.filter((w) => w.op === "contact").length, 0, "Rob Roy is already on the lead: updated, not added");
+  assert.equal(close.writes.filter((w) => w.op === "contact-update").length, 1);
+});
